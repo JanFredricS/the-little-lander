@@ -11,6 +11,7 @@ import type { LevelSpec, VesselMode } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
+import { ropePolyline } from './ropeLine';
 
 const HULL_COLORS: Record<VesselMode, number> = {
   csm: 0xc8ccd8,
@@ -99,7 +100,13 @@ export class FlightView {
       for (const gun of vs.ropeState.guns) {
         if (gun.phase === 'idle' || !gun.head) continue;
         const color = gun.brittleTimeLeft !== undefined ? 0xff9040 : gun.phase === 'flying' ? 0xa0a0a0 : 0xe0d0b0;
-        g.moveTo(mx, my).lineTo(gun.head.x, gun.head.y).stroke({ width: 1, color });
+        // Anchored: sags when reeled out past the chord, straight under tension.
+        // Flying: paid out as it goes (taut).
+        const len = gun.phase === 'anchored' ? (gun.length ?? 0) : 0;
+        const pts = ropePolyline({ x: mx, y: my }, gun.head, len);
+        g.moveTo(pts[0]!.x, pts[0]!.y);
+        for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
+        g.stroke({ width: 1, color });
         g.rect(gun.head.x - 2, gun.head.y - 2, 4, 4).fill(color);
       }
     }
