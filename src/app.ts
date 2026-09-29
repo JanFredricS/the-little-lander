@@ -8,7 +8,7 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
 import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
-import { createStubArt } from './art/stubArt';
+import { createArt } from './art/art';
 import { LevelSession } from './game/session';
 import { getLevel, playableLevelIds } from './levels/registry';
 import { loadPhysics } from './physics/engine';
@@ -47,7 +47,7 @@ export class App {
     private readonly host: HTMLElement,
     private readonly options: AppOptions = {},
   ) {
-    this.art = options.art ?? createStubArt();
+    this.art = options.art ?? createArt();
   }
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
