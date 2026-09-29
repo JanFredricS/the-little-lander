@@ -13,6 +13,7 @@ import { getVesselAnchors, VESSEL_SIZES, type VesselSpriteName } from './sprites
 
 const CSS = `
 html, body, #app { overflow: auto !important; height: auto !important; touch-action: auto !important; }
+#app { position: static !important; inset: auto !important; width: auto !important; }
 body { margin: 0; background: #11131c; color: #d8dcea; font: 13px/1.4 ui-monospace, Menlo, monospace; }
 .gal-head { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center;
   padding: 10px 16px; background: #181b28ee; border-bottom: 1px solid #2c3148; }

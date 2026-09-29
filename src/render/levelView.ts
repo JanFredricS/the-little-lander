@@ -37,7 +37,7 @@ export class LevelView {
     private readonly art: ArtApi,
   ) {
     const spec = session.spec;
-    const bg = new Graphics().rect(0, 0, VIEW_WIDTH, 360).fill(art.palettes[spec.themeId].colors[12] ?? 0x16202e);
+    const bg = new Graphics().rect(0, 0, VIEW_WIDTH, 360).fill(art.palettes[spec.themeId].background);
     this.root.addChild(bg, this.world);
 
     this.world.addChild(this.drawTerrain(spec));
