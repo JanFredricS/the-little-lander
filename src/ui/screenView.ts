@@ -43,6 +43,8 @@ export interface RowsGeometry {
   x: number;
   w: number;
   count: number;
+  /** First item index drawn (hit tests use what was actually drawn). */
+  scroll: number;
 }
 
 export class ScreenView {
@@ -78,6 +80,7 @@ export class ScreenView {
 
   setModel(model: ScreenModel | null): void {
     this.model = model;
+    this.geom = null; // nothing hit-testable until the new model is drawn
     this.root.visible = !!model;
     this.toastUntil = 0;
   }
@@ -93,12 +96,12 @@ export class ScreenView {
     return this.geom;
   }
 
-  /** Item index at virtual point, or -1. */
-  hitTest(menu: MenuState, vx: number, vy: number): number {
+  /** Item index at virtual point (as last drawn), or -1. */
+  hitTest(vx: number, vy: number): number {
     const g = this.geom;
     if (!g || vx < g.x - 4 || vx > g.x + g.w + 4) return -1;
-    const i = rowAt(g.layout, ROW_GAP, vy, g.count - menu.scroll);
-    return i < 0 ? -1 : i + menu.scroll;
+    const i = rowAt(g.layout, ROW_GAP, vy, g.count - g.scroll);
+    return i < 0 ? -1 : i + g.scroll;
   }
 
   /** Visible row count for the current model at the current scale. */
@@ -166,7 +169,8 @@ export class ScreenView {
     } else if (m.kind === 'panel') {
       const pw = 340;
       this.heading.setText(m.heading, { scale: 2, color: m.heading === 'GAME OVER' ? UI.danger : UI.accent });
-      this.info.setText(m.info.join('\n'), { color: UI.ink });
+      // stat blocks (results) read better left-aligned; short lines stay centred
+      this.info.setText(m.info.join('\n'), { color: UI.ink, align: m.info.length > 2 ? 'left' : 'center' });
       const infoH = m.info.length ? this.info.height + 10 : 0;
       const probeRow = Math.min(48, Math.max(18, Math.ceil(48 / Math.max(0.01, this.cssPerVirtual))));
       const rowsH = m.items.length * (probeRow + ROW_GAP);
@@ -192,7 +196,7 @@ export class ScreenView {
     // rows
     const n = m.items.length;
     const layout = layoutRows(n, { top: rowsTop, bottom: rowsBottom, cssPerVirtual: this.cssPerVirtual, minRow: m.kind === 'list' ? 20 : 18, maxRow: 48, gap: ROW_GAP });
-    this.geom = n ? { layout, x: rowX, w: rowW, count: n } : null;
+    this.geom = n ? { layout, x: rowX, w: rowW, count: n, scroll: menu.scroll } : null;
     const vis = Math.min(layout.visible, MAX_ROWS);
     for (let i = 0; i < MAX_ROWS; i++) {
       const idx = menu.scroll + i;

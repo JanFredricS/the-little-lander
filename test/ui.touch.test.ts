@@ -213,7 +213,7 @@ describe('touch visibility / rotate hint / font', () => {
   it('pixel font measures and covers the UI strings', () => {
     expect(measureText('AB')).toEqual({ width: 11, height: 7 });
     expect(measureText('A\nB', 2)).toEqual({ width: 10, height: 32 });
-    for (const ch of 'THE LITTLE LANDER 0123456789 ←→↑↓▲▼◀▶★×…%:/-') expect(hasGlyph(ch), ch).toBe(true);
+    for (const ch of 'THE LITTLE LANDER 0123456789 ←→↑↓▲▼◀▶★×…·%:/-') expect(hasGlyph(ch), ch).toBe(true);
     expect(glyphFor('a')).toBe(glyphFor('A'));
     expect(glyphFor('§')).toBe(glyphFor('?'));
   });

@@ -138,7 +138,7 @@ export class TouchLayer {
       d.setAttribute('role', 'button');
       d.setAttribute('aria-label', b.control);
       place(d, b.rect);
-      d.appendChild(label(b.label, b.rect.w * 0.75));
+      d.appendChild(label(b.label, b.rect.w * 0.9));
       this.btnEls.set(b.id, d);
       this.el.appendChild(d);
     }

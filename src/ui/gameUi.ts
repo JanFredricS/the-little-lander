@@ -139,6 +139,7 @@ export class GameUi {
 
   enter(next: ScreenState): void {
     this.state = next;
+    if (next.id !== 'playing') this.loading = false;
     this.pauseHelp = false;
     this.press = null;
     if (next.id !== 'playing' && next.id !== 'paused' && next.id !== 'results') this.spec = null;
@@ -253,8 +254,11 @@ export class GameUi {
     if (this.hudView.root.visible) this.hudView.render(this.hud, nowMs);
     if (this.screenView.root.visible && this.model) {
       this.screenView.render(this.menu, nowMs);
-      const vis = this.screenView.visibleRows();
-      this.menu = scrollToFocus(this.menu, vis);
+      const scrolled = scrollToFocus(this.menu, this.screenView.visibleRows());
+      if (scrolled !== this.menu) {
+        this.menu = scrolled; // redraw now so what is hit-testable is what is on screen
+        this.screenView.render(this.menu, nowMs);
+      }
     }
   }
 
@@ -366,7 +370,7 @@ export class GameUi {
     if (this.closePauseHelp()) return;
     if (!this.model || this.loading || this.press) return;
     const v = this.toView(e);
-    this.press = { id: e.pointerId, x: e.clientX, y: e.clientY, index: this.screenView.hitTest(this.menu, v.x, v.y), dragged: false, scrollAnchor: this.menu.scroll };
+    this.press = { id: e.pointerId, x: e.clientX, y: e.clientY, index: this.screenView.hitTest(v.x, v.y), dragged: false, scrollAnchor: this.menu.scroll };
     if (this.press.index >= 0) this.menu = menuFocus(this.menu, this.press.index);
   }
 
@@ -391,7 +395,7 @@ export class GameUi {
     }
     if (e.pointerType === 'mouse') {
       const v = this.toView(e);
-      const i = this.screenView.hitTest(this.menu, v.x, v.y);
+      const i = this.screenView.hitTest(v.x, v.y);
       if (i >= 0) this.menu = menuFocus(this.menu, i);
     }
   }
@@ -407,7 +411,7 @@ export class GameUi {
       return;
     }
     const v = this.toView(e);
-    const i = this.screenView.hitTest(this.menu, v.x, v.y);
+    const i = this.screenView.hitTest(v.x, v.y);
     if (i >= 0 && i === p.index) this.apply(menuCommand(this.menu, { jump: i }));
   }
 }
