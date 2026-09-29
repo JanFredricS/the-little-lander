@@ -1,0 +1,296 @@
+/**
+ * Structural validation of a LevelSpec against the rules documented in
+ * src/contracts/level.ts. Returns a list of human-readable errors (empty =
+ * valid). Every shipped LevelSpec must validate (enforced by tests).
+ */
+
+import { ENTITY_KINDS, THEME_IDS, VESSEL_MODES } from '../contracts';
+import type { EntitySpec, LevelSpec, Rect, TerrainPiece, TriggerSpec, Vec2, ZoneSpec } from '../contracts';
+import { signedArea } from '../physics/units';
+
+export function validateLevel(spec: LevelSpec): string[] {
+  const errors: string[] = [];
+  const err = (msg: string) => errors.push(msg);
+  const W = spec.worldSize?.w;
+  const H = spec.worldSize?.h;
+
+  if (!spec.id) err('id is empty');
+  if (!spec.title) err('title is empty');
+  if (!THEME_IDS.includes(spec.themeId)) err(`unknown themeId '${String(spec.themeId)}'`);
+  if (!VESSEL_MODES.includes(spec.vesselMode)) err(`unknown vesselMode '${String(spec.vesselMode)}'`);
+  if (!(pos(W) && pos(H))) {
+    err('worldSize must have positive finite w and h');
+    return errors; // nothing else can be checked meaningfully
+  }
+
+  const inside = (p: Vec2) => fin(p.x) && fin(p.y) && p.x >= 0 && p.y >= 0 && p.x <= W && p.y <= H;
+  const rectOk = (r: Rect | undefined, what: string) => {
+    if (!r || !(fin(r.x) && fin(r.y) && pos(r.w) && pos(r.h))) return err(`${what}: rect needs finite x/y and positive w/h`);
+    if (!inside({ x: r.x, y: r.y }) || !inside({ x: r.x + r.w, y: r.y + r.h })) err(`${what}: rect outside the world`);
+  };
+
+  if (!inside(spec.spawn)) err('spawn outside the world');
+  if (spec.spawn.angle !== undefined && !fin(spec.spawn.angle)) err('spawn.angle not finite');
+  if (spec.startFuel !== undefined && !frac(spec.startFuel)) err('startFuel must be in 0..1');
+  if (!vecOk(spec.gravity)) err('gravity must be a finite vector');
+  if (spec.harpoonGuns !== undefined && spec.harpoonGuns !== 1 && spec.harpoonGuns !== 2) err('harpoonGuns must be 1 or 2');
+
+  if (spec.gravityRamp) {
+    const r = spec.gravityRamp;
+    if (!(fin(r.from) && fin(r.to)) || r.from === r.to) err('gravityRamp: from/to must be finite and differ');
+    if (!vecOk(r.gravityFrom) || !vecOk(r.gravityTo)) err('gravityRamp: gravities must be finite vectors');
+  }
+
+  // terrain
+  const pieceIds = new Set<string>();
+  for (const piece of spec.terrain?.pieces ?? []) {
+    const what = `terrain '${piece.id}'`;
+    if (!piece.id) err('terrain piece with empty id');
+    else if (pieceIds.has(piece.id)) err(`${what}: duplicate id`);
+    pieceIds.add(piece.id);
+    checkPiece(piece, what, inside, err);
+  }
+
+  // entities
+  const entities = new Map<string, EntitySpec>();
+  for (const e of spec.entities ?? []) {
+    const what = `entity '${e.id}'`;
+    if (!e.id) err(`${e.kind} entity with empty id`);
+    else if (entities.has(e.id)) err(`${what}: duplicate id`);
+    entities.set(e.id, e);
+    if (!ENTITY_KINDS.includes(e.kind)) err(`${what}: unknown kind '${String(e.kind)}'`);
+    if (!inside(e)) err(`${what}: position outside the world`);
+    checkEntity(e, what, err, rectOk);
+  }
+
+  // objectives (checked before zones/triggers so triggers can reference them)
+  const objectiveIds = new Set<string>();
+  if (!spec.objectives || spec.objectives.length === 0) err('level needs at least one objective');
+  for (const o of spec.objectives ?? []) {
+    const what = `objective '${o.id}'`;
+    if (!o.id) err('objective with empty id');
+    else if (objectiveIds.has(o.id)) err(`${what}: duplicate id`);
+    objectiveIds.add(o.id);
+    switch (o.kind) {
+      case 'reachExit':
+        if (entities.get(o.exitId)?.kind !== 'exitDock') err(`${what}: exitId '${o.exitId}' is not an exitDock entity`);
+        break;
+      case 'plantBeacons':
+        if (!(Number.isInteger(o.count) && o.count >= 1)) err(`${what}: count must be a positive integer`);
+        if (o.count > o.siteIds.length) err(`${what}: count exceeds the number of sites`);
+        if (new Set(o.siteIds).size !== o.siteIds.length) err(`${what}: duplicate site ids`);
+        for (const s of o.siteIds) if (entities.get(s)?.kind !== 'beaconSite') err(`${what}: '${s}' is not a beaconSite entity`);
+        break;
+      case 'collectOrbs': {
+        const orbs = [...entities.values()].filter((e) => e.kind === 'orb').length;
+        if (!(Number.isInteger(o.count) && o.count >= 1)) err(`${what}: count must be a positive integer`);
+        if (o.count > orbs) err(`${what}: needs ${o.count} orbs but the level has ${orbs}`);
+        break;
+      }
+      case 'surviveBoss':
+        if (entities.get(o.bossEntityId)?.kind !== 'bossSpawn') err(`${what}: '${o.bossEntityId}' is not a bossSpawn entity`);
+        break;
+      default:
+        err(`${what}: unknown kind '${String((o as { kind: unknown }).kind)}'`);
+    }
+  }
+
+  const triggerOk = (t: TriggerSpec | undefined, what: string) => {
+    if (!t) return;
+    switch (t.kind) {
+      case 'start':
+        return;
+      case 'time':
+        if (!(fin(t.atSec) && t.atSec >= 0)) err(`${what}: trigger time must be >= 0`);
+        return;
+      case 'enterRegion':
+        return rectOk(t.rect, `${what} trigger`);
+      case 'objective':
+        if (!objectiveIds.has(t.objectiveId)) err(`${what}: trigger references unknown objective '${t.objectiveId}'`);
+        return;
+      default:
+        err(`${what}: unknown trigger kind`);
+    }
+  };
+
+  for (const e of entities.values()) {
+    if (e.kind === 'debrisSpawner' || e.kind === 'creature') triggerOk(e.activate, `entity '${e.id}'`);
+    if (e.kind === 'blastDoor') triggerOk(e.close, `entity '${e.id}'`);
+  }
+
+  // zones
+  const zoneIds = new Set<string>();
+  for (const z of spec.zones ?? []) {
+    const what = `zone '${z.id}'`;
+    if (!z.id) err(`${z.kind} zone with empty id`);
+    else if (zoneIds.has(z.id) || entities.has(z.id)) err(`${what}: duplicate id`);
+    zoneIds.add(z.id);
+    checkZone(z, what, err, rectOk, inside, triggerOk);
+  }
+
+  if (spec.modeSwitch) {
+    if (!VESSEL_MODES.includes(spec.modeSwitch.to)) err(`modeSwitch: unknown mode '${String(spec.modeSwitch.to)}'`);
+    if (spec.modeSwitch.to === spec.vesselMode) err('modeSwitch: target mode equals the start mode');
+    triggerOk(spec.modeSwitch.trigger, 'modeSwitch');
+  }
+
+  if (spec.physicsOverrides) {
+    for (const [k, v] of Object.entries(spec.physicsOverrides)) if (!fin(v)) err(`physicsOverrides '${k}' is not finite`);
+  }
+
+  return errors;
+}
+
+/** Throws with all errors joined (for level registries / tests). */
+export function assertValidLevel(spec: LevelSpec): LevelSpec {
+  const errors = validateLevel(spec);
+  if (errors.length) throw new Error(`Invalid level '${spec.id}':\n  - ${errors.join('\n  - ')}`);
+  return spec;
+}
+
+// ------------------------------------------------------------------ helpers
+
+function fin(v: unknown): v is number {
+  return typeof v === 'number' && Number.isFinite(v);
+}
+
+function pos(v: unknown): v is number {
+  return fin(v) && v > 0;
+}
+
+function frac(v: number): boolean {
+  return fin(v) && v >= 0 && v <= 1;
+}
+
+function vecOk(v: Vec2 | undefined): boolean {
+  return !!v && fin(v.x) && fin(v.y);
+}
+
+function checkPolygon(points: readonly Vec2[], what: string, err: (m: string) => void): void {
+  if (points.length < 3) return err(`${what}: polygon needs at least 3 points`);
+  const first = points[0]!;
+  const last = points[points.length - 1]!;
+  if (points.length > 3 && first.x === last.x && first.y === last.y) err(`${what}: do not repeat the first point at the end`);
+  if (Math.abs(signedArea(points)) < 1e-6) err(`${what}: polygon has zero area`);
+}
+
+function checkPiece(piece: TerrainPiece, what: string, inside: (p: Vec2) => boolean, err: (m: string) => void): void {
+  if (!['ground', 'ceiling', 'polygon'].includes(piece.kind)) return err(`${what}: unknown kind '${String(piece.kind)}'`);
+  const pts = piece.points ?? [];
+  if (pts.some((p) => !inside(p))) err(`${what}: point outside the world`);
+  if (piece.kind === 'polygon') checkPolygon(pts, what, err);
+  else {
+    if (pts.length < 2) err(`${what}: needs at least 2 points`);
+    for (let i = 1; i < pts.length; i++) {
+      if (!(pts[i]!.x > pts[i - 1]!.x)) {
+        err(`${what}: ${piece.kind} points must have strictly increasing x (use a polygon for overhangs)`);
+        break;
+      }
+    }
+  }
+  if (!piece.style?.material) err(`${what}: style.material missing`);
+  if (piece.style?.decorDensity !== undefined && !frac(piece.style.decorDensity)) err(`${what}: decorDensity must be in 0..1`);
+}
+
+function checkEntity(e: EntitySpec, what: string, err: (m: string) => void, rectOk: (r: Rect | undefined, w: string) => void): void {
+  switch (e.kind) {
+    case 'staticProp':
+      if (!(pos(e.w) && pos(e.h))) err(`${what}: w/h must be positive`);
+      if (!e.sprite) err(`${what}: sprite missing`);
+      break;
+    case 'debrisSpawner':
+      rectOk(e.area, what);
+      if (!pos(e.ratePerSec)) err(`${what}: ratePerSec must be positive`);
+      if (!(pos(e.sizeMin) && pos(e.sizeMax) && e.sizeMin <= e.sizeMax)) err(`${what}: need 0 < sizeMin <= sizeMax`);
+      break;
+    case 'gooSpawner':
+      if (!(pos(e.triggerRadius) && pos(e.intervalSec) && pos(e.homingAccel))) err(`${what}: triggerRadius/intervalSec/homingAccel must be positive`);
+      if (!(Number.isInteger(e.maxAlive) && e.maxAlive >= 1)) err(`${what}: maxAlive must be a positive integer`);
+      break;
+    case 'orb':
+      if (!(fin(e.points) && e.points >= 0)) err(`${what}: points must be >= 0`);
+      if (!frac(e.fuelRefill)) err(`${what}: fuelRefill must be in 0..1`);
+      break;
+    case 'beaconSite':
+      if (!pos(e.w)) err(`${what}: w must be positive`);
+      if (!(fin(e.holdSec) && e.holdSec >= 0)) err(`${what}: holdSec must be >= 0`);
+      break;
+    case 'movingIsland':
+      checkPolygon(e.outline, what, err);
+      if (e.path.length < 2) err(`${what}: path needs at least 2 waypoints`);
+      if (!pos(e.periodSec)) err(`${what}: periodSec must be positive`);
+      break;
+    case 'vine':
+      if (!pos(e.length)) err(`${what}: length must be positive`);
+      if (!(Number.isInteger(e.segments) && e.segments >= 1)) err(`${what}: segments must be a positive integer`);
+      break;
+    case 'blastDoor':
+      if (!(pos(e.w) && pos(e.h) && pos(e.closeDurationSec))) err(`${what}: w/h/closeDurationSec must be positive`);
+      break;
+    case 'creature':
+      if (!(fin(e.speed) && e.speed >= 0)) err(`${what}: speed must be >= 0`);
+      break;
+    case 'bossSpawn':
+      rectOk(e.arena, what);
+      break;
+    case 'fuelPickup':
+      if (!(frac(e.amount) && e.amount > 0)) err(`${what}: amount must be in (0, 1]`);
+      break;
+    case 'exitDock':
+      if (!(pos(e.w) && pos(e.h))) err(`${what}: w/h must be positive`);
+      break;
+    case 'looseRock':
+      if (!(pos(e.radius) && pos(e.breakForce))) err(`${what}: radius/breakForce must be positive`);
+      break;
+    case 'crumblePlatform':
+      if (!(pos(e.w) && pos(e.h))) err(`${what}: w/h must be positive`);
+      if (!(fin(e.delaySec) && e.delaySec >= 0)) err(`${what}: delaySec must be >= 0`);
+      break;
+  }
+}
+
+function checkZone(
+  z: ZoneSpec,
+  what: string,
+  err: (m: string) => void,
+  rectOk: (r: Rect | undefined, w: string) => void,
+  inside: (p: Vec2) => boolean,
+  triggerOk: (t: TriggerSpec | undefined, w: string) => void,
+): void {
+  switch (z.kind) {
+    case 'gravityZone':
+      rectOk(z.rect, what);
+      if (!vecOk(z.gravity)) err(`${what}: gravity must be a finite vector`);
+      if (z.polygon) {
+        checkPolygon(z.polygon, what, err);
+        if (z.polygon.some((p) => !inside(p))) err(`${what}: polygon outside the world`);
+      }
+      break;
+    case 'windGustSchedule':
+      if (z.rect) rectOk(z.rect, what);
+      if (z.gusts.length === 0) err(`${what}: no gusts`);
+      for (const g of z.gusts) {
+        if (!(fin(g.atSec) && g.atSec >= 0 && pos(g.durationSec) && vecOk(g.accel))) err(`${what}: gust needs atSec >= 0, durationSec > 0, finite accel`);
+        if (g.warnSec !== undefined && !(fin(g.warnSec) && g.warnSec >= 0)) err(`${what}: warnSec must be >= 0`);
+      }
+      if (z.repeatEverySec !== undefined && !pos(z.repeatEverySec)) err(`${what}: repeatEverySec must be positive`);
+      break;
+    case 'radiationEmitter':
+      if (!inside(z)) err(`${what}: emitter outside the world`);
+      if (!(pos(z.range) && pos(z.periodSec))) err(`${what}: range/periodSec must be positive`);
+      if (!(fin(z.warnSec) && z.warnSec >= 0 && z.warnSec <= z.periodSec)) err(`${what}: warnSec must be in 0..periodSec`);
+      if (!frac(z.fuelLoss)) err(`${what}: fuelLoss must be in 0..1`);
+      break;
+    case 'brittleRegion':
+      rectOk(z.rect, what);
+      if (!pos(z.breakAfterSec)) err(`${what}: breakAfterSec must be positive`);
+      break;
+    case 'killFront':
+      if (z.axis !== 'x' && z.axis !== 'y') err(`${what}: axis must be x or y`);
+      if (!(fin(z.start) && fin(z.speed))) err(`${what}: start/speed must be finite`);
+      triggerOk(z.activate, what);
+      break;
+    default:
+      err(`${what}: unknown zone kind '${String((z as { kind: unknown }).kind)}'`);
+  }
+}
