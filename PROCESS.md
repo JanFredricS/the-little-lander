@@ -22,6 +22,11 @@ How slices from PLAN.md get implemented and verified. Same harness as
    continues. Residuals are revisited at S8 (hardening) or when they block
    a later slice.
 
+## Environment note (this machine)
+
+`node`/`npm` are not on PATH. Use:
+`export PATH=~/.local/node-v22.23.2-darwin-arm64/bin:$PATH`
+
 ## Concurrency
 
 - S0 first, alone (it freezes the contracts everything else mocks against).
