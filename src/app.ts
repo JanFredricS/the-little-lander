@@ -141,8 +141,8 @@ export class App {
   }
 
   private async startLevel(levelId: LevelId): Promise<void> {
-    const token = ++this.levelToken;
-    this.endSession();
+    this.endSession(); // bumps levelToken, cancelling any in-flight load
+    const token = this.levelToken;
     const spec = getLevel(levelId);
     if (!spec) {
       this.dispatch({ type: 'levelEnded', outcome: { kind: 'failed', cause: 'outOfBounds' } });
