@@ -8,7 +8,10 @@
  *  - `{ kind: 'key' }`: once typed, waits for a press;
  *  - `{ kind: 'duration', seconds }`: advances by itself after `seconds`
  *    AND once typing has finished (so a short duration never cuts text
- *    off); a press after typing skips ahead.
+ *    off).
+ * Presses are two-step on every shot: a press while typing reveals the
+ * full text; a press once it is fully revealed advances immediately (for
+ * duration shots, without waiting for `seconds`).
  * Holding skip for SKIP_HOLD_SEC ends the whole script (skipped = true).
  * Wall-clock is fine here: cutscenes are presentation, not simulation.
  */

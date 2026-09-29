@@ -43,11 +43,27 @@ describe('cutscene playback', () => {
     expect(pb.shotIndex).toBe(1);
   });
 
-  it('a press on a duration shot reveals, then skips ahead', () => {
+  it('duration shot: 1st press (mid-typing) reveals, 2nd press advances before `seconds`', () => {
     const pb = new CutscenePlayback(script);
+    run(pb, 0.1); // typing, 2 s duration far from elapsed
+    expect(pb.typingDone).toBe(false);
     pb.press();
     expect(pb.typingDone).toBe(true);
+    expect(pb.visibleRows()).toEqual(['Twenty chars of text']);
     expect(pb.shotIndex).toBe(0);
+    run(pb, 0.1);
+    expect(pb.shotIndex).toBe(0); // revealed text does not advance on its own yet
+    expect(pb.shotSeconds).toBeLessThan(2);
+    pb.press();
+    expect(pb.shotIndex).toBe(1); // advanced immediately, ~0.2 s into a 2 s shot
+    expect(pb.shotSeconds).toBe(0);
+    expect(pb.visibleChars).toBe(0); // next shot starts typing fresh
+  });
+
+  it('duration shot: once text has typed out by itself, one press advances', () => {
+    const pb = new CutscenePlayback(script);
+    run(pb, 20 / TYPE_CPS + 0.05);
+    expect(pb.typingDone).toBe(true);
     pb.press();
     expect(pb.shotIndex).toBe(1);
   });

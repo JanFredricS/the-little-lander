@@ -62,6 +62,14 @@ export class FixedStepClock {
     this._paused = true;
   }
 
+  /**
+   * Un-count `n` steps that advance() handed out but the caller did not run
+   * (the loop paused mid-batch), so steps/simTime only reflect executed steps.
+   */
+  cancelSteps(n: number): void {
+    this._steps = Math.max(0, this._steps - Math.max(0, Math.floor(n)));
+  }
+
   /** Resume; leftover accumulated time is discarded. */
   resume(): void {
     this._paused = false;
@@ -179,7 +187,9 @@ export class FrameLoop {
     const n = this.clock.advance(dt);
     // Re-check pause between steps: a step may pause the loop (pause key,
     // mid-level cutscene) and the rest of a catch-up batch must not run.
-    for (let i = 0; i < n && !this.clock.paused; i++) this.cb.step(i);
+    let ran = 0;
+    while (ran < n && !this.clock.paused) this.cb.step(ran++);
+    if (ran < n) this.clock.cancelSteps(n - ran);
     this.cb.render(this.clock.alpha);
     this.rafId = this.raf.request(this.tick);
   };

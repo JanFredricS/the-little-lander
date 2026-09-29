@@ -9,8 +9,11 @@ Uses stub stills (flat-color placeholder canvases behind ArtApi's
 1. **Cutscene player**: full-screen letterboxed still + typewriter
    dialogue text (bottom box, pixel font look via canvas-rendered text or
    a generated bitmap font), advance per shot via `CutsceneShot.advance` (`{ kind: 'duration', seconds }`
-   auto-advances, any key skips ahead; `{ kind: 'key' }` waits for key/click/tap
-   after typing finishes), skippable (hold Esc),
+   auto-advances after `seconds` once typed out; `{ kind: 'key' }` waits for
+   key/click/tap after typing finishes). Presses are two-step on every shot:
+   a press while text is typing reveals the full text; a press once it is
+   fully revealed advances immediately (duration shots too, before
+   `seconds` elapse), skippable (hold Esc),
    multi-shot scripts per `CutsceneScript`. Emits cutsceneDone.
 2. **All cutscene scripts + dialogue** for the story arc in PLAN.md
    (Halcyon briefing; Wren meets Io; awe at the isles; dragon-bird CSM
