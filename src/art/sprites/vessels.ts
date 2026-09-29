@@ -483,6 +483,26 @@ export function getVesselAnchors(name: VesselSpriteName): VesselAnchors {
   return anchorCache[name];
 }
 
+const groundCache = new Map<string, number>();
+
+/**
+ * Visual ground line of a vessel sprite frame: y (px from the sprite's top,
+ * i.e. the bottom EDGE of the lowest opaque row) where leg pads / the engine
+ * bell rest on the ground. Renderers align this with the collision box bottom.
+ */
+export function vesselGroundY(name: VesselSpriteName, frame = 0): number {
+  const key = `${name}|${frame}`;
+  let g = groundCache.get(key);
+  if (g === undefined) {
+    const def = vesselSprites()[name]!();
+    const p = def.frames[frame % def.frames.length]!;
+    g = 0;
+    for (let y = p.h - 1; y >= 0 && g === 0; y--) for (let x = 0; x < p.w; x++) if (p.get(x, y) !== 0) { g = y + 1; break; }
+    groundCache.set(key, g);
+  }
+  return g;
+}
+
 export function vesselSprites(): Record<string, () => SpriteDef> {
   return {
     'vessel.csm': () => ({ frames: [buildCsmStack(1).pix], palette: CRAFT, pivot: VESSEL_PIVOTS['vessel.csm'] }),

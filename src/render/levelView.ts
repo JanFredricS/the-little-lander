@@ -10,6 +10,8 @@ import { VIEW_WIDTH } from '../contracts';
 import type { ArtApi, LevelSpec, TerrainPiece } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { getVesselAnchors } from '../art/sprites/vessels';
+import { PLACEHOLDER_VESSEL } from '../game/placeholderVessel';
+import { vesselArtOffsetY } from './vesselFit';
 import { mToPx } from '../physics/units';
 
 const TERRAIN_COLORS: Record<string, number> = {
@@ -58,8 +60,13 @@ export class LevelView {
     // Vessel sprites are drawn at NATIVE size around their pivot (centre of
     // mass). vessel.csm is the upright docked stack, 24x48 — the S0 stub was
     // 20x28 (PLACEHOLDER_VESSEL, still the physics collision box); never
-    // stretch the art to the collision box.
+    // stretch the art to the collision box. Instead the art is shifted inside
+    // the body so its ground line (engine bell bottom) sits on the box
+    // bottom — see vesselFit.ts. TODO(S8): harmonize physics vessel dims with
+    // VESSEL_SIZES.
     this.vessel = new Container();
+    const art0 = new Container();
+    art0.position.y = vesselArtOffsetY('vessel.csm', PLACEHOLDER_VESSEL.h);
     const hullFrame = art.getSprite('vessel.csm', 0, spec.themeId);
     const hull = new Sprite(Texture.from(hullFrame.canvas as HTMLCanvasElement));
     hull.anchor.set(hullFrame.pivot.x / hullFrame.width, hullFrame.pivot.y / hullFrame.height);
@@ -70,7 +77,8 @@ export class LevelView {
     const main = getVesselAnchors('vessel.csm').engines[0]?.find((e) => e.engine === 'main');
     this.flame.position.set((main?.x ?? hullFrame.pivot.x) - hullFrame.pivot.x, (main?.y ?? hullFrame.height) - hullFrame.pivot.y);
     this.flame.visible = false;
-    this.vessel.addChild(this.flame, hull);
+    art0.addChild(this.flame, hull);
+    this.vessel.addChild(art0);
     this.world.addChild(this.vessel);
 
     this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10, fill: 0xd8dce8 } });
