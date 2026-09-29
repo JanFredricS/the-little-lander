@@ -10,7 +10,7 @@ import { spriteRegistry } from './sprites/registry';
 import { THEME_IDS, TILE_SIZE } from '../contracts';
 import type { ThemeId, TileKind } from '../contracts';
 import { Pix } from './core/pix';
-import { PALETTES } from './palettes';
+import { CRAFT, PALETTES } from './palettes';
 import { TERRAIN_MATERIALS, THEME_MATERIALS, generateTile } from './tiles';
 import { generateBackdrop } from './backdrops';
 import { generateStill, STILL_IDS } from './stills';
@@ -46,18 +46,40 @@ export function artCatalog(): CatalogItem[] {
       },
     });
   }
-  for (const [name, entry] of Object.entries(spriteRegistry())) {
-    const section = name.startsWith('vessel.') ? 'Vessels' : `Sprites · ${entry.home}`;
+  const reg = spriteRegistry();
+  for (const [name, entry] of Object.entries(reg)) {
+    const craft = !entry.themed && /^(vessel|fx|obj)\./.test(name);
+    const section = !craft
+      ? `Sprites · ${entry.home}`
+      : name.startsWith('vessel.')
+        ? 'Vessels (craft palette)'
+        : name.startsWith('fx.')
+          ? 'Effects (craft palette)'
+          : 'Objects (craft palette)';
     items.push({
-      id: `sprites/${entry.themed ? `${entry.home}/` : ''}${name}`,
+      id: `sprites/${craft ? 'craft/' : `${entry.home}/`}${name}`,
       section,
       label: name,
-      note: entry.note,
+      note: entry.note ?? (craft ? 'shared craft palette: identical in every theme' : undefined),
       render: () => {
         const d = entry.gen(entry.home);
         return { frames: d.frames, palette: d.palette };
       },
     });
+  }
+  // Cross-theme gameplay objects, shown in every theme against that theme's
+  // backdrop + ground tiles so reviewers judge them in context.
+  for (const theme of THEME_IDS) {
+    for (const [name, entry] of Object.entries(reg)) {
+      if (entry.themed || !name.startsWith('obj.')) continue;
+      items.push({
+        id: `sprites/${theme}/context/${name}`,
+        section: `Sprites · ${theme}`,
+        label: `${name} (craft) in ${theme}`,
+        note: 'craft-palette object over this theme\'s backdrop and ground tiles',
+        render: () => inContext(theme, entry.gen(theme).frames),
+      });
+    }
   }
   for (const theme of THEME_IDS) {
     items.push({
@@ -96,6 +118,32 @@ export function artCatalog(): CatalogItem[] {
     }
   }
   return items.filter((it) => !it.exists || it.exists());
+}
+
+/** Theme palette + craft palette merged (craft indices offset past the theme's). */
+function contextPalette(theme: ThemeId): ArtPalette {
+  const t = PALETTES[theme];
+  return { name: `${t.name} + craft`, colors: [...t.colors, ...CRAFT.colors.slice(1)], ramps: {}, outline: t.outline };
+}
+
+/** Draw craft-palette frames over a crop of the theme backdrop with a strip of ground tiles. */
+function inContext(theme: ThemeId, frames: readonly Pix[]): CatalogRender {
+  const off = PALETTES[theme].colors.length - 1;
+  const layers = generateBackdrop(theme);
+  const bw = layers[0]!.pix.w;
+  const bh = layers[0]!.pix.h;
+  const comp = new Pix(bw, bh);
+  for (const l of layers) comp.blit(l.pix, 0, l.offsetY);
+  const mat = THEME_MATERIALS[theme][0]!;
+  const out = frames.map((f) => {
+    const W = Math.max(48, Math.ceil((f.w + 16) / TILE_SIZE) * TILE_SIZE);
+    const H = f.h + 12 + TILE_SIZE;
+    const p = comp.crop(200, Math.max(0, Math.min(bh - H, 170)), W, H);
+    for (let x = 0; x < W; x += TILE_SIZE) p.blit(generateTile(theme, `${mat}:top` as TileKind, x / TILE_SIZE), x, H - TILE_SIZE);
+    p.blit(f, Math.floor((W - f.w) / 2), H - TILE_SIZE - f.h, { map: (c) => c + off });
+    return p;
+  });
+  return { frames: out, palette: contextPalette(theme), background: PALETTES[theme].background };
 }
 
 /** One theme's tile set laid out for review. */
