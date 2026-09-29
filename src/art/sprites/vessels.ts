@@ -375,7 +375,8 @@ export function buildPod(s: number, seed = 31): Built & { guns: { x: number; y: 
   const p = finish(shade(m, { s, cx: W / 2, seed }));
   glintWindows(p, s, -4 * s, 0, 12);
   const guns = podGuns(p, s);
-  return { pix: p, engines: [], guns };
+  // the ascent stage's own small bell
+  return { pix: p, engines: [{ engine: 'main', x: 8 * s, y: 13.6 * s, dir: { x: 0, y: 1 }, flame: 'fx.flameSmall' }], guns };
 }
 
 /** Pod with a re-attached thruster stage (main bell + side RCS). 16×24 at s=1. */
