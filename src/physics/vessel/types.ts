@@ -26,6 +26,8 @@ export interface VesselHooks {
   siteAt(pos: Vec2): string | undefined;
   /** Can a harpoon anchor to `body` at `point`? `brittleSec` when the anchor is brittle. */
   anchorAt(body: BodyHandle, point: Vec2): { ok: boolean; brittleSec?: number };
+  /** Effective gravity (m/s²) at `pos` (zones, ramp); default = world gravity. */
+  gravityAt?(pos: Vec2): Vec2;
 }
 
 export interface FlightVessel extends VesselController {

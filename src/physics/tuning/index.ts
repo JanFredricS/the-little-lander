@@ -3,8 +3,9 @@
  * environment module; LevelSpec.physicsOverrides patches them per level with
  * flat `<group>.<field>` keys (e.g. `'csm.thrust'`, `'goo.burnSec'`).
  *
- * PHYSICS_OVERRIDE_KEYS is the registered key list: the level validator flags
- * any override key not in it. resolveTuning() ignores unknown keys.
+ * PHYSICS_OVERRIDE_KEYS is the registered key list and FIELD_RANGES the
+ * allowed values: the level validator flags unknown keys, out-of-range values
+ * and inconsistent pairs; resolveTuning() ignores unknown / out-of-range ones.
  */
 
 import type { LevelSpec, Vec2 } from '../../contracts';
@@ -39,7 +40,88 @@ export const PHYSICS_OVERRIDE_KEYS: readonly string[] = Object.entries(DEFAULTS)
   Object.keys(values).map((k) => `${group}.${k}`),
 );
 
-/** Defaults patched with `overrides` (unknown keys ignored). Returns fresh frozen objects. */
+/** Allowed range of a tuning field: `min`/`max` inclusive, `above` exclusive lower bound. */
+export interface TuningRange {
+  min?: number;
+  above?: number;
+  max?: number;
+}
+
+const POSITIVE: TuningRange = { above: 0 };
+const UNIT: TuningRange = { min: 0, max: 1 };
+
+/**
+ * Per-field ranges (field names are shared across groups). Anything not listed
+ * must be >= 0. Keep in sync when adding tuning fields.
+ */
+const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
+  // sizes (px) and mass
+  width: POSITIVE,
+  height: POSITIVE,
+  legSpan: POSITIVE,
+  radius: POSITIVE,
+  orbRadius: POSITIVE,
+  fuelRadius: POSITIVE,
+  zoneHeight: POSITIVE,
+  density: POSITIVE,
+  // engines / rates
+  thrust: POSITIVE,
+  rotateAccel: POSITIVE,
+  burnSeconds: POSITIVE,
+  headSpeed: POSITIVE,
+  reelInSpeed: POSITIVE,
+  reelOutSpeed: POSITIVE,
+  ropeRange: POSITIVE,
+  ropeMin: POSITIVE,
+  ropeBreakAccel: POSITIVE,
+  // hull / landing
+  crashSpeed: POSITIVE,
+  landSpeed: POSITIVE,
+  landSpin: POSITIVE,
+  landAngle: { above: 0, max: Math.PI },
+  hitDamage: UNIT,
+  attachDamage: UNIT,
+  restitution: UNIT,
+  exhaustLength: POSITIVE,
+  exhaustHalfAngle: { above: 0, max: Math.PI / 2 },
+  // environment
+  burnSec: POSITIVE,
+  lifetimeSec: POSITIVE,
+  refSpeed: POSITIVE,
+  maxAlive: { min: 1 },
+  maxAttached: { min: 1 },
+};
+
+/** Range of a registered `group.field` key (undefined for unknown keys). */
+export function tuningRange(key: string): TuningRange | undefined {
+  if (!PHYSICS_OVERRIDE_KEYS.includes(key)) return undefined;
+  return FIELD_RANGES[key.slice(key.indexOf('.') + 1)] ?? { min: 0 };
+}
+
+/** Why `value` is not acceptable for registered override `key` (null = ok, or key unknown). */
+export function overrideRangeError(key: string, value: number): string | null {
+  const r = tuningRange(key);
+  if (!r) return null;
+  if (!Number.isFinite(value)) return 'must be a finite number';
+  if (r.above !== undefined && !(value > r.above)) return `must be > ${r.above}`;
+  if (r.min !== undefined && value < r.min) return `must be >= ${r.min}`;
+  if (r.max !== undefined && value > r.max) return `must be <= ${+r.max.toFixed(4)}`;
+  return null;
+}
+
+/** Cross-field consistency of a resolved tuning (e.g. damageSpeed < crashSpeed). */
+export function tuningConsistencyErrors(t: PhysicsTuning): string[] {
+  const out: string[] = [];
+  for (const g of ['csm', 'lander', 'harpoon', 'harpoonThrust'] as const) {
+    if (!(t[g].damageSpeed < t[g].crashSpeed)) out.push(`${g}.damageSpeed must be < ${g}.crashSpeed`);
+  }
+  for (const g of ['harpoon', 'harpoonThrust'] as const) {
+    if (!(t[g].ropeMin < t[g].ropeRange)) out.push(`${g}.ropeMin must be < ${g}.ropeRange`);
+  }
+  return out;
+}
+
+/** Defaults patched with `overrides` (unknown keys and out-of-range values ignored). Returns fresh frozen objects. */
 export function resolveTuning(overrides?: Readonly<Record<string, number>>): PhysicsTuning {
   const out: Record<string, Record<string, number>> = {};
   for (const [group, values] of Object.entries(DEFAULTS)) out[group] = { ...values };
@@ -47,7 +129,7 @@ export function resolveTuning(overrides?: Readonly<Record<string, number>>): Phy
     const dot = key.indexOf('.');
     const group = out[key.slice(0, dot)];
     const field = key.slice(dot + 1);
-    if (dot > 0 && group && field in group && Number.isFinite(value)) group[field] = value;
+    if (dot > 0 && group && field in group && overrideRangeError(key, value) === null) group[field] = value;
   }
   for (const g of Object.values(out)) Object.freeze(g);
   return Object.freeze(out) as unknown as PhysicsTuning;

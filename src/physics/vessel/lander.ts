@@ -1,9 +1,10 @@
 /**
  * Lander mode: two independent engines left and right of centre, no direct
- * rotation input. Both engines = straight climb along the body axis; one
- * engine alone = its share of thrust plus a differential torque (left engine
- * pushes the left side up -> clockwise), so the tilted thrust vector drifts
- * the lander sideways. The `thrust` control fires both.
+ * rotation input. Each engine pushes along the body axis AT its nozzle
+ * (x = ±engineOffset), so one engine alone both lifts and rotates the lander
+ * (left engine pushes the left side up -> clockwise) and the tilted thrust
+ * drifts it sideways. Torque emerges from the offset: attached goo / extra
+ * mass changes the angular response. The `thrust` control fires both.
  */
 
 import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../contracts';
@@ -45,9 +46,9 @@ export class LanderController extends VesselBase {
     this.setEngines(false, left, right);
     const n = (left ? 1 : 0) + (right ? 1 : 0);
     if (n === 0) return;
-    this.thrust(n * t.thrust * this.weight);
-    const diff = (left ? 1 : 0) - (right ? 1 : 0);
-    if (diff !== 0) this.physics.applyTorque(this.body, diff * t.spinAccel * this.inertia);
+    const f = t.thrust * this.weight;
+    if (left) this.thrustAt(f, { x: -t.engineOffset, y: t.height / 2 });
+    if (right) this.thrustAt(f, { x: t.engineOffset, y: t.height / 2 });
     this.burnFuel((n * 0.5 * dt) / t.burnSeconds);
   }
 }

@@ -6,6 +6,7 @@
  */
 
 import type { BodyHandle, EntitySpec, LevelSpec, PhysicsApi, StaticPropEntity, TerrainPiece } from '../contracts';
+import type { FlightLevelBodies } from '../physics/env/environment';
 import { pxToM } from '../physics/units';
 
 export interface BuiltLevel {
@@ -24,6 +25,14 @@ export interface BuiltLevel {
    * fuel pickups and beacon sites from this list and reports the rest.
    */
   unhandled: EntitySpec[];
+}
+
+/** The slice of a built level the flight environment needs. */
+export function flightLevelBodies(built: BuiltLevel): FlightLevelBodies {
+  return {
+    nonAnchorable: built.nonAnchorable,
+    dynamicBodies: [...built.props.values()].filter((p) => p.entity.dynamic).map((p) => p.body),
+  };
 }
 
 export const TAG_TERRAIN = 'terrain';

@@ -18,7 +18,7 @@
  */
 
 import Box2DFactory from '#box2d-compat';
-import type { MainModule, b2BodyId, b2JointDef, b2JointId, b2ShapeDef, b2ShapeId, b2Vec2, b2WorldId } from '#box2d-compat';
+import type { MainModule, b2BodyId, b2ContactData, b2JointDef, b2JointId, b2ShapeDef, b2ShapeId, b2Vec2, b2WorldId } from '#box2d-compat';
 import { FIXED_DT, SUB_STEPS } from '../contracts';
 import type {
   BodyDef,
@@ -39,6 +39,7 @@ import type {
   WeldJointDef,
   WorldOptions,
 } from '../contracts';
+import type { BodyContact, ContactDataSource } from './contactData';
 import { signedArea } from './units';
 
 let modulePromise: Promise<MainModule> | null = null;
@@ -70,7 +71,7 @@ interface JointRecord {
 
 const EPS_DT = 1e-9;
 
-export class PhysicsWorld implements PhysicsApi {
+export class PhysicsWorld implements PhysicsApi, ContactDataSource {
   private readonly worldId: b2WorldId;
   private readonly bodies = new Map<BodyHandle, BodyRecord>();
   private readonly joints = new Map<JointHandle, JointRecord>();
@@ -643,6 +644,44 @@ export class PhysicsWorld implements PhysicsApi {
       }
     } finally {
       ev.delete();
+    }
+    return out;
+  }
+
+  /**
+   * Touching contacts of `h` with the last step's solver impulses (not part of
+   * the PhysicsApi contract, see src/physics/contactData.ts).
+   */
+  bodyContacts(h: BodyHandle): BodyContact[] {
+    const rec = this.body(h);
+    const cap = this.b2.b2Body_GetContactCapacity(rec.id);
+    if (cap <= 0) return [];
+    const data = this.b2.b2Body_GetContactData(rec.id, cap) as b2ContactData[];
+    const out: BodyContact[] = [];
+    // Ownership (embind): each array entry and each GetPoint() result is an
+    // owned copy and must be deleted; `.manifold`, `.normal` and `.point` are
+    // views INTO their parent and must NOT be deleted (double free).
+    for (const d of data) {
+      try {
+        const m = d.manifold;
+        const a = this.shapeOwner.get(shapeKey(d.shapeIdA));
+        const b = this.shapeOwner.get(shapeKey(d.shapeIdB));
+        if (a === undefined || b === undefined || m.pointCount === 0) continue;
+        const selfIsA = a === h;
+        const sign = selfIsA ? 1 : -1; // manifold normal points A -> B
+        const nv = m.normal;
+        const normal = { x: nv.x * sign, y: nv.y * sign };
+        const points: BodyContact['points'] = [];
+        for (let i = 0; i < m.pointCount; i++) {
+          const mp = m.GetPoint(i);
+          const pt = mp.point;
+          points.push({ point: { x: pt.x, y: pt.y }, impulse: mp.totalNormalImpulse });
+          mp.delete();
+        }
+        out.push({ other: selfIsA ? b : a, normal, points });
+      } finally {
+        d.delete();
+      }
     }
     return out;
   }

@@ -17,17 +17,16 @@ export const LANDER_TUNING = {
   restitution: 0.02,
   /** Thrust of EACH engine as a multiple of the dry lander's weight at reference gravity (both = 2×). */
   thrust: 0.8,
-  /**
-   * Angular acceleration (rad/s²) from ONE engine firing alone (dry lander).
-   * The differential torque is applied directly so the feel does not depend
-   * on level gravity. Left engine = clockwise (+), right = counter-clockwise.
-   */
-  spinAccel: 3.2,
-  /** Small passive angular damping: hard but learnable. */
+  /** Passive angular damping (1/s): tames the one-engine spin. */
   angularDamping: 1.2,
   linearDamping: 0,
-  /** Nozzle x offset from centre (px) — render + exhaust cones. */
-  engineOffset: 8,
+  /**
+   * Nozzle x offset from centre (px). Each engine's force acts here, so this
+   * is the spin lever: one engine alone gives angular accel ≈
+   * thrust·weight·offset / inertia (scales with level gravity like the lift).
+   * Left engine = clockwise (+), right = counter-clockwise.
+   */
+  engineOffset: 4,
   /** Seconds of continuous BOTH-engine burn per full tank (one engine burns half as fast). */
   burnSeconds: 30,
   damageSpeed: 75,

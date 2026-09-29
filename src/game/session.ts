@@ -23,7 +23,7 @@ import type {
   VesselState,
 } from '../contracts';
 import { PhysicsWorld } from '../physics/engine';
-import { buildLevel, type BuiltLevel } from '../levels/build';
+import { buildLevel, flightLevelBodies, type BuiltLevel } from '../levels/build';
 import { FlightEnvironment } from '../physics/env/environment';
 import { TriggerLatch } from '../physics/env/triggers';
 import { resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
@@ -63,7 +63,7 @@ export class LevelSession {
     this.sink = (e) => this.emit(e);
     this.tuning = resolveTuning(spec.physicsOverrides);
     this.vesselOptions = vesselOptionsFor(spec, this.tuning);
-    this.env = new FlightEnvironment(physics, spec, this.built, this.tuning, this.sink, () => this.completed);
+    this.env = new FlightEnvironment(physics, spec, flightLevelBodies(this.built), this.tuning, this.sink, () => this.completed);
     this.vessel = createVessel(
       spec.vesselMode,
       physics,

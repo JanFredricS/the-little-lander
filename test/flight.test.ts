@@ -119,6 +119,33 @@ describe('lander', () => {
     expect(s.vel.x).toBeLessThan(-10);
   });
 
+  it('engines push at their nozzles: one-engine tilt scales with engineOffset', async () => {
+    const tilt = async (offset: number) => {
+      const r = await rig('lander');
+      (r.vessel as unknown as { options: VesselOptions }).options = {
+        ...(r.vessel as unknown as { options: VesselOptions }).options,
+        tuning: resolveTuning({ 'lander.engineOffset': offset }),
+      };
+      return r.run(15, input({ engineLeft: true })).angle;
+    };
+    const near = await tilt(4);
+    const far = await tilt(8);
+    expect(near).toBeGreaterThan(0);
+    expect(far / near).toBeGreaterThan(1.8);
+    expect(far / near).toBeLessThan(2.2);
+  });
+
+  it('extra mass slows the one-engine spin (torque is physical, not scripted)', async () => {
+    const plain = await rig('lander');
+    const loaded = await rig('lander');
+    // bolt a heavy box onto the hull, off-centre-free (on the axis), like welded goo
+    loaded.physics.addBox(loaded.vessel.body, pxToM(8), pxToM(4), { density: 20 }, { x: 0, y: pxToM(-12) });
+    const a = plain.run(15, input({ engineLeft: true })).angle;
+    const b = loaded.run(15, input({ engineLeft: true })).angle;
+    expect(b).toBeGreaterThan(0);
+    expect(b).toBeLessThan(a * 0.8);
+  });
+
   it('one engine burns half as fast as both', async () => {
     const one = await rig('lander');
     const both = await rig('lander');
@@ -221,6 +248,51 @@ describe('crash vs soft-land', () => {
 });
 
 // ----------------------------------------------------------------- harpoon
+
+describe('impact damage from contact impulse', () => {
+  const settled = async () => {
+    const r = await rig('lander', { ground: 100, pos: { x: 0, y: 82 } });
+    r.run(60);
+    expect(r.vessel.state().landed).toBe(true);
+    expect(r.vessel.state().hull).toBe(1);
+    return r;
+  };
+  const drop = (r: Awaited<ReturnType<typeof rig>>, half: number, density: number, speed: number) => {
+    const b = r.physics.createBody({ type: 'dynamic', position: { x: 0, y: pxToM(50) }, linearVelocity: { x: 0, y: pxToM(speed) }, bullet: true, tag: 'prop' });
+    r.physics.addBox(b, pxToM(half), pxToM(half), { density });
+    return b;
+  };
+
+  it('bodyContacts reports the resting support (normal toward the ground) without leaking wasm memory', async () => {
+    const r = await settled();
+    const cs = r.physics.bodyContacts(r.vessel.body);
+    expect(cs.length).toBeGreaterThan(0);
+    expect(cs[0]!.normal.y).toBeCloseTo(1, 3);
+    expect(cs[0]!.points.every((p) => p.impulse > 0)).toBe(true);
+    const h0 = r.physics.heapBytesInUse();
+    for (let i = 0; i < 500; i++) r.physics.bodyContacts(r.vessel.body);
+    expect(r.physics.heapBytesInUse()).toBe(h0);
+  });
+
+  it('a heavy, slow crate landing on the hull damages it', async () => {
+    const r = await settled();
+    const crate = drop(r, 10, 60, 50); // ~20x the lander's mass, slower than damageSpeed
+    expect(r.physics.getMass(crate)).toBeGreaterThan(10 * r.vessel.totalMass());
+    const s = r.run(40);
+    expect(s.hull).toBeLessThan(1);
+    expect(ofType(r.events, 'hullChanged')[0]?.reason).toBe('impact');
+  });
+
+  it('a light, fast pebble does not reach the crash threshold', async () => {
+    const r = await settled();
+    const t = resolveTuning().lander;
+    drop(r, 2, 0.5, t.crashSpeed * 2.5); // approach speed far above crashSpeed
+    const s = r.run(40);
+    expect(ofType(r.events, 'impact').some((e) => e.speed > t.crashSpeed)).toBe(true);
+    expect(s.crashed).toBe(false);
+    expect(s.hull).toBeGreaterThan(0.9);
+  });
+});
 
 describe('harpoon', () => {
   it('fires, anchors to the ceiling, reels in and releases', async () => {
@@ -576,6 +648,49 @@ describe('environment: pickups & beacons', () => {
     expect(s.outcome?.kind).toBe('complete');
   });
 
+  it('a vessel pinned against a wall inside a beacon zone does not land or plant', async () => {
+    const wallX = 560;
+    const { s, events, run } = await session(
+      lab({
+        vesselMode: 'csm',
+        spawn: { x: wallX - 12, y: GROUND - 30 },
+        pieces: [
+          { id: 'ground', kind: 'ground', points: [{ x: 0, y: GROUND }, { x: 3000, y: GROUND }], style: { material: 'metal' } },
+          { id: 'wall', kind: 'polygon', points: [{ x: wallX, y: GROUND - 300 }, { x: wallX + 40, y: GROUND - 300 }, { x: wallX + 40, y: GROUND }, { x: wallX, y: GROUND }], style: { material: 'metal' } },
+        ],
+        entities: [{ id: 'site', kind: 'beaconSite', x: wallX - 40, y: GROUND, w: 80, holdSec: 0.5 }],
+        zones: [{ kind: 'gravityZone', id: 'side', rect: { x: 0, y: 0, w: 3000, h: GROUND }, gravity: { x: 3.2, y: 0 } }],
+      }),
+    );
+    run(240);
+    expect(s.state.pos.x).toBeGreaterThan(wallX - 12); // resting on the wall
+    expect(Math.hypot(s.state.vel.x, s.state.vel.y)).toBeLessThan(5);
+    expect(s.state.landed).toBe(false);
+    expect(ofType(events, 'softLand')).toHaveLength(0);
+    expect(ofType(events, 'beaconPlanted')).toHaveLength(0);
+  });
+
+  it('touching a ceiling (upright, inverted gravity) is not a landing', async () => {
+    const ceil = GROUND - 200;
+    const { s, events, run } = await session(
+      lab({
+        vesselMode: 'csm',
+        spawn: { x: 500, y: ceil + 40 },
+        pieces: [
+          { id: 'ground', kind: 'ground', points: [{ x: 0, y: GROUND }, { x: 3000, y: GROUND }], style: { material: 'metal' } },
+          { id: 'ceiling', kind: 'ceiling', points: [{ x: 0, y: ceil }, { x: 3000, y: ceil }], style: { material: 'rock' } },
+        ],
+        entities: [{ id: 'site', kind: 'beaconSite', x: 500, y: ceil + 60, w: 80, holdSec: 0.5 }],
+        zones: [{ kind: 'gravityZone', id: 'up', rect: { x: 0, y: 0, w: 3000, h: GROUND }, gravity: { x: 0, y: -3.2 } }],
+      }),
+    );
+    run(240);
+    expect(s.state.pos.y).toBeLessThan(ceil + 20); // pressed against the ceiling
+    expect(s.state.landed).toBe(false);
+    expect(ofType(events, 'softLand')).toHaveLength(0);
+    expect(ofType(events, 'beaconPlanted')).toHaveLength(0);
+  });
+
   it('lifting off resets the hold', async () => {
     const { events, run } = await session(lab({ entities: [{ id: 'site', kind: 'beaconSite', x: 500, y: GROUND, w: 80, holdSec: 1 }] }));
     run(60);
@@ -615,6 +730,17 @@ describe('session: modes, tuning, physlab', () => {
     expect(strong.run(30, input({ thrust: true })).vel.y).toBeLessThan(weak.run(30, input({ thrust: true })).vel.y);
   });
 
+  it('out-of-range overrides are rejected by the validator and ignored at runtime', () => {
+    const errs = (o: Record<string, number>) => validateLevel({ ...physlab, physicsOverrides: o }).join('\n');
+    expect(errs({ 'csm.width': 0 })).toMatch(/csm\.width' = 0 must be > 0/);
+    expect(errs({ 'csm.burnSeconds': 0 })).toMatch(/csm\.burnSeconds' = 0 must be > 0/);
+    expect(errs({ 'lander.thrust': -1 })).toMatch(/lander\.thrust/);
+    expect(errs({ 'csm.restitution': 1.5 })).toMatch(/must be <= 1/);
+    expect(errs({ 'csm.damageSpeed': 300 })).toMatch(/csm\.damageSpeed must be < csm\.crashSpeed/);
+    expect(errs({ 'csm.width': 30, 'goo.burnSec': 0.8, 'lander.engineOffset': 0 })).toBe('');
+    expect(resolveTuning({ 'csm.width': 0, 'csm.burnSeconds': -5 }).csm).toMatchObject({ width: 20, burnSeconds: 30 });
+  });
+
   it('physlab is valid, registered as debug, and runs deterministically in every mode', async () => {
     expect(validateLevel(physlab)).toEqual([]);
     expect(physlab.debug).toBe(true);
@@ -630,5 +756,26 @@ describe('session: modes, tuning, physlab', () => {
       return out;
     };
     expect(await trace()).toEqual(await trace());
+  });
+});
+
+describe('rope rendering', () => {
+  it('is a segmented polyline: straight when taut, sagging when slack', async () => {
+    const { ropePolyline, ROPE_SEGMENTS } = await import('../src/render/ropeLine');
+    const a = { x: 0, y: 0 };
+    const b = { x: 100, y: 0 };
+    const taut = ropePolyline(a, b, 100);
+    expect(taut).toHaveLength(ROPE_SEGMENTS + 1);
+    expect(ROPE_SEGMENTS).toBeGreaterThanOrEqual(8);
+    expect(Math.max(...taut.map((p) => Math.abs(p.y)))).toBeLessThan(1e-9);
+    const slack = ropePolyline(a, b, 130);
+    expect(slack[0]).toEqual(a);
+    expect(slack[slack.length - 1]).toEqual(b);
+    const mid = slack[ROPE_SEGMENTS / 2]!;
+    expect(mid.y).toBeGreaterThan(20); // hangs down (y-down)
+    let arc = 0;
+    for (let i = 1; i < slack.length; i++) arc += Math.hypot(slack[i]!.x - slack[i - 1]!.x, slack[i]!.y - slack[i - 1]!.y);
+    expect(arc).toBeGreaterThan(115);
+    expect(arc).toBeLessThan(140);
   });
 });
