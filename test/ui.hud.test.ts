@@ -1,0 +1,202 @@
+import { describe, expect, it } from 'vitest';
+import { FIXED_DT } from '../src/contracts';
+import type { GameEvent, LevelSpec, VesselState } from '../src/contracts';
+import { frameHasInput, helpCard } from '../src/ui/controlsHelp';
+import { emptyFrame } from '../src/shell/input';
+import {
+  BANNER_TTL,
+  fuelLow,
+  hudReduce,
+  hudTick,
+  initHud,
+  objectiveLines,
+  RADIATION_HIT_FLASH,
+  WIND_WARNING_TTL,
+  windArrow,
+  type HudState,
+} from '../src/ui/hud/hudState';
+
+const spec: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives' | 'startFuel'> = {
+  id: 'floatingIsles',
+  vesselMode: 'csm',
+  startFuel: 0.8,
+  objectives: [
+    { kind: 'plantBeacons', id: 'beacons', count: 5, siteIds: ['a', 'b', 'c', 'd', 'e'] },
+    { kind: 'collectOrbs', id: 'orbs', count: 3 },
+    { kind: 'reachExit', id: 'exit', exitId: 'dock' },
+  ],
+};
+
+const run = (events: GameEvent[], s: HudState = initHud(spec)) => events.reduce(hudReduce, s);
+
+function vessel(p: Partial<VesselState> = {}): VesselState {
+  return {
+    mode: 'csm',
+    pos: { x: 0, y: 0 },
+    vel: { x: 0, y: 0 },
+    angle: 0,
+    angularVel: 0,
+    fuel: 1,
+    hull: 1,
+    landed: false,
+    crashed: false,
+    attachedGoo: 0,
+    engines: { main: false, left: false, right: false },
+    ...p,
+  };
+}
+
+describe('HUD reducer', () => {
+  it('initialises objectives, fuel and mode from the level spec', () => {
+    const s = initHud(spec);
+    expect(s.fuel).toBe(0.8);
+    expect(s.mode).toBe('csm');
+    expect(s.beacons).toEqual({ planted: 0, total: 5 });
+    expect(s.orbTarget).toBe(3);
+    expect(objectiveLines(s)).toEqual([
+      { text: 'BEACONS 0/5', done: false },
+      { text: 'ORBS 0/3', done: false },
+      { text: 'REACH THE EXIT', done: false },
+    ]);
+  });
+
+  it('tracks fuel (low flag under 25%) and hull from events, clamped', () => {
+    let s = run([
+      { type: 'fuelChanged', fuel: 0.3, delta: -0.5, reason: 'burn' },
+      { type: 'hullChanged', hull: 0.6, delta: -0.4, reason: 'impact' },
+    ]);
+    expect(fuelLow(s)).toBe(false);
+    s = run([{ type: 'fuelChanged', fuel: 0.24, delta: -0.06, reason: 'burn' }], s);
+    expect(fuelLow(s)).toBe(true);
+    s = run([{ type: 'fuelChanged', fuel: 1.5, delta: 1, reason: 'refill' }, { type: 'hullChanged', hull: -1, delta: -2, reason: 'debris' }], s);
+    expect(s.fuel).toBe(1);
+    expect(s.hull).toBe(0);
+  });
+
+  it('counts beacons, orbs and completes objectives', () => {
+    const s = run([
+      { type: 'beaconPlanted', siteId: 'a', planted: 1, total: 5 },
+      { type: 'beaconPlanted', siteId: 'b', planted: 2, total: 5 },
+      { type: 'orbCollected', entityId: 'o1', points: 100, fuelRefill: 0.1 },
+      { type: 'orbCollected', entityId: 'o2', points: 50, fuelRefill: 0.1 },
+      { type: 'objectiveComplete', objectiveId: 'exit' },
+    ]);
+    expect(s.beacons).toEqual({ planted: 2, total: 5 });
+    expect(s.orbs).toBe(2);
+    expect(s.score).toBe(150);
+    expect(objectiveLines(s)).toEqual([
+      { text: 'BEACONS 2/5', done: false },
+      { text: 'ORBS 2/3', done: false },
+      { text: 'REACH THE EXIT', done: true },
+    ]);
+    expect(s.banner?.text).toBe('OBJECTIVE COMPLETE');
+  });
+
+  it('ignores objectiveComplete for unknown ids', () => {
+    const s0 = initHud(spec);
+    expect(hudReduce(s0, { type: 'objectiveComplete', objectiveId: 'nope' })).toBe(s0);
+  });
+
+  it('goo attach / burn count and mode changes', () => {
+    const s = run([
+      { type: 'gooAttached', gooId: 1, attached: 1 },
+      { type: 'gooAttached', gooId: 2, attached: 2 },
+      { type: 'gooBurned', gooId: 1, attached: 1 },
+      { type: 'vesselModeChanged', from: 'csm', to: 'lander' },
+    ]);
+    expect(s.attachedGoo).toBe(1);
+    expect(s.mode).toBe('lander');
+  });
+
+  it('wind gust: warning -> start -> end, and a stale warning self-clears', () => {
+    let s = run([{ type: 'windGust', zoneId: 'w1', phase: 'warning', accel: { x: -6, y: 0 } }]);
+    expect(s.wind?.phase).toBe('warning');
+    expect(windArrow(s.wind!.accel)).toBe('left');
+    s = run([{ type: 'windGust', zoneId: 'w1', phase: 'start', accel: { x: -6, y: 0 } }], s);
+    expect(s.wind?.phase).toBe('start');
+    // an 'end' for a different zone does not clear it
+    s = run([{ type: 'windGust', zoneId: 'other', phase: 'end', accel: { x: 0, y: 0 } }], s);
+    expect(s.wind).not.toBeNull();
+    s = run([{ type: 'windGust', zoneId: 'w1', phase: 'end', accel: { x: 0, y: 0 } }], s);
+    expect(s.wind).toBeNull();
+
+    s = run([{ type: 'windGust', zoneId: 'w2', phase: 'warning', accel: { x: 3, y: -3 } }], s);
+    expect(windArrow(s.wind!.accel)).toBe('upRight');
+    for (let t = 0; t < WIND_WARNING_TTL + 0.1; t += FIXED_DT) s = hudTick(s, null, FIXED_DT);
+    expect(s.wind).toBeNull();
+  });
+
+  it('radiation: charging counts down on sim time, hit flashes and clears the telegraph', () => {
+    let s = run([{ type: 'radiationCharging', emitterId: 'sun', inSec: 2 }]);
+    for (let i = 0; i < 60; i++) s = hudTick(s, null, FIXED_DT);
+    expect(s.radiation?.inSec).toBeCloseTo(1, 5);
+    s = run([{ type: 'radiationHit', emitterId: 'sun', fuelLost: 0.3 }], s);
+    expect(s.radiation).toBeNull();
+    expect(s.radiationHit).toBe(RADIATION_HIT_FLASH);
+    expect(s.radiationFuelLost).toBe(0.3);
+    for (let t = 0; t < RADIATION_HIT_FLASH + 0.05; t += FIXED_DT) s = hudTick(s, null, FIXED_DT);
+    expect(s.radiationHit).toBe(0);
+  });
+
+  it('crash clears warnings; banners expire', () => {
+    let s = run([
+      { type: 'windGust', zoneId: 'w', phase: 'start', accel: { x: 1, y: 0 } },
+      { type: 'radiationCharging', emitterId: 'e', inSec: 3 },
+      { type: 'beaconPlanted', siteId: 'a', planted: 1, total: 5 },
+      { type: 'crash', cause: 'impact', pos: { x: 0, y: 0 }, speed: 300 },
+    ]);
+    expect(s.crashed).toBe(true);
+    expect(s.wind).toBeNull();
+    expect(s.radiation).toBeNull();
+    for (let t = 0; t < BANNER_TTL + 0.05; t += FIXED_DT) s = hudTick(s, null, FIXED_DT);
+    expect(s.banner).toBeNull();
+  });
+
+  it('boss hp from phase / hit / defeat events', () => {
+    const boss = initHud({ id: 'keeper', vesselMode: 'harpoonThrust', objectives: [{ kind: 'surviveBoss', id: 'b', bossEntityId: 'k' }] });
+    let s = run([{ type: 'bossPhase', phase: 1, hp: 1 }, { type: 'bossHit', damage: 0.2, hp: 0.8, source: 'rock' }], boss);
+    expect(s.bossHp).toBeCloseTo(0.8);
+    s = run([{ type: 'bossDefeated' }], s);
+    expect(s.bossHp).toBe(0);
+    expect(objectiveLines(s)[0]).toEqual({ text: 'DEFEAT THE KEEPER', done: true });
+  });
+
+  it('VesselState polling is authoritative for fuel/hull/goo/mode and advances time', () => {
+    let s = run([{ type: 'fuelChanged', fuel: 0.9, delta: 0, reason: 'burn' }]);
+    s = hudTick(s, vessel({ fuel: 0.1, hull: 0.5, attachedGoo: 3, mode: 'lander', landed: true }), FIXED_DT);
+    expect(s.fuel).toBe(0.1);
+    expect(fuelLow(s)).toBe(true);
+    expect(s.hull).toBe(0.5);
+    expect(s.attachedGoo).toBe(3);
+    expect(s.mode).toBe('lander');
+    expect(s.landed).toBe(true);
+    expect(s.time).toBeCloseTo(FIXED_DT);
+  });
+
+  it('windArrow covers 8 directions and calm', () => {
+    expect(windArrow({ x: 0, y: 0 })).toBeNull();
+    expect(windArrow({ x: 1, y: 0 })).toBe('right');
+    expect(windArrow({ x: 0, y: 1 })).toBe('down');
+    expect(windArrow({ x: 0, y: -1 })).toBe('up');
+    expect(windArrow({ x: -1, y: 1 })).toBe('downLeft');
+  });
+});
+
+describe('controls help', () => {
+  it('has keyboard and touch cards for every mode', () => {
+    for (const m of ['csm', 'lander', 'harpoon', 'harpoonThrust'] as const) {
+      expect(helpCard(m, false).lines.length).toBeGreaterThan(2);
+      expect(helpCard(m, true).lines.join(' ')).not.toMatch(/SPACE/);
+    }
+    expect(helpCard('lander', false).lines.join(' ')).toMatch(/LEFT ENGINE/);
+  });
+
+  it('first-input detection ignores a hovering mouse aim', () => {
+    const f = emptyFrame();
+    expect(frameHasInput(f)).toBe(false);
+    expect(frameHasInput({ ...f, aim: { x: 1, y: 0 }, aimTarget: { x: 10, y: 10 } })).toBe(false);
+    expect(frameHasInput({ ...f, aim: { x: 1, y: 0 }, aimTarget: null })).toBe(true);
+    expect(frameHasInput({ ...f, engineLeft: true })).toBe(true);
+    expect(frameHasInput({ ...f, fire: true })).toBe(true);
+  });
+});

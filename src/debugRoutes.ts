@@ -6,7 +6,7 @@
  * never bloat the game bundle.
  *
  * `?level=<id|map1..map8>` is not a route: the game itself starts that level.
- * `?screen=title` starts at the title screen instead of the default level.
+ * `?screen=title` ignores `?level=` and stays on the title screen (the default).
  */
 
 export interface DebugRoute {

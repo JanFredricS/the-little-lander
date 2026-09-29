@@ -68,8 +68,10 @@ export class LevelView {
     this.vessel.addChild(this.flame, hull, nose);
     this.world.addChild(this.vessel);
 
-    this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10, fill: 0xd8dce8 } });
-    this.hud.position.set(6, 4);
+    // S0 debug line; the player HUD is src/ui (S4), so this sits at the bottom, dimmed.
+    this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
+    this.hud.alpha = 0.7;
+    this.hud.position.set(4, 348);
     this.root.addChild(this.hud);
   }
 
