@@ -5,7 +5,7 @@
  * implement control() (input -> forces, BEFORE step) and optionally
  * postStep() (once per physics step, AFTER step).
  *
- * Units: PhysicsApi in metres; everything reported (VesselState, events) in
+ * Units: physics (FlightPhysics = PhysicsApi + contact data) in metres; everything reported (VesselState, events) in
  * world px. Tuning speeds are px/s.
  */
 
@@ -17,14 +17,13 @@ import type {
   GameEventSink,
   HullChangeReason,
   InputFrame,
-  PhysicsApi,
   RopeState,
   Vec2,
   VesselMode,
   VesselSpawn,
   VesselState,
 } from '../../contracts';
-import { requireContactData, type BodyContact, type ContactDataSource } from '../contactData';
+import { requireContactData, type BodyContact, type FlightPhysics } from '../contactData';
 import { bodyUp, type Cone } from '../geom';
 import { stepContacts } from '../stepEvents';
 import { PASS_THROUGH_TAGS, TAG_DEBRIS_BURNING, TAG_GOO, TAG_VESSEL, isDebrisTag } from '../tags';
@@ -85,13 +84,11 @@ export abstract class VesselBase implements FlightVessel {
   private settle = 0;
   /** This step's touching contacts of every part (with the part they touch). */
   private touching: PartContact[] = [];
-  /** The physics-local contact-data extension (required, see src/physics/contactData.ts). */
-  private readonly contactData: ContactDataSource;
   private processedStep = -1;
   private linearDamping: number;
 
   constructor(
-    protected readonly physics: PhysicsApi,
+    protected readonly physics: FlightPhysics,
     spawn: VesselSpawn,
     protected readonly events: GameEventSink,
     readonly geometry: VesselGeometry,
@@ -99,7 +96,7 @@ export abstract class VesselBase implements FlightVessel {
     protected readonly options: VesselOptions,
     private readonly exhaust?: ExhaustTuning,
   ) {
-    this.contactData = requireContactData(physics);
+    requireContactData(physics); // runtime backstop: the type already demands it, but casts / untyped JS can lie
     const t = hullTuning;
     this.linearDamping = t.linearDamping;
     this.body = physics.createBody({
@@ -331,7 +328,6 @@ export abstract class VesselBase implements FlightVessel {
       const prev = fastest.get(o);
       if (!prev || h.approachSpeed > prev.speed) fastest.set(o, { speed: h.approachSpeed, point: h.point });
     }
-    let worst = 0;
     for (const [o, h] of fastest) {
       const tag = this.physics.hasBody(o) ? this.physics.getTag(o) : undefined;
       if (tag === TAG_GOO) continue;
@@ -346,24 +342,54 @@ export abstract class VesselBase implements FlightVessel {
       }
     }
 
-    // Hull damage from the solver's contact impulse (N·s): the velocity change
-    // it forces on the vessel, J / mass, in px/s against damageSpeed/crashSpeed.
-    // A heavy slow crate therefore hurts; a light fast pebble barely does.
+    // Hull damage: ONE severity per other body per step (px/s, against
+    // damageSpeed / crashSpeed), then the worst body decides.
+    //  1. Impulse path (preferred): the body still touches after the step and
+    //     the solver pushed on it -> the velocity change that impulse forces on
+    //     the vessel, J / mass. A heavy slow crate therefore hurts; a light
+    //     fast pebble barely does.
+    //  2. Transient path (fallback): a hit event but no touching contact with
+    //     solver impulse (begin + separate inside one step, or the manifold is
+    //     gone / impulse-less by the time we read it). Box2D's hit event
+    //     carries no impulse, only the approach speed, so we estimate the same
+    //     quantity: the vessel's velocity change in a perfectly inelastic
+    //     collision, approachSpeed · m_other / (m_other + m_vessel), with an
+    //     immovable other (static / kinematic: mass 0) taking the full speed.
+    //     Restitution is deliberately ignored, matching how the impulse path
+    //     is calibrated (SOLVER_IMPULSE_SCALE maps touchdowns to approach
+    //     speed), so a bouncy wall is not gentler than a dead one.
+    // Choosing per body (never summing both) means a resting / sliding contact
+    // and its own hit event in the same step cannot double-count.
     {
+      const mass = this.totalMass();
       const impulse = new Map<BodyHandle, number>();
       for (const c of this.touching) {
-        const tag = this.physics.getTag(c.other);
-        if (tag === TAG_GOO || isDebrisTag(tag) || PASS_THROUGH_TAGS.has(tag ?? '')) continue;
+        if (!this.damagesHull(c.other)) continue;
         let j = 0;
         for (const p of c.points) j += p.impulse;
         impulse.set(c.other, (impulse.get(c.other) ?? 0) + j);
       }
-      const mass = this.totalMass();
-      for (const j of impulse.values()) worst = Math.max(worst, mToPx((j * SOLVER_IMPULSE_SCALE) / mass));
+      const severity = new Map<BodyHandle, number>();
+      for (const [o, j] of impulse) if (j > 0) severity.set(o, mToPx((j * SOLVER_IMPULSE_SCALE) / mass));
+      for (const [o, h] of fastest) {
+        // Impulse data wins; a body gone since the step has no mass to judge by, so it is skipped.
+        if (severity.has(o) || !this.physics.hasBody(o) || !this.damagesHull(o)) continue;
+        const mo = this.physics.getMass(o);
+        const share = mo > 0 ? mo / (mo + mass) : 1;
+        severity.set(o, mToPx(h.speed) * share);
+      }
+      let worst = 0;
+      for (const v of severity.values()) worst = Math.max(worst, v);
+      const t = this.hullTuning;
+      if (worst >= t.crashSpeed) this.crash('impact', worst);
+      else if (worst > t.damageSpeed) this.damage((t.hitDamage * (worst - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
     }
-    const t = this.hullTuning;
-    if (worst >= t.crashSpeed) this.crash('impact', worst);
-    else if (worst > t.damageSpeed) this.damage((t.hitDamage * (worst - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
+  }
+
+  /** Bodies whose contact counts toward hull impact damage (goo, debris and pass-through bodies do not). */
+  private damagesHull(h: BodyHandle): boolean {
+    const tag = this.physics.getTag(h);
+    return tag !== TAG_GOO && !isDebrisTag(tag) && !PASS_THROUGH_TAGS.has(tag ?? '');
   }
 
   /** Touching contacts of every part against non-part bodies. */
@@ -371,7 +397,7 @@ export abstract class VesselBase implements FlightVessel {
     const out: PartContact[] = [];
     for (const part of this.parts) {
       if (!this.physics.hasBody(part)) continue;
-      for (const c of this.contactData.bodyContacts(part)) if (!this.parts.has(c.other) && this.physics.hasBody(c.other)) out.push({ ...c, part });
+      for (const c of this.physics.bodyContacts(part)) if (!this.parts.has(c.other) && this.physics.hasBody(c.other)) out.push({ ...c, part });
     }
     return out;
   }

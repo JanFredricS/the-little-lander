@@ -4,7 +4,8 @@
  * Rope guns: see harpoonRig.ts.
  */
 
-import type { GameEventSink, InputFrame, PhysicsApi, RopeState, VesselSpawn } from '../../contracts';
+import type { GameEventSink, InputFrame, RopeState, VesselSpawn } from '../../contracts';
+import type { FlightPhysics } from '../contactData';
 import type { HarpoonThrustTuning, HarpoonTuning, VesselOptions } from '../tuning';
 import { VesselBase } from './base';
 import { HarpoonRig, type RigHost } from './harpoonRig';
@@ -24,7 +25,7 @@ abstract class RopeVessel extends VesselBase {
   protected readonly rig: HarpoonRig;
 
   constructor(
-    physics: PhysicsApi,
+    physics: FlightPhysics,
     spawn: VesselSpawn,
     events: GameEventSink,
     options: VesselOptions,
@@ -67,7 +68,7 @@ abstract class RopeVessel extends VesselBase {
 export class HarpoonController extends RopeVessel {
   readonly mode = 'harpoon' as const;
 
-  constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
+  constructor(physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     super(physics, spawn, events, options, options.tuning.harpoon, false);
   }
 
@@ -79,7 +80,7 @@ export class HarpoonController extends RopeVessel {
 export class HarpoonThrustController extends RopeVessel {
   readonly mode = 'harpoonThrust' as const;
 
-  constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
+  constructor(physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     super(physics, spawn, events, options, options.tuning.harpoonThrust, true);
   }
 

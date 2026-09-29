@@ -2,13 +2,22 @@
  * Touching-contact data with solver impulses — a physics-local extension of
  * the (frozen) PhysicsApi contract.
  *
- * The REAL interface the flight layer (vessels) builds on is
- * `PhysicsApi & ContactDataSource`: soft-land (legs-down contact normals) and
- * impulse-based hull damage need it, and there is no degraded fallback.
- * PhysicsWorld (src/physics/engine.ts), our only physics implementation,
- * provides it; vessel construction throws on a PhysicsApi without it.
+ * The REAL interface the flight layer (vessels) builds on is `FlightPhysics`
+ * (= `PhysicsApi & ContactDataSource`): soft-land (legs-down contact normals)
+ * and impulse-based hull damage need it, and there is no degraded fallback.
+ * Vessel constructors, createVessel() and vesselFactory() take FlightPhysics,
+ * so a PhysicsApi without it is a compile error. PhysicsWorld
+ * (src/physics/engine.ts), our only implementation, conforms structurally.
  *
- * Proposed contract amendment (S8): fold `bodyContacts` into PhysicsApi.
+ * The frozen contract's VesselControllerFactory still passes a plain
+ * PhysicsApi; the one place that adapts to it (VESSEL_FACTORIES in
+ * src/physics/vessel/index.ts) narrows with requireContactData(), which
+ * throws on a non-conforming implementation. VesselBase re-asserts at runtime
+ * as a backstop against casts.
+ *
+ * Proposed contract amendment (S8): fold `bodyContacts` into PhysicsApi (or
+ * type VesselControllerFactory's `physics` as FlightPhysics); the narrowing
+ * adapter then goes away.
  */
 
 import type { BodyHandle, PhysicsApi, Vec2 } from '../contracts';
@@ -32,12 +41,15 @@ export interface ContactDataSource {
   bodyContacts(h: BodyHandle): BodyContact[];
 }
 
-export function hasContactData(p: PhysicsApi): p is PhysicsApi & ContactDataSource {
+/** The physics surface flight vessels are built on. */
+export type FlightPhysics = PhysicsApi & ContactDataSource;
+
+export function hasContactData(p: PhysicsApi): p is FlightPhysics {
   return typeof (p as Partial<ContactDataSource>).bodyContacts === 'function';
 }
 
-/** The contact-data extension of `p`; throws if this PhysicsApi lacks it. */
-export function requireContactData(p: PhysicsApi): ContactDataSource {
+/** Narrow a contract PhysicsApi to FlightPhysics; throws if it lacks the contact-data extension. */
+export function requireContactData(p: PhysicsApi): FlightPhysics {
   if (!hasContactData(p)) {
     throw new Error('Flight vessels need PhysicsApi + ContactDataSource.bodyContacts() (src/physics/contactData.ts); use PhysicsWorld.');
   }

@@ -4,7 +4,8 @@
  * Thrust-to-weight ~1.8: holding thrust runs away, so the skill is pulsing.
  */
 
-import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../contracts';
+import type { GameEventSink, InputFrame, VesselSpawn } from '../../contracts';
+import type { FlightPhysics } from '../contactData';
 import type { VesselOptions } from '../tuning';
 import { VesselBase } from './base';
 import type { VesselGeometry } from './types';
@@ -21,7 +22,7 @@ export function csmGeometry(t: { width: number; height: number }): VesselGeometr
 export class CsmController extends VesselBase {
   readonly mode = 'csm' as const;
 
-  constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
+  constructor(physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     const t = options.tuning.csm;
     super(physics, spawn, events, csmGeometry(t), t, options, t);
   }

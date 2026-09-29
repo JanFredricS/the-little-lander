@@ -7,7 +7,8 @@
  * mass changes the angular response. The `thrust` control fires both.
  */
 
-import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../contracts';
+import type { GameEventSink, InputFrame, VesselSpawn } from '../../contracts';
+import type { FlightPhysics } from '../contactData';
 import type { LanderTuning, VesselOptions } from '../tuning';
 import { VesselBase } from './base';
 import type { VesselGeometry } from './types';
@@ -34,7 +35,7 @@ export function landerGeometry(t: LanderTuning): VesselGeometry {
 export class LanderController extends VesselBase {
   readonly mode = 'lander' as const;
 
-  constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
+  constructor(physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     const t = options.tuning.lander;
     super(physics, spawn, events, landerGeometry(t), t, options, t);
   }

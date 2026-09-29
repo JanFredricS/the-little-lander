@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { FIXED_DT } from '../src/contracts';
-import type { EntitySpec, GameEvent, GameEventOf, GameEventType, InputFrame, LevelSpec, TerrainPiece, ZoneSpec } from '../src/contracts';
+import type { EntitySpec, GameEvent, PhysicsApi, GameEventOf, GameEventType, InputFrame, LevelSpec, TerrainPiece, ZoneSpec } from '../src/contracts';
 import { LevelSession } from '../src/game/session';
 import { physlab } from '../src/levels/physlab';
 import { validateLevel } from '../src/levels/validate';
@@ -13,7 +13,7 @@ import { PhysicsWorld } from '../src/physics/engine';
 import { gustPhase } from '../src/physics/env/wind';
 import { PHYSICS_OVERRIDE_KEYS, overrideRangeError, resolveTuning, tuningRange, type VesselOptions } from '../src/physics/tuning';
 import { mToPx, pxToM } from '../src/physics/units';
-import { createVessel, type FlightVessel } from '../src/physics/vessel';
+import { VESSEL_FACTORIES, createVessel, type FlightVessel } from '../src/physics/vessel';
 import { emptyFrame } from '../src/shell/input';
 
 const idle = emptyFrame();
@@ -177,10 +177,17 @@ describe('csm', () => {
     }
   });
 
-  it('vessels require the physics contact-data extension', async () => {
+  it('vessels require the physics contact-data extension (compile time + contract boundary)', async () => {
     const r = await rig('csm');
-    const bare = new Proxy(r.physics, { get: (o, k) => (k === 'bodyContacts' ? undefined : Reflect.get(o, k, o)) });
-    expect(() => createVessel('lander', bare, { pos: { x: 0, y: 0 } }, () => {}, { tuning: resolveTuning(), refGravity: 3.2, harpoonGuns: 1 })).toThrow(/ContactDataSource/);
+    const bare: PhysicsApi = new Proxy(r.physics, { get: (o, k) => (k === 'bodyContacts' ? undefined : Reflect.get(o, k, o)) });
+    const opts = { tuning: resolveTuning(), refGravity: 3.2, harpoonGuns: 1 as const };
+    // @ts-expect-error a plain PhysicsApi is not FlightPhysics
+    expect(() => createVessel('lander', bare, { pos: { x: 0, y: 0 } }, () => {}, opts)).toThrow(/ContactDataSource/);
+    // The frozen contract factory takes plain PhysicsApi and narrows at runtime.
+    expect(() => VESSEL_FACTORIES.lander(bare, { pos: { x: 0, y: 0 } }, () => {})).toThrow(/ContactDataSource/);
+    const ok = VESSEL_FACTORIES.csm(r.physics as PhysicsApi, { pos: { x: 0, y: -50 } }, () => {});
+    expect(ok.state().mode).toBe('csm');
+    ok.destroy();
   });
 
   it('holding thrust runs away (thrust-to-weight ~1.8)', async () => {
@@ -306,6 +313,65 @@ describe('impact damage from contact impulse', () => {
     const s = r.run(40);
     expect(s.hull).toBeLessThan(1);
     expect(ofType(r.events, 'hullChanged')[0]?.reason).toBe('impact');
+  });
+
+  /** A csm flying sideways at `speed` px/s into a wall of restitution `rest`, 100 px away. No gravity. */
+  const wallRig = async (rest: number, speed: number) => {
+    const r = await rig('csm', { gravity: 0, pos: { x: 0, y: 0 }, vel: { x: speed, y: 0 } });
+    const wall = r.physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: 'terrain' });
+    r.physics.addBox(wall, pxToM(10), pxToM(200), { restitution: rest }, { x: pxToM(100), y: 0 });
+    return { ...r, wall };
+  };
+
+  it('a high-restitution bounce above crashSpeed crashes', async () => {
+    const t = resolveTuning().csm;
+    const r = await wallRig(1, t.crashSpeed + 40);
+    const s = r.run(60);
+    expect(s.vel.x).toBeLessThan(0); // it bounced
+    expect(s.crashed).toBe(true);
+    expect(ofType(r.events, 'crash')[0]?.cause).toBe('impact');
+  });
+
+  it('a transient hit (separated within the step, no touching contact left) still crashes', async () => {
+    const t = resolveTuning().csm;
+    const r = await wallRig(1, t.crashSpeed + 40);
+    // Model begin+end touch inside one step: the wall never shows up as a touching contact.
+    const orig = r.physics.bodyContacts.bind(r.physics);
+    r.physics.bodyContacts = (h) => orig(h).filter((c) => c.other !== r.wall);
+    const s = r.run(60);
+    expect(ofType(r.events, 'impact').some((e) => e.speed > t.crashSpeed)).toBe(true);
+    expect(s.crashed).toBe(true);
+    expect(ofType(r.events, 'crash')[0]?.cause).toBe('impact');
+  });
+
+  it('a transient hit between damageSpeed and crashSpeed damages without crashing', async () => {
+    const t = resolveTuning().csm;
+    const r = await wallRig(1, (t.damageSpeed + t.crashSpeed) / 2);
+    const orig = r.physics.bodyContacts.bind(r.physics);
+    r.physics.bodyContacts = (h) => orig(h).filter((c) => c.other !== r.wall);
+    const s = r.run(60);
+    expect(s.crashed).toBe(false);
+    expect(s.hull).toBeLessThan(1);
+    expect(ofType(r.events, 'hullChanged')).toHaveLength(1);
+  });
+
+  it('a firm landing counts its impact once (hit event + touching contact do not double-count)', async () => {
+    const t = resolveTuning().lander;
+    const speed = (t.damageSpeed + t.crashSpeed) / 2;
+    const land = async (withHits: boolean) => {
+      const r = await rig('lander', { ground: 100, pos: { x: 0, y: 70 }, vel: { x: 0, y: speed } });
+      if (!withHits) {
+        const orig = r.physics.contacts.bind(r.physics);
+        r.physics.contacts = () => ({ ...orig(), hits: [] });
+      }
+      const s = r.run(180);
+      return { s, hulls: ofType(r.events, 'hullChanged') };
+    };
+    const a = await land(true);
+    const b = await land(false); // impulse path alone
+    expect(a.s.landed).toBe(true);
+    expect(a.hulls).toHaveLength(1);
+    expect(a.s.hull).toBeCloseTo(b.s.hull, 9);
   });
 
   it('a light, fast pebble does not reach the crash threshold', async () => {
