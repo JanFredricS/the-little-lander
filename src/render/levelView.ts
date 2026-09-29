@@ -1,16 +1,19 @@
 /**
- * S0 placeholder level renderer: flat-colour terrain polygons, prop and
- * vessel rectangles (stub ArtApi textures), a thruster flame rectangle and a
- * one-line debug HUD. Everything is in virtual px; the world container is
- * offset by the interpolated camera. S2/S4 replace this with real art.
+ * Placeholder level renderer: flat-colour terrain polygons, prop sprites
+ * (stub ArtApi textures), the S1 flight systems as rectangles/circles
+ * (src/render/flightView.ts: vessel per mode, flames, ropes, zones, goo,
+ * debris, pickups, beacons, radiation) and a dim debug telemetry line (the
+ * player HUD is src/ui, S4). Everything is in
+ * virtual px; the world container is offset by the interpolated camera.
+ * S2/S4 replace this with real art.
  */
 
 import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { VIEW_WIDTH } from '../contracts';
 import type { ArtApi, LevelSpec, TerrainPiece } from '../contracts';
 import type { LevelSession } from '../game/session';
-import { PLACEHOLDER_VESSEL } from '../game/placeholderVessel';
 import { mToPx } from '../physics/units';
+import { FlightView } from './flightView';
 
 const TERRAIN_COLORS: Record<string, number> = {
   metal: 0x4a5064,
@@ -24,8 +27,7 @@ const TERRAIN_COLORS: Record<string, number> = {
 export class LevelView {
   readonly root = new Container();
   private readonly world = new Container();
-  private readonly vessel: Container;
-  private readonly flame: Sprite;
+  private readonly flight: FlightView;
   private readonly props = new Map<string, Sprite>();
   private readonly hud: Text;
   private fpsFrames = 0;
@@ -40,6 +42,8 @@ export class LevelView {
     const bg = new Graphics().rect(0, 0, VIEW_WIDTH, 360).fill(art.palettes[spec.themeId].colors[12] ?? 0x16202e);
     this.root.addChild(bg, this.world);
 
+    this.flight = new FlightView(session);
+    this.world.addChild(this.flight.under);
     this.world.addChild(this.drawTerrain(spec));
     this.world.addChild(this.drawExits(spec));
 
@@ -55,23 +59,12 @@ export class LevelView {
       this.world.addChild(s);
     }
 
-    this.vessel = new Container();
-    const hull = new Sprite(Texture.from(art.getSprite('vessel.csm', 0, spec.themeId).canvas as HTMLCanvasElement));
-    hull.anchor.set(0.5);
-    hull.width = PLACEHOLDER_VESSEL.w;
-    hull.height = PLACEHOLDER_VESSEL.h;
-    this.flame = new Sprite(Texture.from(art.getSprite('fx.flameMain', 0, spec.themeId).canvas as HTMLCanvasElement));
-    this.flame.anchor.set(0.5, 0);
-    this.flame.position.set(0, PLACEHOLDER_VESSEL.h / 2);
-    this.flame.visible = false;
-    const nose = new Graphics().rect(-2, -PLACEHOLDER_VESSEL.h / 2, 4, 4).fill(0xf0b030);
-    this.vessel.addChild(this.flame, hull, nose);
-    this.world.addChild(this.vessel);
+    this.world.addChild(this.flight.over);
 
     // S0 debug line; the player HUD is src/ui (S4), so this sits at the bottom, dimmed.
     this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
     this.hud.alpha = 0.7;
-    this.hud.position.set(4, 348);
+    this.hud.position.set(4, spec.debug ? 338 : 348);
     this.root.addChild(this.hud);
   }
 
@@ -89,12 +82,8 @@ export class LevelView {
       sprite.rotation = t.angle;
     }
 
-    const vt = s.physics.getInterpolatedTransform(s.vessel.body, alpha);
-    this.vessel.position.set(mToPx(vt.x), mToPx(vt.y));
-    this.vessel.rotation = vt.angle;
+    this.flight.render(alpha, nowMs);
     const st = s.state;
-    this.flame.visible = st.engines.main && Math.floor(nowMs / 50) % 3 !== 0;
-    this.vessel.alpha = st.crashed ? 0.4 : 1;
 
     this.fpsFrames++;
     if (nowMs - this.fpsLastMs >= 500) {
@@ -104,7 +93,9 @@ export class LevelView {
     }
     const speed = Math.hypot(st.vel.x, st.vel.y);
     const status = st.crashed ? 'CRASHED' : st.landed ? 'landed' : 'flying';
+    // Mode, goo, orbs and beacons are on the S4 HUD (fed by GameEvents); this line is debug-only telemetry.
     this.hud.text =
+      (s.spec.debug ? `1-4 / M: switch mode (csm · lander · harpoon · harpoon+thrust) · now ${st.mode}\n` : '') +
       `${s.spec.id} · t ${s.simTime.toFixed(1)}s · fuel ${Math.round(st.fuel * 100)}% · hull ${Math.round(st.hull * 100)}%` +
       ` · v ${speed.toFixed(0)}px/s · ${status} · ${this.fps}fps${paused ? ' · PAUSED' : ''}`;
   }

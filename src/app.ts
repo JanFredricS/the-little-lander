@@ -8,7 +8,7 @@
  * src/story/flow.ts so the default cutscene hooks and chains apply.
  */
 
-import { FIXED_DT } from './contracts';
+import { FIXED_DT, VESSEL_MODES } from './contracts';
 import type { ArtApi, CutsceneId, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
 import { createStubArt } from './art/stubArt';
 import { LevelSession } from './game/session';
@@ -80,6 +80,8 @@ export class App {
     this.input.add(new KeyboardSource(window));
     this.input.add(this.virtual);
     this.input.add(new PointerSource(this.pixi.canvas));
+    window.addEventListener('keydown', this.onDebugKey);
+    this.unbind.push(() => window.removeEventListener('keydown', this.onDebugKey));
 
     // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
     const uiOpts = Object.fromEntries(Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined));
@@ -232,6 +234,20 @@ export class App {
     this.input.clear();
     if (paused && cause !== 'manual' && this.state.id === 'playing' && !this.inlineCutscene) this.dispatch({ type: 'pause' });
   }
+
+  /** Debug levels (physlab, testpad): 1-4 pick a vessel mode, M cycles (S1 LevelSession.requestModeSwitch). */
+  private readonly onDebugKey = (e: KeyboardEvent): void => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const s = this.session;
+    if (!s?.spec.debug || this.state.id !== 'playing' || this.inlineCutscene) return;
+    const n = /^Digit([1-4])$/.exec(e.code);
+    const next = n
+      ? VESSEL_MODES[Number(n[1]) - 1]
+      : e.code === 'KeyM'
+        ? VESSEL_MODES[(VESSEL_MODES.indexOf(s.state.mode) + 1) % VESSEL_MODES.length]
+        : undefined;
+    if (next) s.requestModeSwitch(next);
+  };
 
   // ------------------------------------------------------------ cutscenes
 

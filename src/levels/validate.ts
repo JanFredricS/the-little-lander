@@ -7,6 +7,7 @@
 import { ENTITY_KINDS, THEME_IDS, VESSEL_MODES } from '../contracts';
 import type { EntitySpec, LevelSpec, Rect, TerrainPiece, TriggerSpec, Vec2, ZoneSpec } from '../contracts';
 import { signedArea } from '../physics/units';
+import { PHYSICS_OVERRIDE_KEYS, overrideRangeError, resolveTuning, tuningConsistencyErrors } from '../physics/tuning';
 
 export function validateLevel(spec: LevelSpec): string[] {
   const errors: string[] = [];
@@ -135,7 +136,16 @@ export function validateLevel(spec: LevelSpec): string[] {
   }
 
   if (spec.physicsOverrides) {
-    for (const [k, v] of Object.entries(spec.physicsOverrides)) if (!fin(v)) err(`physicsOverrides '${k}' is not finite`);
+    const known = new Set(PHYSICS_OVERRIDE_KEYS);
+    for (const [k, v] of Object.entries(spec.physicsOverrides)) {
+      if (!fin(v)) err(`physicsOverrides '${k}' is not finite`);
+      if (!known.has(k)) err(`physicsOverrides '${k}' is not a registered tuning key (see src/physics/tuning)`);
+      else if (fin(v)) {
+        const range = overrideRangeError(k, v);
+        if (range) err(`physicsOverrides '${k}' = ${v} ${range}`);
+      }
+    }
+    for (const e of tuningConsistencyErrors(resolveTuning(spec.physicsOverrides))) err(`physicsOverrides: ${e}`);
   }
 
   return errors;

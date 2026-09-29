@@ -3,9 +3,11 @@
  * bookkeeping, advanced one fixed step at a time. Rendering reads it (see
  * src/render/levelView.ts); it never touches the DOM, so it runs in tests.
  *
- * S0 scope: world gravity (+ ramp), terrain/props, the placeholder vessel,
- * reachExit objectives, out-of-bounds crash. Later slices plug in the real
- * controllers, zones, entities and objectives.
+ * S1 scope: the per-mode vessel controllers (src/physics/vessel), the flight
+ * environment (gravity ramp/zones, wind, debris, goo, radiation, pickups,
+ * beacons: src/physics/env), mode switches (LevelSpec.modeSwitch and debug
+ * requests), reachExit / plantBeacons / collectOrbs objectives,
+ * out-of-bounds crash.
  */
 
 import { FIXED_DT } from '../contracts';
@@ -17,12 +19,16 @@ import type {
   LevelSpec,
   ExitDockEntity,
   Vec2,
+  VesselMode,
   VesselState,
 } from '../contracts';
 import { PhysicsWorld } from '../physics/engine';
-import { buildLevel, type BuiltLevel } from '../levels/build';
+import { buildLevel, flightLevelBodies, type BuiltLevel } from '../levels/build';
+import { FlightEnvironment } from '../physics/env/environment';
+import { TriggerLatch } from '../physics/env/triggers';
+import { resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
+import { createVessel, type FlightVessel } from '../physics/vessel';
 import { Camera } from '../shell/camera';
-import { PlaceholderVessel } from './placeholderVessel';
 
 /** How far outside the world rect (px) the vessel may go before it is lost. */
 const OUT_OF_BOUNDS_MARGIN = 64;
@@ -39,21 +45,34 @@ export class LevelSession {
     return new LevelSession(spec, physics);
   }
 
-  readonly vessel: PlaceholderVessel;
+  /** The active vessel (replaced on a mode switch). */
+  vessel: FlightVessel;
   readonly built: BuiltLevel;
+  readonly env: FlightEnvironment;
+  readonly tuning: PhysicsTuning;
+  private readonly vesselOptions: VesselOptions;
+  private readonly sink: GameEventSink;
+  private readonly modeSwitchLatch: TriggerLatch | null;
+  private pendingMode: VesselMode | null = null;
 
   private constructor(
     readonly spec: LevelSpec,
     readonly physics: PhysicsWorld,
   ) {
     this.built = buildLevel(physics, spec);
-    const sink: GameEventSink = (e) => this.emit(e);
-    this.vessel = new PlaceholderVessel(
+    this.sink = (e) => this.emit(e);
+    this.tuning = resolveTuning(spec.physicsOverrides);
+    this.vesselOptions = vesselOptionsFor(spec, this.tuning);
+    this.env = new FlightEnvironment(physics, spec, flightLevelBodies(this.built), this.tuning, this.sink, () => this.completed);
+    this.vessel = createVessel(
+      spec.vesselMode,
       physics,
       { pos: { x: spec.spawn.x, y: spec.spawn.y }, angle: spec.spawn.angle ?? 0, fuel: spec.startFuel ?? 1 },
-      sink,
-      spec.vesselMode,
+      this.sink,
+      this.vesselOptions,
     );
+    this.env.attach(this.vessel);
+    this.modeSwitchLatch = spec.modeSwitch ? new TriggerLatch(spec.modeSwitch.trigger) : null;
     this.camera = new Camera({
       worldW: spec.worldSize.w,
       worldH: spec.worldSize.h,
@@ -90,15 +109,28 @@ export class LevelSession {
     return this.physics.simTime;
   }
 
+  /** Orbs collected so far. */
+  get orbs(): number {
+    return this.env.pickups.orbsCollected;
+  }
+
+  /** Switch the vessel to `mode` at the start of the next step (debug key, scripted switches). */
+  requestModeSwitch(mode: VesselMode): void {
+    this.pendingMode = mode;
+  }
+
   /** Advance one fixed step with this tick's input. No-op once the level has an outcome. */
   step(frame: InputFrame): void {
     if (this._outcome) {
       this.camera.step(null);
       return;
     }
-    this.applyGravityRamp();
+    this.checkModeSwitch();
+    this.env.beforeStep();
     this.vessel.applyInput(frame, FIXED_DT);
     this.physics.step(FIXED_DT);
+    this.vessel.state(); // contacts: crash / damage / soft-land
+    this.env.afterStep();
     this.vesselState = this.vessel.state();
     const s = this.vesselState;
     this.camera.step(s.pos, s.vel);
@@ -116,6 +148,21 @@ export class LevelSession {
     this.physics.destroy();
   }
 
+  /** Replace the vessel with another mode, keeping pose, velocity, fuel and hull. */
+  switchMode(to: VesselMode): void {
+    const from = this.vessel.mode;
+    if (to === from) return;
+    const snap = this.vessel.snapshot();
+    const oldH = this.vessel.geometry.h;
+    this.env.detach();
+    this.vessel.destroy();
+    const lift = Math.max(0, (this.newGeometryHeight(to) - oldH) / 2);
+    this.vessel = createVessel(to, this.physics, { ...snap, pos: { x: snap.pos.x, y: snap.pos.y - lift } }, this.sink, this.vesselOptions);
+    this.env.attach(this.vessel);
+    this.vesselState = this.vessel.state();
+    this.emit({ type: 'vesselModeChanged', from, to });
+  }
+
   // ------------------------------------------------------------ internals
 
   private emit(e: GameEvent): void {
@@ -126,16 +173,28 @@ export class LevelSession {
     }
   }
 
-  private applyGravityRamp(): void {
-    const r = this.spec.gravityRamp;
-    if (!r) return;
-    const p = r.axis === 'x' ? this.vesselState.pos.x : this.vesselState.pos.y;
-    const t = Math.min(1, Math.max(0, (p - r.from) / (r.to - r.from)));
-    const g = { x: r.gravityFrom.x + (r.gravityTo.x - r.gravityFrom.x) * t, y: r.gravityFrom.y + (r.gravityTo.y - r.gravityFrom.y) * t };
-    const cur = this.physics.getGravity();
-    if (Math.abs(cur.x - g.x) + Math.abs(cur.y - g.y) > 1e-3) {
-      this.physics.setGravity(g);
-      // (gravityChanged events are the physics slice's job; S0 only drives the ramp)
+  private checkModeSwitch(): void {
+    if (this.modeSwitchLatch && !this.modeSwitchLatch.hasFired) {
+      if (this.modeSwitchLatch.update(this.env.triggerContext(this.vesselState.pos))) this.pendingMode = this.spec.modeSwitch!.to;
+    }
+    if (this.pendingMode) {
+      const to = this.pendingMode;
+      this.pendingMode = null;
+      this.switchMode(to);
+    }
+  }
+
+  private newGeometryHeight(mode: VesselMode): number {
+    const t = this.tuning;
+    switch (mode) {
+      case 'csm':
+        return t.csm.height;
+      case 'lander':
+        return t.lander.height + 2 * t.lander.legDrop;
+      case 'harpoon':
+        return t.harpoon.height;
+      case 'harpoonThrust':
+        return t.harpoonThrust.height;
     }
   }
 
@@ -146,21 +205,39 @@ export class LevelSession {
 
   private checkObjectives(s: VesselState): void {
     for (const o of this.spec.objectives) {
-      if (this.completed.has(o.id) || o.kind !== 'reachExit') continue;
-      const exit = this.spec.entities.find((e): e is ExitDockEntity => e.kind === 'exitDock' && e.id === o.exitId);
-      if (!exit || !inExit(exit, s)) continue;
+      if (this.completed.has(o.id)) continue;
+      let done = false;
+      switch (o.kind) {
+        case 'reachExit': {
+          const exit = this.spec.entities.find((e): e is ExitDockEntity => e.kind === 'exitDock' && e.id === o.exitId);
+          done = !!exit && inExit(exit, s);
+          break;
+        }
+        case 'plantBeacons':
+          done = o.siteIds.filter((id) => this.env.beacons.isPlanted(id)).length >= o.count;
+          break;
+        case 'collectOrbs':
+          done = this.env.pickups.orbsCollected >= o.count;
+          break;
+        default:
+          break; // surviveBoss: boss slice
+      }
+      if (!done) continue;
       this.completed.add(o.id);
       this.emit({ type: 'objectiveComplete', objectiveId: o.id });
     }
-    const supported = this.spec.objectives.filter((o) => o.kind === 'reachExit');
+    const supported = this.spec.objectives.filter((o) => SUPPORTED_OBJECTIVES.has(o.kind));
     if (supported.length > 0 && supported.length === this.spec.objectives.length && supported.every((o) => this.completed.has(o.id))) {
       const timeSec = this.physics.simTime;
-      const score = Math.round(1000 + s.fuel * 500 + s.hull * 500);
-      this._outcome = { kind: 'complete', timeSec, orbs: 0, score };
-      this.emit({ type: 'levelComplete', levelId: this.spec.id, timeSec, orbs: 0, score });
+      const orbs = this.env.pickups.orbsCollected;
+      const score = Math.round(1000 + s.fuel * 500 + s.hull * 500 + this.env.pickups.points);
+      this._outcome = { kind: 'complete', timeSec, orbs, score };
+      this.emit({ type: 'levelComplete', levelId: this.spec.id, timeSec, orbs, score });
     }
   }
 }
+
+const SUPPORTED_OBJECTIVES: ReadonlySet<string> = new Set(['reachExit', 'plantBeacons', 'collectOrbs']);
 
 /** Exit rect: centred on (x, y) horizontally, extending h px ABOVE the landing surface. */
 function inExit(exit: ExitDockEntity, s: VesselState): boolean {

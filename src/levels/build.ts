@@ -6,15 +6,33 @@
  */
 
 import type { BodyHandle, EntitySpec, LevelSpec, PhysicsApi, StaticPropEntity, TerrainPiece } from '../contracts';
+import type { FlightLevelBodies } from '../physics/env/environment';
 import { pxToM } from '../physics/units';
 
 export interface BuiltLevel {
-  /** One static body holding every terrain chain. */
+  /** One static body holding every anchorable terrain chain. */
   terrain: BodyHandle;
+  /**
+   * Static bodies harpoons cannot anchor to (terrain pieces with
+   * `anchorable: false` live on their own body, also tagged 'terrain').
+   */
+  nonAnchorable: ReadonlySet<BodyHandle>;
   /** Prop entity id -> body. */
   props: Map<string, { entity: StaticPropEntity; body: BodyHandle }>;
-  /** Entities S0 does not simulate (for later slices). */
+  /**
+   * Entities buildLevel does not spawn. The flight environment
+   * (src/physics/env/environment.ts) simulates debris/goo spawners, orbs,
+   * fuel pickups and beacon sites from this list and reports the rest.
+   */
   unhandled: EntitySpec[];
+}
+
+/** The slice of a built level the flight environment needs. */
+export function flightLevelBodies(built: BuiltLevel): FlightLevelBodies {
+  return {
+    nonAnchorable: built.nonAnchorable,
+    dynamicBodies: [...built.props.values()].filter((p) => p.entity.dynamic).map((p) => p.body),
+  };
 }
 
 export const TAG_TERRAIN = 'terrain';
@@ -30,9 +48,12 @@ export function terrainChain(piece: TerrainPiece): { points: { x: number; y: num
 
 export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
   const terrain = physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
+  let smooth: BodyHandle | null = null;
   for (const piece of spec.terrain.pieces) {
     const { points, loop } = terrainChain(piece);
-    physics.addChain(terrain, points, loop, { friction: piece.friction ?? 0.8, restitution: piece.restitution ?? 0.1 });
+    let body = terrain;
+    if (piece.anchorable === false) body = smooth ??= physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
+    physics.addChain(body, points, loop, { friction: piece.friction ?? 0.8, restitution: piece.restitution ?? 0.1 });
   }
   const props = new Map<string, { entity: StaticPropEntity; body: BodyHandle }>();
   const unhandled: EntitySpec[] = [];
@@ -50,5 +71,5 @@ export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
       unhandled.push(e);
     }
   }
-  return { terrain, props, unhandled };
+  return { terrain, nonAnchorable: new Set(smooth === null ? [] : [smooth]), props, unhandled };
 }
