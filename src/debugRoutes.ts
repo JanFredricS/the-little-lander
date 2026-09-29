@@ -17,5 +17,6 @@ export interface DebugRoute {
 }
 
 export const DEBUG_ROUTES: DebugRoute[] = [
+  { param: 'cutscene', run: async (host, v) => (await import('./story/debugCutscene')).mountCutsceneDebug(host, v) },
   // { param: 'gallery', run: async (host, v) => (await import('./art/gallery')).mountGallery(host, v) },
 ];
