@@ -20,6 +20,8 @@ export const HULL_LOW = 0.3;
 export const WIND_WARNING_TTL = 4;
 /** Seconds a wind 'start' with no 'end' stays on screen. */
 export const WIND_ACTIVE_TTL = 10;
+/** Seconds a radiation telegraph stays (at 0.0s) after its countdown ends when no hit is reported. */
+export const RADIATION_GRACE = 0.5;
 /** Seconds the "radiation hit" flash stays on screen. */
 export const RADIATION_HIT_FLASH = 1.5;
 /** Seconds the objective-complete banner stays on screen. */
@@ -47,6 +49,8 @@ export interface HudRadiation {
   emitterId: string;
   /** Seconds until the pulse (counts down in hudTick). */
   inSec: number;
+  /** Seconds past the end of the countdown (grace for the blast to land). */
+  overdue?: number;
 }
 
 export interface HudState {
@@ -221,9 +225,9 @@ export function hudTick(s: HudState, v: VesselState | null, dt: number): HudStat
     next.wind = ttl > 0 ? { ...s.wind, ttl } : null;
   }
   if (s.radiation) {
-    next.radiation = { ...s.radiation, inSec: Math.max(0, s.radiation.inSec - dt) };
-    // Safety net: clear a telegraph whose pulse never reported (e.g. out of range).
-    if (s.radiation.inSec - dt < -1) next.radiation = null;
+    const overdue = (s.radiation.overdue ?? 0) + Math.max(0, dt - s.radiation.inSec);
+    // No radiationHit (vessel was in cover / out of range): clear shortly after the pulse.
+    next.radiation = overdue > RADIATION_GRACE ? null : { ...s.radiation, inSec: Math.max(0, s.radiation.inSec - dt), overdue };
   }
   if (s.radiationHit > 0) next.radiationHit = Math.max(0, s.radiationHit - dt);
   if (s.banner) {

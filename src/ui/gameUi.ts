@@ -187,13 +187,14 @@ export class GameUi {
     this.screenView.root.visible = !!this.model && !(this.state.id === 'paused' && this.pauseHelp);
     const showTouch = playing && touchVisible(this.touchPref, this.touchDetected);
     this.touch.show(showTouch ? this.hud.mode : null);
+    // Tint first: the help card below is drawn (and cached) with the current theme border.
+    const tint = themeTint(this.o.art, this.spec?.themeId ?? null);
+    this.hudView.border = tint;
+    this.screenView.border = this.spec ? tint : UI.accent;
     const helpTouch = touchVisible(this.touchPref, this.touchDetected);
     if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false);
     else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks);
     else this.hudView.setHelp(null, false);
-    const tint = themeTint(this.o.art, this.spec?.themeId ?? null);
-    this.hudView.border = tint;
-    this.screenView.border = this.spec ? tint : UI.accent;
   }
 
   // ------------------------------------------------------------ gameplay

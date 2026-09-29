@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT } from '../src/contracts';
 import type { GameEvent, LevelSpec, VesselState } from '../src/contracts';
-import { frameHasInput, helpCard } from '../src/ui/controlsHelp';
+import { frameHasInput, helpCard, helpCardKey } from '../src/ui/controlsHelp';
 import { emptyFrame } from '../src/shell/input';
 import {
   BANNER_TTL,
@@ -10,6 +10,7 @@ import {
   hudTick,
   initHud,
   objectiveLines,
+  RADIATION_GRACE,
   RADIATION_HIT_FLASH,
   WIND_WARNING_TTL,
   windArrow,
@@ -138,6 +139,18 @@ describe('HUD reducer', () => {
     expect(s.radiationHit).toBe(0);
   });
 
+  it('radiation telegraph with no hit clears shortly after the countdown ends', () => {
+    let s = run([{ type: 'radiationCharging', emitterId: 'sun', inSec: 1 }]);
+    for (let t = 0; t < 1 + FIXED_DT / 2; t += FIXED_DT) s = hudTick(s, null, FIXED_DT);
+    expect(s.radiation?.inSec).toBe(0); // at 0.0s, still shown during the grace
+    for (let t = 0; t < RADIATION_GRACE + 2 * FIXED_DT; t += FIXED_DT) s = hudTick(s, null, FIXED_DT);
+    expect(s.radiation).toBeNull();
+    // a fresh charge restarts the grace
+    s = run([{ type: 'radiationCharging', emitterId: 'sun', inSec: 0.2 }], s);
+    s = hudTick(s, null, FIXED_DT);
+    expect(s.radiation).not.toBeNull();
+  });
+
   it('crash clears warnings; banners expire', () => {
     let s = run([
       { type: 'windGust', zoneId: 'w', phase: 'start', accel: { x: 1, y: 0 } },
@@ -189,6 +202,11 @@ describe('controls help', () => {
       expect(helpCard(m, true).lines.join(' ')).not.toMatch(/SPACE/);
     }
     expect(helpCard('lander', false).lines.join(' ')).toMatch(/LEFT ENGINE/);
+  });
+
+  it('help card cache key changes with the theme border (level change re-tints the card)', () => {
+    expect(helpCardKey('lander', false, true, 0x4a78b0)).toBe(helpCardKey('lander', false, true, 0x4a78b0));
+    expect(helpCardKey('lander', false, true, 0x4a78b0)).not.toBe(helpCardKey('lander', false, true, 0xd06a2a));
   });
 
   it('first-input detection ignores a hovering mouse aim', () => {

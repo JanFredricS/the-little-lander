@@ -172,7 +172,7 @@ export class ScreenView {
       // stat blocks (results) read better left-aligned; short lines stay centred
       this.info.setText(m.info.join('\n'), { color: UI.ink, align: m.info.length > 2 ? 'left' : 'center' });
       const infoH = m.info.length ? this.info.height + 10 : 0;
-      const probeRow = Math.min(48, Math.max(18, Math.ceil(48 / Math.max(0.01, this.cssPerVirtual))));
+      const probeRow = Math.max(18, Math.ceil(48 / Math.max(0.01, this.cssPerVirtual)));
       const rowsH = m.items.length * (probeRow + ROW_GAP);
       const ph = Math.min(VIEW_HEIGHT - 16, 16 + this.heading.height + 10 + infoH + rowsH + 8);
       const py = Math.round((VIEW_HEIGHT - ph) / 2);

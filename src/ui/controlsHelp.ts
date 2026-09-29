@@ -32,6 +32,11 @@ const TITLE: Record<VesselMode, string> = {
   harpoonThrust: 'HARPOON + THRUST',
 };
 
+/** Cache key for a rendered help card: content AND the theme border it was drawn with. */
+export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number): string {
+  return `${mode}|${touch}|${start}|${border.toString(16)}`;
+}
+
 /** `start` = the level-start card (the level waits for the first input). */
 export function helpCard(mode: VesselMode, touch: boolean, start = true): HelpCard {
   return {

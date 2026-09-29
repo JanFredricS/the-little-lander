@@ -8,7 +8,7 @@
 import { Container, Graphics } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../../contracts';
 import type { VesselMode } from '../../contracts';
-import { helpCard } from '../controlsHelp';
+import { helpCard, helpCardKey } from '../controlsHelp';
 import { arrow, bar, panel } from '../draw';
 import { PixelText } from '../pixelText';
 import { UI } from '../uiTheme';
@@ -55,7 +55,7 @@ export class HudView {
       this.helpKey = '';
       return;
     }
-    const key = `${mode}|${touch}|${start}`;
+    const key = helpCardKey(mode, touch, start, this.border);
     this.help.visible = true;
     if (key === this.helpKey) return;
     this.helpKey = key;

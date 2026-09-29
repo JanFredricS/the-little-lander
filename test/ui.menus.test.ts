@@ -64,6 +64,16 @@ describe('menu navigation', () => {
     expect(desk.rowH).toBe(24);
     expect(desk.visible).toBe(9);
     expect(desk.touchSized).toBe(true);
+    // fractional scales: rows still reach 48 CSS px (taller than maxRow), lists scroll
+    for (const cpv of [0.5, 0.75]) {
+      const frac = layoutRows(9, { top: 40, bottom: 334, cssPerVirtual: cpv, minRow: 20, maxRow: 48, gap: 4 });
+      expect(frac.rowH * cpv).toBeGreaterThanOrEqual(48);
+      expect(frac.touchSized).toBe(true);
+      expect(frac.visible).toBeLessThan(9);
+      const short = layoutRows(2, { top: 100, bottom: 300, cssPerVirtual: cpv, minRow: 18, maxRow: 48, gap: 4 });
+      expect(short.rowH * cpv).toBeGreaterThanOrEqual(48);
+      expect(short.visible).toBe(2);
+    }
     // hit test includes half gaps
     expect(rowAt(desk, 4, desk.rowY(3) + 1, 9)).toBe(3);
     expect(rowAt(desk, 4, 10, 9)).toBe(-1);

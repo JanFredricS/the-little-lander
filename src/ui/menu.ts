@@ -137,20 +137,22 @@ export interface RowLayout {
 }
 
 /**
- * Row height: the virtual height that is ≥ 48 CSS px, clamped to
- * [minRow, maxRow]. Lists longer than the space scroll (visible < n).
+ * Row height: the virtual height that is ≥ 48 CSS px (never below minRow).
+ * maxRow only caps rows that would be taller for other reasons; it never
+ * undercuts the touch size, so at fractional scales (cssPerVirtual < 1)
+ * rows grow past maxRow and long lists scroll (visible < n).
  */
 export function layoutRows(n: number, o: RowLayoutOptions): RowLayout {
   const cpv = o.cssPerVirtual > 0 ? o.cssPerVirtual : 1;
   const want = Math.ceil(MIN_TOUCH_CSS / cpv);
   const avail = Math.max(1, o.bottom - o.top);
-  let rowH = Math.min(o.maxRow, Math.max(o.minRow, want));
+  let rowH = Math.max(o.minRow, want);
   rowH = Math.min(rowH, avail);
   const visible = Math.max(1, Math.min(n, Math.floor((avail + o.gap) / (rowH + o.gap))));
   // Short lists: grow rows toward the touch size when there is room.
   if (visible === n && rowH < want) {
     const grow = Math.floor((avail - o.gap * (n - 1)) / Math.max(1, n));
-    rowH = Math.max(rowH, Math.min(want, grow, o.maxRow));
+    rowH = Math.max(rowH, Math.min(want, grow, Math.max(o.maxRow, want)));
   }
   return {
     rowH,
