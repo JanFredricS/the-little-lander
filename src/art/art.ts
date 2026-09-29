@@ -45,11 +45,16 @@ export interface CreateArtOptions {
   canvasFactory?: CanvasFactory;
 }
 
+/**
+ * Number of distinct tile variants per (theme, tileKind). getTile reduces any
+ * variantSeed to `seed % TILE_VARIANTS`, so warmup (which builds 0..N-1)
+ * provably covers every tile a level can request.
+ */
+export const TILE_VARIANTS = 4;
+
 export interface WarmupOptions {
   /** Stop early (e.g. the player left the loading screen). */
   signal?: AbortSignal;
-  /** Tile variant seeds to pre-build per theme material (default 0..3). */
-  tileVariants?: number;
   /** Yield to the event loop after this many ms of work (default 8). */
   sliceMs?: number;
 }
@@ -128,7 +133,8 @@ export function createArt(opts: CreateArtOptions = {}): Art {
     },
 
     getTile(theme: ThemeId, tileKind: TileKind, variantSeed: Seed): PixelCanvas {
-      const v = (variantSeed >>> 0) || 0;
+      // any seed is accepted; it maps onto one of TILE_VARIANTS variants
+      const v = ((variantSeed >>> 0) || 0) % TILE_VARIANTS;
       const key = `${theme}|${tileKind}|${v}`;
       let c = tiles.get(key);
       if (!c) {
@@ -185,9 +191,8 @@ export function createArt(opts: CreateArtOptions = {}): Art {
           for (let f = 0; f < n; f++) api.getSprite(name as SpriteName, f, theme);
         });
       }
-      const variants = o.tileVariants ?? 4;
       for (const m of THEME_MATERIALS[theme] ?? [])
-        for (const r of TILE_ROLES) for (let v = 0; v < variants; v++) jobs.push(() => api.getTile(theme, `${m}:${r}` as TileKind, v));
+        for (const r of TILE_ROLES) for (let v = 0; v < TILE_VARIANTS; v++) jobs.push(() => api.getTile(theme, `${m}:${r}` as TileKind, v));
       jobs.push(() => api.getBackdropLayers(theme));
       await runSliced(jobs, o);
     },

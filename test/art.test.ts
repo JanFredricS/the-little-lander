@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STILL_HEIGHT, STILL_WIDTH, THEME_IDS, TILE_SIZE } from '../src/contracts';
 import type { CoreSpriteName, PixelCanvas, RampName, StillId, TileKind } from '../src/contracts';
-import { createArt, placeholderPix, resolveSprite } from '../src/art/art';
+import { createArt, placeholderPix, resolveSprite, TILE_VARIANTS } from '../src/art/art';
 import { generateBackdrop } from '../src/art/backdrops';
 import type { Pix } from '../src/art/core/pix';
 import { mulberry32, seedOf } from '../src/art/core/rng';
@@ -280,9 +280,11 @@ describe('ArtApi', () => {
     expect(before).toBeGreaterThan(0);
     art.getSprite('vessel.lander', 0);
     art.getSprite('obj.goo', 0, 'caves');
-    art.getTile('caves', 'rock:top', 2);
+    for (const seed of [0, 2, 3, 4, 7, 13, 1000, -1]) art.getTile('caves', 'rock:top', seed);
+    for (const kind of ['rock:fill', 'rock:bottom', 'rock:side', 'rock:decor'] as TileKind[]) art.getTile('caves', kind, 7);
     art.getBackdropLayers('caves');
     expect(made.length).toBe(before);
+    expect(art.getTile('caves', 'rock:top', 7)).toBe(art.getTile('caves', 'rock:top', 7 % TILE_VARIANTS));
     await art.warmupStills(['asterFromOrbit']);
     const n = made.length;
     art.getStill('asterFromOrbit');
