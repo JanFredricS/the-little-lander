@@ -8,6 +8,10 @@
  * beacons: src/physics/env), mode switches (LevelSpec.modeSwitch and debug
  * requests), reachExit / plantBeacons / collectOrbs objectives,
  * out-of-bounds crash.
+ *
+ * S7 hook: level-owned systems (src/levels/systems: loose rocks, crumble
+ * platforms, kill fronts, the Keeper boss) step right after the flight
+ * environment, and answer the surviveBoss objective.
  */
 
 import { FIXED_DT } from '../contracts';
@@ -24,6 +28,7 @@ import type {
 } from '../contracts';
 import { PhysicsWorld } from '../physics/engine';
 import { buildLevel, flightLevelBodies, type BuiltLevel } from '../levels/build';
+import { createLevelSystems, type LevelSystems } from '../levels/systems';
 import { FlightEnvironment } from '../physics/env/environment';
 import { TriggerLatch } from '../physics/env/triggers';
 import { resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
@@ -54,6 +59,8 @@ export class LevelSession {
   private readonly sink: GameEventSink;
   private readonly modeSwitchLatch: TriggerLatch | null;
   private pendingMode: VesselMode | null = null;
+  /** Level-owned systems (S7). */
+  readonly systems: LevelSystems;
 
   private constructor(
     readonly spec: LevelSpec,
@@ -81,6 +88,23 @@ export class LevelSession {
     });
     this.vesselState = this.vessel.state();
     this.camera.snap(this.vesselState.pos);
+    const self = this;
+    this.systems = createLevelSystems({
+      spec,
+      physics,
+      built: this.built,
+      env: this.env,
+      get vessel() {
+        return self.vessel;
+      },
+      get state() {
+        return self.vesselState;
+      },
+      get simTime() {
+        return physics.simTime;
+      },
+      emit: this.sink,
+    });
   }
 
   /** Subscribe to this session's GameEvents. */
@@ -127,10 +151,12 @@ export class LevelSession {
     }
     this.checkModeSwitch();
     this.env.beforeStep();
+    for (const sys of this.systems.list) sys.beforeStep?.();
     this.vessel.applyInput(frame, FIXED_DT);
     this.physics.step(FIXED_DT);
     this.vessel.state(); // contacts: crash / damage / soft-land
     this.env.afterStep();
+    for (const sys of this.systems.list) sys.afterStep?.();
     this.vesselState = this.vessel.state();
     const s = this.vesselState;
     this.camera.step(s.pos, s.vel);
@@ -145,6 +171,7 @@ export class LevelSession {
 
   destroy(): void {
     this.listeners.length = 0;
+    for (const sys of this.systems.list) sys.destroy?.();
     this.physics.destroy();
   }
 
@@ -219,8 +246,9 @@ export class LevelSession {
         case 'collectOrbs':
           done = this.env.pickups.orbsCollected >= o.count;
           break;
-        default:
-          break; // surviveBoss: boss slice
+        case 'surviveBoss':
+          done = this.systems.list.some((sys) => sys.objectiveDone?.(o) === true);
+          break;
       }
       if (!done) continue;
       this.completed.add(o.id);
@@ -237,7 +265,7 @@ export class LevelSession {
   }
 }
 
-const SUPPORTED_OBJECTIVES: ReadonlySet<string> = new Set(['reachExit', 'plantBeacons', 'collectOrbs']);
+const SUPPORTED_OBJECTIVES: ReadonlySet<string> = new Set(['reachExit', 'plantBeacons', 'collectOrbs', 'surviveBoss']);
 
 /** Exit rect: centred on (x, y) horizontally, extending h px ABOVE the landing surface. */
 function inExit(exit: ExitDockEntity, s: VesselState): boolean {
