@@ -4,6 +4,12 @@
  * wrapper, with runtime-mutable world gravity, per-body gravity scale, weld
  * joints, rope-style distance joints, contact/hit events and ray casts.
  *
+ * It ALSO implements the physics-local ContactDataSource extension
+ * (bodyContacts(): touching contacts + solver impulses, src/physics/contactData.ts).
+ * The interface the flight layer really builds on is
+ * `PhysicsApi & ContactDataSource`; vessels refuse a PhysicsApi without it.
+ * Proposed S8 contract amendment: fold bodyContacts into PhysicsApi.
+ *
  * World convention: METRES, y-down, fixed 1/60 s step with 4 sub-steps.
  *
  * Memory: box2d3-wasm is an Emscripten/embind build.

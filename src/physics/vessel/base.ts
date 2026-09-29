@@ -12,7 +12,6 @@
 import { FIXED_DT } from '../../contracts';
 import type {
   BodyHandle,
-  ContactReport,
   CrashCause,
   FuelChangeReason,
   GameEventSink,
@@ -25,7 +24,7 @@ import type {
   VesselSpawn,
   VesselState,
 } from '../../contracts';
-import { bodyContacts, type BodyContact } from '../contactData';
+import { requireContactData, type BodyContact, type ContactDataSource } from '../contactData';
 import { bodyUp, type Cone } from '../geom';
 import { stepContacts } from '../stepEvents';
 import { PASS_THROUGH_TAGS, TAG_DEBRIS_BURNING, TAG_GOO, TAG_VESSEL, isDebrisTag } from '../tags';
@@ -54,6 +53,9 @@ export interface ExhaustTuning {
   exhaustHalfAngle: number;
 }
 
+/** A touching contact plus which vessel part (hull body or welded goo) it belongs to. */
+type PartContact = BodyContact & { part: BodyHandle };
+
 export const DEFAULT_HOOKS: VesselHooks = {
   siteAt: () => undefined,
   anchorAt: () => ({ ok: true }),
@@ -80,11 +82,11 @@ export abstract class VesselBase implements FlightVessel {
   protected readonly weight: number;
 
   private lastFuelReport: number;
-  /** Supporting bodies currently touching a part -> contact count. */
-  private readonly support = new Map<BodyHandle, number>();
   private settle = 0;
-  /** This step's touching contacts (null = physics without contact data -> `support` fallback). */
-  private touching: BodyContact[] | null = null;
+  /** This step's touching contacts of every part (with the part they touch). */
+  private touching: PartContact[] = [];
+  /** The physics-local contact-data extension (required, see src/physics/contactData.ts). */
+  private readonly contactData: ContactDataSource;
   private processedStep = -1;
   private linearDamping: number;
 
@@ -97,6 +99,7 @@ export abstract class VesselBase implements FlightVessel {
     protected readonly options: VesselOptions,
     private readonly exhaust?: ExhaustTuning,
   ) {
+    this.contactData = requireContactData(physics);
     const t = hullTuning;
     this.linearDamping = t.linearDamping;
     this.body = physics.createBody({
@@ -171,7 +174,6 @@ export abstract class VesselBase implements FlightVessel {
 
   removePart(h: BodyHandle): void {
     if (h !== this.body) this.parts.delete(h);
-    this.support.delete(h);
   }
 
   addDrag(delta: number): void {
@@ -282,10 +284,10 @@ export abstract class VesselBase implements FlightVessel {
     }
   }
 
-  /** Force (N) along the body's nose direction, at the centre of mass. */
-  protected thrust(force: number): void {
-    const up = bodyUp(this.physics.getTransform(this.body).angle);
-    this.physics.applyForce(this.body, { x: up.x * force, y: up.y * force });
+  /** Main engine: force (N) along the nose, applied at the 'main' nozzle mount (centre line, hull bottom). */
+  protected mainThrust(force: number): void {
+    const n = this.geometry.nozzles.find((z) => z.engine === 'main');
+    this.thrustAt(force, n ? { x: n.x, y: n.y } : { x: 0, y: 0 });
   }
 
   /** Force (N) along the body's nose direction, applied at a body-local px point (torque from the offset). */
@@ -318,7 +320,6 @@ export abstract class VesselBase implements FlightVessel {
       return pa === pb ? null : pa ? b : a;
     };
     this.touching = this.readTouching();
-    if (!this.touching) this.trackSupportFallback(report, other);
 
     // Impact events (audio/FX) + debris chip damage from the hit reports:
     // one per other body per step (a lander touching down on both legs is
@@ -342,13 +343,13 @@ export abstract class VesselBase implements FlightVessel {
         const k = Math.min(2, speedPx / d.refSpeed) * (tag === TAG_DEBRIS_BURNING ? d.burningMultiplier : 1);
         this.damage(d.hitDamage * k, 'debris');
         if (this.crashed) return;
-      } else if (!this.touching) worst = Math.max(worst, speedPx); // fallback: approach speed
+      }
     }
 
     // Hull damage from the solver's contact impulse (N·s): the velocity change
     // it forces on the vessel, J / mass, in px/s against damageSpeed/crashSpeed.
     // A heavy slow crate therefore hurts; a light fast pebble barely does.
-    if (this.touching) {
+    {
       const impulse = new Map<BodyHandle, number>();
       for (const c of this.touching) {
         const tag = this.physics.getTag(c.other);
@@ -365,32 +366,14 @@ export abstract class VesselBase implements FlightVessel {
     else if (worst > t.damageSpeed) this.damage((t.hitDamage * (worst - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
   }
 
-  /** Touching contacts of every part against non-part bodies (null without contact data). */
-  private readTouching(): BodyContact[] | null {
-    const out: BodyContact[] = [];
+  /** Touching contacts of every part against non-part bodies. */
+  private readTouching(): PartContact[] {
+    const out: PartContact[] = [];
     for (const part of this.parts) {
       if (!this.physics.hasBody(part)) continue;
-      const cs = bodyContacts(this.physics, part);
-      if (!cs) return null;
-      for (const c of cs) if (!this.parts.has(c.other) && this.physics.hasBody(c.other)) out.push(c);
+      for (const c of this.contactData.bodyContacts(part)) if (!this.parts.has(c.other) && this.physics.hasBody(c.other)) out.push({ ...c, part });
     }
     return out;
-  }
-
-  /** Begin/end bookkeeping when the physics has no contact data. */
-  private trackSupportFallback(report: ContactReport, other: (a: BodyHandle, b: BodyHandle) => BodyHandle | null): void {
-    for (const p of report.begin) {
-      const o = other(p.a, p.b);
-      if (o !== null && this.isSupport(o)) this.support.set(o, (this.support.get(o) ?? 0) + 1);
-    }
-    for (const p of report.end) {
-      const o = other(p.a, p.b);
-      if (o === null || !this.support.has(o)) continue;
-      const n = (this.support.get(o) ?? 1) - 1;
-      if (n <= 0) this.support.delete(o);
-      else this.support.set(o, n);
-    }
-    for (const b of [...this.support.keys()]) if (!this.physics.hasBody(b)) this.support.delete(b);
   }
 
   private isSupport(h: BodyHandle): boolean {
@@ -409,10 +392,10 @@ export abstract class VesselBase implements FlightVessel {
    * gravity (normal within ~45° of "down"), touching the lower part of the hull.
    */
   private legsDown(down: Vec2): boolean {
-    if (!this.touching) return this.support.size > 0;
     const lowY = (this.geometry.h / 2) * LOW_REGION;
     for (const c of this.touching) {
-      if (!this.isSupport(c.other)) continue;
+      // Only the hull body's own shapes (legs / skids) count: welded goo resting on the ground is not a landing.
+      if (c.part !== this.body || !this.isSupport(c.other)) continue;
       if (c.normal.x * down.x + c.normal.y * down.y < SUPPORT_NORMAL_COS) continue;
       for (const p of c.points) if (mToPx(this.physics.worldToLocal(this.body, p.point).y) >= lowY) return true;
     }
@@ -428,7 +411,7 @@ export abstract class VesselBase implements FlightVessel {
     const pose = this.physics.getTransform(this.body);
     const pos = { x: mToPx(pose.x), y: mToPx(pose.y) };
     const v = this.physics.getLinearVelocity(this.body);
-    const down = this.touching ? this.gravityDown(pos) : { x: 0, y: 1 };
+    const down = this.gravityDown(pos);
     // Tilt from "upright against gravity": body up vs -down.
     const up = bodyUp(pose.angle);
     const tilt = Math.acos(Math.max(-1, Math.min(1, -(up.x * down.x + up.y * down.y))));

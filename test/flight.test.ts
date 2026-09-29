@@ -11,7 +11,7 @@ import { physlab } from '../src/levels/physlab';
 import { validateLevel } from '../src/levels/validate';
 import { PhysicsWorld } from '../src/physics/engine';
 import { gustPhase } from '../src/physics/env/wind';
-import { PHYSICS_OVERRIDE_KEYS, resolveTuning, type VesselOptions } from '../src/physics/tuning';
+import { PHYSICS_OVERRIDE_KEYS, overrideRangeError, resolveTuning, tuningRange, type VesselOptions } from '../src/physics/tuning';
 import { mToPx, pxToM } from '../src/physics/units';
 import { createVessel, type FlightVessel } from '../src/physics/vessel';
 import { emptyFrame } from '../src/shell/input';
@@ -158,6 +158,31 @@ describe('lander', () => {
 // --------------------------------------------------------------------- csm
 
 describe('csm', () => {
+  it('main thrust is applied at the nozzle mount (csm and harpoonThrust)', async () => {
+    for (const mode of ['csm', 'harpoonThrust'] as const) {
+      const r = await rig(mode, { pos: { x: 0, y: 0 } });
+      const calls: { force: { x: number; y: number }; point?: { x: number; y: number } }[] = [];
+      const orig = r.physics.applyForce.bind(r.physics);
+      r.physics.applyForce = (h, force, point) => {
+        if (h === r.vessel.body) calls.push({ force, point });
+        orig(h, force, point);
+      };
+      r.tick(input({ thrust: true }));
+      const nozzle = r.vessel.geometry.nozzles.find((n) => n.engine === 'main')!;
+      expect(calls).toHaveLength(1);
+      expect(calls[0]!.force.y).toBeLessThan(0);
+      const pose = r.physics.getTransform(r.vessel.body); // pose after the step; the force was applied before it
+      expect(mToPx(calls[0]!.point!.x)).toBeCloseTo(nozzle.x, 0);
+      expect(mToPx(calls[0]!.point!.y) - mToPx(pose.y)).toBeGreaterThan(nozzle.y - 2);
+    }
+  });
+
+  it('vessels require the physics contact-data extension', async () => {
+    const r = await rig('csm');
+    const bare = new Proxy(r.physics, { get: (o, k) => (k === 'bodyContacts' ? undefined : Reflect.get(o, k, o)) });
+    expect(() => createVessel('lander', bare, { pos: { x: 0, y: 0 } }, () => {}, { tuning: resolveTuning(), refGravity: 3.2, harpoonGuns: 1 })).toThrow(/ContactDataSource/);
+  });
+
   it('holding thrust runs away (thrust-to-weight ~1.8)', async () => {
     const { run, g } = await rig('csm');
     const s = run(120, input({ thrust: true }));
@@ -691,6 +716,23 @@ describe('environment: pickups & beacons', () => {
     expect(ofType(events, 'beaconPlanted')).toHaveLength(0);
   });
 
+  it('goo welded under the hull resting on a platform (legs clear) is not a landing', async () => {
+    // CSM bottom at y+18; two blobs (r 7) under it at y+25 touch the ground at y+32: the hull stays 14 px clear.
+    const r = await rig('csm', { ground: 100, pos: { x: 0, y: 100 - 32.5 } });
+    r.vessel.hooks = { ...r.vessel.hooks, siteAt: () => 'site' };
+    for (const x of [-7, 7]) {
+      const goo = r.physics.createBody({ type: 'dynamic', position: { x: pxToM(x), y: pxToM(100 - 7.5) }, tag: 'goo' });
+      r.physics.addCircle(goo, { x: 0, y: 0 }, pxToM(7), { density: 3, group: -7 });
+      r.physics.createWeldJoint({ bodyA: r.vessel.body, bodyB: goo, anchor: { x: pxToM(x), y: pxToM(100 - 7.5) } });
+      r.vessel.addPart(goo);
+    }
+    const s = r.run(120);
+    expect(Math.hypot(s.vel.x, s.vel.y)).toBeLessThan(5); // at rest on the goo
+    expect(s.pos.y).toBeLessThan(100 - 18 - 8); // hull clear of the ground
+    expect(s.landed).toBe(false);
+    expect(ofType(r.events, 'softLand')).toHaveLength(0);
+  });
+
   it('lifting off resets the hold', async () => {
     const { events, run } = await session(lab({ entities: [{ id: 'site', kind: 'beaconSite', x: 500, y: GROUND, w: 80, holdSec: 1 }] }));
     run(60);
@@ -737,7 +779,17 @@ describe('session: modes, tuning, physlab', () => {
     expect(errs({ 'lander.thrust': -1 })).toMatch(/lander\.thrust/);
     expect(errs({ 'csm.restitution': 1.5 })).toMatch(/must be <= 1/);
     expect(errs({ 'csm.damageSpeed': 300 })).toMatch(/csm\.damageSpeed must be < csm\.crashSpeed/);
-    expect(errs({ 'csm.width': 30, 'goo.burnSec': 0.8, 'lander.engineOffset': 0 })).toBe('');
+    expect(errs({ 'lander.legDrop': 0 })).toMatch(/lander\.legDrop' = 0 must be > 0/);
+    expect(errs({ 'goo.maxAttached': 1.5 })).toMatch(/goo\.maxAttached' = 1.5 must be a whole number/);
+    expect(errs({ 'csm.width': 30, 'goo.burnSec': 0.8, 'lander.engineOffset': 0, 'goo.maxAttached': 0 })).toBe('');
+    expect(resolveTuning({ 'lander.legDrop': 0, 'goo.maxAttached': 1.5 })).toMatchObject({ lander: { legDrop: 7 }, goo: { maxAttached: 8 } });
+    // every registered key has an explicit range; each key's default is inside it
+    const t = resolveTuning() as unknown as Record<string, Record<string, number>>;
+    for (const k of PHYSICS_OVERRIDE_KEYS) {
+      expect(tuningRange(k), k).toBeDefined();
+      const [g, f] = k.split('.') as [string, string];
+      expect(overrideRangeError(k, t[g]![f]!), k).toBeNull();
+    }
     expect(resolveTuning({ 'csm.width': 0, 'csm.burnSeconds': -5 }).csm).toMatchObject({ width: 20, burnSeconds: 30 });
   });
 

@@ -40,25 +40,30 @@ export const PHYSICS_OVERRIDE_KEYS: readonly string[] = Object.entries(DEFAULTS)
   Object.keys(values).map((k) => `${group}.${k}`),
 );
 
-/** Allowed range of a tuning field: `min`/`max` inclusive, `above` exclusive lower bound. */
+/** Allowed range of a tuning field: `min`/`max` inclusive, `above` exclusive lower bound, `int` = whole numbers only. */
 export interface TuningRange {
   min?: number;
   above?: number;
   max?: number;
+  int?: boolean;
 }
 
 const POSITIVE: TuningRange = { above: 0 };
+const NON_NEGATIVE: TuningRange = { min: 0 };
 const UNIT: TuningRange = { min: 0, max: 1 };
+const COUNT: TuningRange = { min: 0, int: true };
 
 /**
- * Per-field ranges (field names are shared across groups). Anything not listed
- * must be >= 0. Keep in sync when adding tuning fields.
+ * Per-field ranges (field names are shared across groups). EVERY tuning field
+ * must be listed — a module-load check throws otherwise. Dimensions that
+ * become physics shapes are strictly positive; counts are whole numbers.
  */
 const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   // sizes (px) and mass
   width: POSITIVE,
   height: POSITIVE,
   legSpan: POSITIVE,
+  legDrop: POSITIVE,
   radius: POSITIVE,
   orbRadius: POSITIVE,
   fuelRadius: POSITIVE,
@@ -88,14 +93,30 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   burnSec: POSITIVE,
   lifetimeSec: POSITIVE,
   refSpeed: POSITIVE,
-  maxAlive: { min: 1 },
-  maxAttached: { min: 1 },
+  maxAlive: COUNT,
+  maxAttached: COUNT,
+  // non-negative: damping, offsets, grace times, multipliers, thresholds
+  angularDamping: NON_NEGATIVE,
+  linearDamping: NON_NEGATIVE,
+  friction: NON_NEGATIVE,
+  damageSpeed: NON_NEGATIVE,
+  landSettleSec: NON_NEGATIVE,
+  engineOffset: NON_NEGATIVE,
+  mountHeight: NON_NEGATIVE,
+  attachedDrag: NON_NEGATIVE,
+  burnGraceSec: NON_NEGATIVE,
+  weldHertz: NON_NEGATIVE,
+  weldDamping: NON_NEGATIVE,
+  burningMultiplier: NON_NEGATIVE,
+  minDamageSpeed: NON_NEGATIVE,
+  zoneBelow: NON_NEGATIVE,
+  eventThreshold: NON_NEGATIVE,
 };
 
 /** Range of a registered `group.field` key (undefined for unknown keys). */
 export function tuningRange(key: string): TuningRange | undefined {
   if (!PHYSICS_OVERRIDE_KEYS.includes(key)) return undefined;
-  return FIELD_RANGES[key.slice(key.indexOf('.') + 1)] ?? { min: 0 };
+  return FIELD_RANGES[key.slice(key.indexOf('.') + 1)];
 }
 
 /** Why `value` is not acceptable for registered override `key` (null = ok, or key unknown). */
@@ -106,6 +127,7 @@ export function overrideRangeError(key: string, value: number): string | null {
   if (r.above !== undefined && !(value > r.above)) return `must be > ${r.above}`;
   if (r.min !== undefined && value < r.min) return `must be >= ${r.min}`;
   if (r.max !== undefined && value > r.max) return `must be <= ${+r.max.toFixed(4)}`;
+  if (r.int && !Number.isInteger(value)) return 'must be a whole number';
   return null;
 }
 
@@ -154,4 +176,9 @@ export interface VesselOptions {
 
 export function vesselOptionsFor(spec: LevelSpec, tuning = resolveTuning(spec.physicsOverrides)): VesselOptions {
   return { tuning, refGravity: referenceGravity(spec.gravity), harpoonGuns: spec.harpoonGuns ?? 1 };
+}
+
+// Every registered tuning field needs an explicit range.
+for (const key of PHYSICS_OVERRIDE_KEYS) {
+  if (!FIELD_RANGES[key.slice(key.indexOf('.') + 1)]) throw new Error(`tuning field '${key}' has no range in FIELD_RANGES (src/physics/tuning/index.ts)`);
 }

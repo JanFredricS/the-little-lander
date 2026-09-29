@@ -89,7 +89,7 @@ export class HarpoonThrustController extends RopeVessel {
     const main = frame.thrust && this.canBurn;
     this.setEngines(main, false, false);
     if (main) {
-      this.thrust(t.thrust * this.weight);
+      this.mainThrust(t.thrust * this.weight);
       this.burnFuel(dt / t.burnSeconds);
     }
     const rot = (frame.rotateCW ? 1 : 0) - (frame.rotateCCW ? 1 : 0);
