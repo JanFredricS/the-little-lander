@@ -18,7 +18,7 @@ import { FrameLoop, type PauseCause } from './shell/clock';
 import { InputMapper, KeyboardSource, PointerSource, VirtualControlsSource } from './shell/input';
 import { INITIAL_STATE, isResume, transition } from './shell/state';
 import { playCutscene, type CutscenePlayerHandle } from './story/cutscenePlayer';
-import { continueAction, continueTarget, isUnlocked, modeSwitchCutscene, selectLevelAction } from './story/flow';
+import { continuePlan, continueTarget, isUnlocked, modeSwitchCutscene, selectLevelAction } from './story/flow';
 import { SaveStore } from './story/save';
 import { getCutscene } from './story/scripts';
 
@@ -43,6 +43,8 @@ export class App {
   private cutscene: CutscenePlayerHandle | null = null;
   /** True while a mid-level (mode switch) cutscene pauses the level. */
   private inlineCutscene = false;
+  /** Extra scripts to play inside the next `cutscene` screen (after the one it names). */
+  private cutsceneChain: CutsceneId[] = [];
   private session: LevelSession | null = null;
   private view: LevelView | null = null;
   private readonly overlay = new Container();
@@ -120,6 +122,8 @@ export class App {
 
   private enter(prev: ScreenState, action: ScreenAction, next: ScreenState): void {
     this.stopCutscene();
+    const chain = this.cutsceneChain;
+    this.cutsceneChain = [];
     switch (next.id) {
       case 'boot':
         return this.showOverlay('Loading…');
@@ -143,7 +147,7 @@ export class App {
       case 'cutscene':
         this.endSession();
         this.hideOverlay();
-        return this.playCutscene(next.cutsceneId, () => this.dispatch({ type: 'cutsceneDone' }));
+        return this.playCutsceneChain([next.cutsceneId, ...chain]);
       case 'paused':
         this.loop.setPaused(true);
         return this.showOverlay('PAUSED\n\nEsc / tap resume · R retry · Q quit');
@@ -263,6 +267,13 @@ export class App {
     });
   }
 
+  /** Play scripts back to back inside one `cutscene` screen, then leave it. */
+  private playCutsceneChain(ids: CutsceneId[]): void {
+    const [id, ...rest] = ids;
+    if (!id) return this.dispatch({ type: 'cutsceneDone' });
+    this.playCutscene(id, () => this.playCutsceneChain(rest));
+  }
+
   private stopCutscene(): void {
     this.cutscene?.destroy();
     this.cutscene = null;
@@ -294,7 +305,11 @@ export class App {
 
   private resultsConfirm(): void {
     if (this.state.id !== 'results') return;
-    if (this.state.outcome.kind === 'complete') this.dispatch(continueAction(this.state.levelId, getLevel));
+    if (this.state.outcome.kind === 'complete') {
+      const plan = continuePlan(this.state.levelId, getLevel);
+      this.cutsceneChain = plan.cutscenes.slice(1);
+      this.dispatch(plan.action);
+    }
     else this.dispatch({ type: 'retry' });
   }
 

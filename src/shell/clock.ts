@@ -177,7 +177,9 @@ export class FrameLoop {
     const dt = this.lastMs === null ? 0 : (nowMs - this.lastMs) / 1000;
     this.lastMs = nowMs;
     const n = this.clock.advance(dt);
-    for (let i = 0; i < n; i++) this.cb.step(i);
+    // Re-check pause between steps: a step may pause the loop (pause key,
+    // mid-level cutscene) and the rest of a catch-up batch must not run.
+    for (let i = 0; i < n && !this.clock.paused; i++) this.cb.step(i);
     this.cb.render(this.clock.alpha);
     this.rafId = this.raf.request(this.tick);
   };

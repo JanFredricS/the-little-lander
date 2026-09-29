@@ -105,6 +105,29 @@ describe('FrameLoop', () => {
     expect(steps.length).toBe(2 + 15);
   });
 
+  it('stops the remaining steps of a batched frame when a step pauses the loop', () => {
+    const raf = new FakeRaf();
+    const steps: number[] = [];
+    const loop: FrameLoop = new FrameLoop(
+      {
+        step: (i) => {
+          steps.push(i);
+          if (i === 0) loop.setPaused(true);
+        },
+        render: () => {},
+      },
+      raf,
+    );
+    loop.start();
+    raf.frame(0);
+    raf.frame(1000); // lagged frame: 15 steps batched
+    expect(steps).toEqual([0]);
+    loop.setPaused(false);
+    raf.frame(2000); // first frame after resume: dt = 0
+    raf.frame(2000 + 1000 / 60 + 0.01);
+    expect(steps).toEqual([0, 0]);
+  });
+
   it('pauses on visibility loss / blur, composes causes, and reports changes', () => {
     const raf = new FakeRaf();
     const changes: [boolean, string][] = [];

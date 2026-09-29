@@ -1,7 +1,6 @@
 import { App } from './app';
-import type { ScreenAction } from './contracts';
 import { DEBUG_ROUTES } from './debugRoutes';
-import { resolveLevelParam } from './levels/registry';
+import { bootActions } from './shell/boot';
 
 const host = document.getElementById('app');
 if (!host) throw new Error('#app missing');
@@ -25,12 +24,8 @@ const route = DEBUG_ROUTES.find((r) => params.has(r.param));
 if (route) {
   route.run(host, params.get(route.param) ?? '').catch(fail);
 } else {
-  // Until the menus land (S3/S4), the game opens straight into a level
-  // (default: the debug testpad). ?screen=title stops at the title screen.
-  const actions: ScreenAction[] = [];
-  if (params.get('screen') !== 'title') {
-    actions.push({ type: 'start' }, { type: 'selectLevel', levelId: resolveLevelParam(params.get('level')) ?? 'testpad' });
-  }
+  // Root URL -> title screen (Continue / level select); ?level=<id> jumps straight in.
+  const actions = bootActions(params);
   const app = new App(host, {
     onEvent: import.meta.env.DEV ? (e) => (e.type === 'crash' || e.type === 'levelComplete' ? console.info('[event]', e) : undefined) : undefined,
   });

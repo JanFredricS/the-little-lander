@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
 import type { LevelId, LevelSpec, ScreenState } from '../src/contracts';
-import { continueAction, continueTarget, isUnlocked, levelCutscenes, modeSwitchCutscene, nextStoryLevel, selectLevelAction } from '../src/story/flow';
+import { continuePlan, continueTarget, isUnlocked, levelCutscenes, modeSwitchCutscene, nextStoryLevel, selectLevelAction } from '../src/story/flow';
 import { defaultSave, recordResult } from '../src/story/save';
 import { transition } from '../src/shell/state';
 
@@ -36,20 +36,35 @@ describe('story sequencing', () => {
   });
 
   it('continue plays "after" (or the next level\'s "before") then starts the next level', () => {
-    expect(continueAction('hangarRun', allBuilt)).toEqual({ type: 'continue', next: 'descent', cutsceneAfter: 'meetIo' });
-    expect(continueAction('hollow', allBuilt)).toEqual({ type: 'continue', next: 'keeper', cutsceneAfter: 'keeperWakes' });
-    expect(continueAction('madDash', allBuilt)).toEqual({ type: 'continue', next: null, cutsceneAfter: 'finale' });
+    expect(continuePlan('hangarRun', allBuilt).action).toEqual({ type: 'continue', next: 'descent', cutsceneAfter: 'meetIo' });
+    expect(continuePlan('hollow', allBuilt).action).toEqual({ type: 'continue', next: 'keeper', cutsceneAfter: 'keeperWakes' });
+    expect(continuePlan('madDash', allBuilt).action).toEqual({ type: 'continue', next: null, cutsceneAfter: 'finale' });
     // Unbuilt next level: story cutscene still plays, then level select.
-    expect(continueAction('testpad', noneBuilt)).toEqual({ type: 'continue', next: null, cutsceneAfter: 'briefing' });
+    expect(continuePlan('testpad', noneBuilt).action).toEqual({ type: 'continue', next: null, cutsceneAfter: 'briefing' });
+  });
+
+  it('chains the finished level\'s "after" and the next level\'s "before"', () => {
+    const specs = (id: LevelId) =>
+      id === 'descent' ? fake(id, { cutsceneAfter: 'descentAwe' }) : id === 'floatingIsles' ? fake(id, { cutsceneBefore: 'csmSeized' }) : fake(id);
+    const plan = continuePlan('descent', specs);
+    expect(plan.cutscenes).toEqual(['descentAwe', 'csmSeized']);
+    expect(plan.action).toEqual({ type: 'continue', next: 'floatingIsles', cutsceneAfter: 'descentAwe' });
+    // Default table: Map 1 has both hooks; testpad -> Map 1 plays its "before".
+    expect(continuePlan('testpad', allBuilt).cutscenes).toEqual(['briefing']);
+    expect(continuePlan('hollow', allBuilt).cutscenes).toEqual(['keeperWakes']);
+    expect(continuePlan('keeper', (id) => (id === 'madDash' ? fake(id, { cutsceneBefore: 'keeperFalls' }) : fake(id))).cutscenes).toEqual(['keeperFalls']);
+    expect(continuePlan('physlab', allBuilt)).toEqual({ action: { type: 'continue', next: null }, cutscenes: [] });
   });
 
   it('walks the whole arc through the state machine, in order', () => {
     const seen: string[] = [];
+    let chain: string[] = [];
     let save = defaultSave();
     let s: ScreenState = transition({ id: 'levelSelect' }, selectLevelAction('hangarRun', allBuilt));
     for (let guard = 0; guard < 100 && s.id !== 'levelSelect'; guard++) {
       if (s.id === 'cutscene') {
-        seen.push(s.cutsceneId);
+        seen.push(s.cutsceneId, ...chain);
+        chain = [];
         s = transition(s, { type: 'cutsceneDone' });
       } else if (s.id === 'playing') {
         seen.push(s.levelId);
@@ -57,7 +72,9 @@ describe('story sequencing', () => {
         s = transition(s, { type: 'levelEnded', outcome: done });
       } else if (s.id === 'results') {
         save = recordResult(save, s.levelId, s.outcome);
-        s = transition(s, continueAction(s.levelId, allBuilt));
+        const plan = continuePlan(s.levelId, allBuilt);
+        chain = plan.cutscenes.slice(1); // the App plays these inside the same cutscene screen
+        s = transition(s, plan.action);
       } else throw new Error(`unexpected ${s.id}`);
     }
     expect(seen).toEqual([

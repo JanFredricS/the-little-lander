@@ -8,10 +8,11 @@
  * even while level content (S6/S7) is still being built). Mid-level
  * cutscenes (Map 3's csmSeized) ride on LevelSpec.modeSwitch.cutscene.
  *
- * Continue rule: finishing level L plays L.after, or — if L has none —
- * next.before, then starts the next level. Only one cutscene fits a
- * `continue` action, so the default table never gives both (e.g. the
- * keeper's awakening is Map 7's "before", which Map 6 doesn't duplicate).
+ * Continue rule: finishing level L plays L.after, then next.before, then
+ * starts the next level. ScreenAction.continue (frozen) carries one
+ * cutscene, so the chain is played inside that single `cutscene` screen:
+ * continuePlan() returns the action plus the full list, and the App plays
+ * the extra scripts back to back before dispatching cutsceneDone.
  */
 
 import { STORY_LEVELS } from '../contracts';
@@ -72,17 +73,29 @@ export function selectLevelAction(id: LevelId, getSpec: SpecLookup): ScreenActio
   return before ? { type: 'selectLevel', levelId: id, cutsceneBefore: before } : { type: 'selectLevel', levelId: id };
 }
 
+export interface ContinuePlan {
+  action: Extract<ScreenAction, { type: 'continue' }>;
+  /** Every cutscene to play, in order (action.cutsceneAfter === cutscenes[0]). */
+  cutscenes: CutsceneId[];
+}
+
 /**
- * After completing `finished`: the continue action. `next` is null (back to
- * level select) when there is no next level or it isn't built yet — the
- * story cutscene still plays.
+ * After completing `finished`: the continue action + cutscene chain
+ * (finished.after, then next.before). `next` is null (back to level select)
+ * when there is no next level or it isn't built yet — the story cutscenes
+ * still play.
  */
-export function continueAction(finished: LevelId, getSpec: SpecLookup): Extract<ScreenAction, { type: 'continue' }> {
+export function continuePlan(finished: LevelId, getSpec: SpecLookup): ContinuePlan {
   const nextId = nextStoryLevel(finished);
   const nextSpec = nextId ? getSpec(nextId) : undefined;
-  const cutscene = levelCutscenes(finished, getSpec(finished)).after ?? (nextId ? levelCutscenes(nextId, nextSpec).before : undefined);
+  const cutscenes: CutsceneId[] = [];
+  const after = levelCutscenes(finished, getSpec(finished)).after;
+  const before = nextId ? levelCutscenes(nextId, nextSpec).before : undefined;
+  if (after) cutscenes.push(after);
+  if (before && before !== after) cutscenes.push(before);
   const next = nextSpec ? nextId : null;
-  return cutscene ? { type: 'continue', next, cutsceneAfter: cutscene } : { type: 'continue', next };
+  const action: ContinuePlan['action'] = cutscenes[0] ? { type: 'continue', next, cutsceneAfter: cutscenes[0] } : { type: 'continue', next };
+  return { action, cutscenes };
 }
 
 /**
