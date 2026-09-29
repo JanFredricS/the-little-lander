@@ -6,6 +6,7 @@
 
 import type { LevelId } from '../../contracts';
 import type { RouteNode } from './autopilot';
+import { DESCENT_LINE } from '../descent';
 
 export const hangarRunRoute: RouteNode[] = [
   { x: 300, y: 1150, speed: 90 },
@@ -33,6 +34,14 @@ export const hangarRunRoute: RouteNode[] = [
   { x: 7800, y: 985, speed: 25, tol: 10, stop: true },
 ];
 
+/** Map 2: the designed line; slower through the boulder field and the embers. */
+export const descentRoute: RouteNode[] = DESCENT_LINE.slice(1).map((p, i, a) => {
+  const last = i === a.length - 1;
+  const speed = p.y < 3300 ? 170 : p.y < 6500 ? 120 : p.y < 9400 ? 140 : 160;
+  return last ? { x: p.x, y: p.y, speed: 90, tol: 30, stop: true } : { x: p.x, y: p.y, speed, tol: 50 };
+});
+
 export const ROUTES: Partial<Record<LevelId, readonly RouteNode[]>> = {
   hangarRun: hangarRunRoute,
+  descent: descentRoute,
 };

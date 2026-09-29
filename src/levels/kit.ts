@@ -203,7 +203,19 @@ export function tubeWalls(nodes: readonly TubeNode[], seed: number, step: number
     left.push(round(P(p.x - nx * (p.w / 2 + jl), p.y - ny * (p.w / 2 + jl))));
     right.push(round(P(p.x + nx * (p.w / 2 + jr), p.y + ny * (p.w / 2 + jr))));
   }
-  return { left: dedupe(left), right: dedupe(right) };
+  // walls of a vertical passage are functions x(y): dropping any point that
+  // does not go strictly down removes the folds a tight turn or a fast width
+  // change would put on the inner side (keeps the polygons simple)
+  return { left: monotoneY(dedupe(left)), right: monotoneY(dedupe(right)) };
+}
+
+function monotoneY(pts: Vec2[]): Vec2[] {
+  const out: Vec2[] = [];
+  for (const p of pts) {
+    const q = out[out.length - 1];
+    if (!q || p.y > q.y) out.push(p);
+  }
+  return out;
 }
 
 function dedupe(pts: Vec2[]): Vec2[] {
@@ -227,4 +239,79 @@ export function surfaceY(points: readonly Vec2[], x: number): number {
     if (x <= b.x) return a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x || 1);
   }
   return points[points.length - 1]!.y;
+}
+
+/** Centre x and width of a vertical tube (nodes with increasing y) at world y. */
+export function tubeAt(nodes: readonly TubeNode[], y: number): { x: number; w: number } {
+  if (y <= nodes[0]!.y) return { x: nodes[0]!.x, w: nodes[0]!.w };
+  for (let i = 1; i < nodes.length; i++) {
+    const a = nodes[i - 1]!;
+    const b = nodes[i]!;
+    if (y <= b.y) {
+      const t = (y - a.y) / (b.y - a.y || 1);
+      return { x: a.x + (b.x - a.x) * t, w: a.w + (b.w - a.w) * t };
+    }
+  }
+  const l = nodes[nodes.length - 1]!;
+  return { x: l.x, w: l.w };
+}
+
+/** Distance from p to an open polyline. */
+export function distToPolyline(p: Vec2, line: readonly Vec2[]): number {
+  let best = Infinity;
+  for (let i = 1; i < line.length; i++) {
+    const a = line[i - 1]!;
+    const b = line[i]!;
+    const lx = b.x - a.x;
+    const ly = b.y - a.y;
+    const l2 = lx * lx + ly * ly || 1;
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * lx + (p.y - a.y) * ly) / l2));
+    best = Math.min(best, Math.hypot(p.x - (a.x + lx * t), p.y - (a.y + ly * t)));
+  }
+  return best;
+}
+
+export interface ScatterOpts {
+  /** y range to fill. */
+  y0: number;
+  y1: number;
+  /** Rock radius range (px). */
+  rMin: number;
+  rMax: number;
+  /** Placement attempts (the field's density knob). */
+  tries: number;
+  /** Min free gap between rocks and between a rock and the tube wall (px). */
+  gap: number;
+  /** Keep this clear radius around `line` (the designed flight line). */
+  line?: readonly Vec2[];
+  lineClear?: number;
+  /** Already-placed circles to keep clear of. */
+  avoid?: readonly { x: number; y: number; r: number }[];
+  /** ry = r · aspect (default 0.75). */
+  aspect?: number;
+}
+
+/**
+ * Seeded rock field inside a vertical tube: circles placed by rejection
+ * sampling (clear of each other, of the tube walls and of the designed
+ * flight line), returned as centre + radii for blob(). Deterministic.
+ */
+export function scatterRocks(nodes: readonly TubeNode[], seed: number, o: ScatterOpts): { x: number; y: number; rx: number; ry: number }[] {
+  const rng = mulberry32(seed);
+  const placed: { x: number; y: number; r: number }[] = [...(o.avoid ?? [])];
+  const out: { x: number; y: number; rx: number; ry: number }[] = [];
+  const aspect = o.aspect ?? 0.75;
+  for (let k = 0; k < o.tries; k++) {
+    const y = rng.range(o.y0, o.y1);
+    const r = rng.range(o.rMin, o.rMax);
+    const t = tubeAt(nodes, y);
+    const x = t.x + rng.jitter(t.w / 2);
+    const bound = r * 1.25; // blobPoints rough 0.22 + margin
+    if (Math.abs(x - t.x) + bound + o.gap > t.w / 2) continue;
+    if (o.line && distToPolyline({ x, y }, o.line) < bound + (o.lineClear ?? 60)) continue;
+    if (placed.some((c) => Math.hypot(c.x - x, c.y - y) < c.r + bound + o.gap)) continue;
+    placed.push({ x, y, r: bound });
+    out.push({ x: Math.round(x), y: Math.round(y), rx: Math.round(r), ry: Math.round(r * aspect) });
+  }
+  return out;
 }

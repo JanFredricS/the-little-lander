@@ -39,6 +39,25 @@ export interface AutopilotStats {
 }
 
 const G_ALIGN = 0.5; // csm: max angle error (rad) to fire the main engine
+const GOO_DEFEND_RADIUS = 95; // csm: burn free goo closer than this (px)
+
+function nearestGoo(s: LevelSession, pos: Vec2, radius: number): Vec2 | null {
+  let best: Vec2 | null = null;
+  let bd = radius;
+  for (const b of s.env.goo.balls) {
+    if (b.attached || !s.physics.hasBody(b.body)) continue;
+    const p = s.physics.getTransform(b.body);
+    const q = { x: mToPx(p.x), y: mToPx(p.y) };
+    const d = Math.hypot(q.x - pos.x, q.y - pos.y);
+    // only blobs level with / below the stack: burning one overhead would
+    // mean thrusting at the ground
+    if (d < bd && q.y - pos.y > -0.3 * d) {
+      bd = d;
+      best = q;
+    }
+  }
+  return best;
+}
 
 export class Autopilot {
   private i = 0;
@@ -197,6 +216,24 @@ export class Autopilot {
       }
     } else if (st.mode === 'csm') {
       const ct = t.csm;
+      // goo defence (the Map 2 skill): swing the nozzle onto the nearest
+      // free blob closing in, and burn it before it latches.
+      const threat = nearestGoo(s, pos, GOO_DEFEND_RADIUS);
+      if (threat) {
+        const gx2 = threat.x - pos.x;
+        const gy2 = threat.y - pos.y;
+        const target = Math.atan2(-gx2, gy2);
+        const err = wrap(target - angle);
+        const sw = err * 5 - w * 1.2;
+        if (sw > 0.35) f.rotateCW = true;
+        else if (sw < -0.35) f.rotateCCW = true;
+        this.accM += Math.abs(err) < 0.35 ? 0.6 : 0;
+        if (this.accM >= 0.5) {
+          f.thrust = true;
+          this.accM -= 1;
+        }
+        return f;
+      }
       const aMain = ct.thrust * refG * massRatio;
       const Tm = Math.hypot(Tx, Ty);
       let target = Math.atan2(Tx, -Ty);
