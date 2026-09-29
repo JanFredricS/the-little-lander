@@ -1,0 +1,33 @@
+import type { GameEventOf, GameEventType } from '../../src/contracts';
+
+/** One sample event per GameEventType — a missing kind fails the type-check. */
+export const SAMPLE_EVENTS: { [T in GameEventType]: GameEventOf<T> } = {
+  levelStarted: { type: 'levelStarted', levelId: 'descent', themeId: 'asteroid', mode: 'csm' },
+  crash: { type: 'crash', cause: 'impact', pos: { x: 0, y: 0 }, speed: 400 },
+  softLand: { type: 'softLand', pos: { x: 0, y: 0 } },
+  beaconPlanted: { type: 'beaconPlanted', siteId: 'b1', planted: 2, total: 5 },
+  orbCollected: { type: 'orbCollected', entityId: 'o1', points: 100, fuelRefill: 10 },
+  fuelChanged: { type: 'fuelChanged', fuel: 80, delta: 20, reason: 'pickup' },
+  hullChanged: { type: 'hullChanged', hull: 70, delta: -10, reason: 'impact' },
+  radiationCharging: { type: 'radiationCharging', emitterId: 'sun', inSec: 1.5 },
+  radiationHit: { type: 'radiationHit', emitterId: 'sun', fuelLost: 30 },
+  windGust: { type: 'windGust', zoneId: 'w1', phase: 'start', accel: { x: 8, y: 0 } },
+  gravityChanged: { type: 'gravityChanged', gravity: { x: 0, y: -9 } },
+  enginesChanged: { type: 'enginesChanged', main: true, left: false, right: false },
+  impact: { type: 'impact', pos: { x: 0, y: 0 }, speed: 120, with: 'terrain' },
+  gooAttached: { type: 'gooAttached', gooId: 1, attached: 1 },
+  gooBurned: { type: 'gooBurned', gooId: 1, attached: 0 },
+  harpoonFired: { type: 'harpoonFired', gun: 0, dir: { x: 0, y: -1 } },
+  harpoonMissed: { type: 'harpoonMissed', gun: 0 },
+  ropeAttached: { type: 'ropeAttached', gun: 0, anchor: { x: 0, y: 0 }, brittle: false },
+  ropeBroken: { type: 'ropeBroken', gun: 0, reason: 'brittle' },
+  ropeReleased: { type: 'ropeReleased', gun: 0 },
+  vesselModeChanged: { type: 'vesselModeChanged', from: 'csm', to: 'lander' },
+  objectiveComplete: { type: 'objectiveComplete', objectiveId: 'x' },
+  levelComplete: { type: 'levelComplete', levelId: 'descent', timeSec: 60, orbs: 1, score: 100 },
+  levelFailed: { type: 'levelFailed', levelId: 'descent', cause: 'impact' },
+  bossPhase: { type: 'bossPhase', phase: 2, hp: 0.6 },
+  bossHit: { type: 'bossHit', damage: 0.1, hp: 0.5, source: 'rock' },
+  bossDefeated: { type: 'bossDefeated' },
+  cutsceneDone: { type: 'cutsceneDone', cutsceneId: 'briefing', skipped: false },
+};

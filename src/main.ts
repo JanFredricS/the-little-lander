@@ -1,4 +1,5 @@
 import { App } from './app';
+import { getAudio } from './audio';
 import type { ScreenAction } from './contracts';
 import { DEBUG_ROUTES } from './debugRoutes';
 import { resolveLevelParam } from './levels/registry';
@@ -31,8 +32,13 @@ if (route) {
   if (params.get('screen') !== 'title') {
     actions.push({ type: 'start' }, { type: 'selectLevel', levelId: resolveLevelParam(params.get('level')) ?? 'testpad' });
   }
+  const audio = getAudio();
   const app = new App(host, {
-    onEvent: import.meta.env.DEV ? (e) => (e.type === 'crash' || e.type === 'levelComplete' ? console.info('[event]', e) : undefined) : undefined,
+    onEvent: (e) => {
+      audio.handle(e);
+      if (import.meta.env.DEV && (e.type === 'crash' || e.type === 'levelComplete')) console.info('[event]', e);
+    },
+    onScreen: (s) => audio.onScreen(s),
   });
   if (import.meta.env.DEV) (window as unknown as { __lander?: App }).__lander = app;
   app.start(actions).catch(fail);
