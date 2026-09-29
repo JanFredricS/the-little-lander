@@ -9,8 +9,9 @@
  */
 
 import { FIXED_DT, VESSEL_MODES } from './contracts';
-import type { ArtApi, CutsceneId, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
-import { createStubArt } from './art/stubArt';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, StillId } from './contracts';
+import { createArt, hasPreload } from './art/art';
+import { STILL_IDS } from './art/stills';
 import { LevelSession } from './game/session';
 import { getLevel, LEVELS } from './levels/registry';
 import { loadPhysics } from './physics/engine';
@@ -41,6 +42,12 @@ export interface AppOptions {
   ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'save'>;
 }
 
+/** Unique stills of a cutscene in shot order (current shot first). */
+export function cutsceneStills(script: CutsceneScript, fromShot = 0): StillId[] {
+  const shots = [...script.shots.slice(fromShot), ...script.shots.slice(0, fromShot)];
+  return [...new Set(shots.map((s) => s.still))];
+}
+
 export class App {
   state: ScreenState = INITIAL_STATE;
   readonly input = new InputMapper();
@@ -61,6 +68,12 @@ export class App {
   /** HUD, menus, touch controls (created in start()). */
   ui!: GameUi;
   private levelToken = 0;
+  /** Bumped by stopCutscene(): cancels a cutscene still waiting for its first still. */
+  private cutsceneToken = 0;
+  /** Level art warmup (aborted by endSession). */
+  private levelWarm: AbortController | null = null;
+  /** Cutscene still warmup (aborted by stopCutscene). */
+  private stillWarm: AbortController | null = null;
   private clearInputOnNextStep = false;
   private readonly unbind: (() => void)[] = [];
 
@@ -68,7 +81,7 @@ export class App {
     private readonly host: HTMLElement,
     private readonly options: AppOptions = {},
   ) {
-    this.art = options.art ?? createStubArt();
+    this.art = options.art ?? createArt();
     this.save = options.save ?? new SaveStore();
   }
 
@@ -155,14 +168,18 @@ export class App {
   }
 
   private async startLevel(levelId: LevelId): Promise<void> {
-    this.endSession(); // bumps levelToken, cancelling any in-flight load
+    this.endSession(); // bumps levelToken + aborts warmups, cancelling any in-flight load
     const token = this.levelToken;
+    const warm = (this.levelWarm = new AbortController());
     const spec = getLevel(levelId);
     if (!spec) {
       this.ui.setLoading(false);
       this.dispatch({ type: 'levelEnded', outcome: { kind: 'failed', cause: 'outOfBounds' } });
       return;
     }
+    // Pre-generate the theme's art during the loading screen, not mid-flight.
+    if (hasPreload(this.art)) await this.art.warmup(spec.themeId, { signal: warm.signal });
+    if (token !== this.levelToken || warm.signal.aborted) return;
     const session = await LevelSession.create(spec);
     if (token !== this.levelToken || this.state.id !== 'playing') {
       session.destroy();
@@ -173,6 +190,8 @@ export class App {
     if (this.options.onEvent) session.on(this.options.onEvent);
     const midCutscene = modeSwitchCutscene(levelId, spec);
     if (midCutscene) {
+      // warm the mid-level cutscene's stills in background so the switch doesn't hitch
+      if (hasPreload(this.art)) void this.art.warmupStills(cutsceneStills(getCutscene(midCutscene)), { signal: warm.signal });
       let played = false;
       session.on((e) => {
         if (e.type !== 'vesselModeChanged' || played) return;
@@ -190,6 +209,8 @@ export class App {
 
   private endSession(): void {
     this.levelToken++;
+    this.levelWarm?.abort();
+    this.levelWarm = null;
     if (this.inlineCutscene) this.stopCutscene();
     this.view?.destroy();
     this.view = null;
@@ -251,9 +272,40 @@ export class App {
 
   // ------------------------------------------------------------ cutscenes
 
-  private playCutscene(id: CutsceneId, then: () => void): void {
+  /**
+   * Play one script. Its first still (shot order) is generated before the
+   * player appears — the cutscene screen shows LOADING until then — and the
+   * rest of its stills, then all other stills, keep warming in background
+   * time slices (aborted by the next stopCutscene()).
+   */
+  private playCutscene(id: CutsceneId, then: () => void, showLoading = false): void {
     this.stopCutscene();
-    this.cutscene = playCutscene(this.host, getCutscene(id), {
+    const token = this.cutsceneToken;
+    const script = getCutscene(id);
+    const ready = this.warmCutsceneStills(script);
+    if (!ready) return this.startCutscenePlayer(id, script, then);
+    if (showLoading) this.ui.setLoading(true);
+    void ready.then(() => {
+      if (token !== this.cutsceneToken) return;
+      if (showLoading) this.ui.setLoading(false);
+      this.startCutscenePlayer(id, script, then);
+    });
+  }
+
+  /** Await the first still of `script`; warm the rest in background. Null when the art has no preload. */
+  private warmCutsceneStills(script: CutsceneScript): Promise<void> | null {
+    if (!hasPreload(this.art)) return null;
+    const art = this.art;
+    const ac = (this.stillWarm = new AbortController());
+    const own = cutsceneStills(script);
+    const rest = STILL_IDS.filter((s) => !own.includes(s));
+    return art.warmupStills(own.slice(0, 1), { signal: ac.signal }).then(() => {
+      if (!ac.signal.aborted) void art.warmupStills([...own.slice(1), ...rest], { signal: ac.signal });
+    });
+  }
+
+  private startCutscenePlayer(id: CutsceneId, script: CutsceneScript, then: () => void): void {
+    this.cutscene = playCutscene(this.host, script, {
       art: this.art,
       onDone: (skipped) => {
         this.cutscene = null;
@@ -268,10 +320,13 @@ export class App {
   private playCutsceneChain(ids: CutsceneId[]): void {
     const [id, ...rest] = ids;
     if (!id) return this.dispatch({ type: 'cutsceneDone' });
-    this.playCutscene(id, () => this.playCutsceneChain(rest));
+    this.playCutscene(id, () => this.playCutsceneChain(rest), true);
   }
 
   private stopCutscene(): void {
+    this.cutsceneToken++;
+    this.stillWarm?.abort();
+    this.stillWarm = null;
     this.cutscene?.destroy();
     this.cutscene = null;
     this.inlineCutscene = false;

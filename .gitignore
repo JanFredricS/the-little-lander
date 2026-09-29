@@ -2,3 +2,4 @@ node_modules
 dist
 .codex/runs
 .DS_Store
+art-export

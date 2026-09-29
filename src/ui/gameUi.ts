@@ -152,7 +152,7 @@ export class GameUi {
     this.syncLayers();
   }
 
-  /** Level-load spinner while playing but no session yet. */
+  /** Loading screen: level load (playing, no session yet) or a cutscene generating its first still. */
   setLoading(loading: boolean): void {
     this.loading = loading;
     this.refreshModel(true);
@@ -179,7 +179,8 @@ export class GameUi {
       this.screenView.setModel(null);
       return;
     }
-    const m = screenModel(s, this.ctx());
+    // A cutscene waiting for its first still (App.playCutscene) shows the loading screen.
+    const m = this.loading && s.id === 'cutscene' ? screenModel({ id: 'boot' }, this.ctx()) : screenModel(s, this.ctx());
     this.model = m;
     const focus = resetFocus ? m.focus : Math.min(this.menu.focus, Math.max(0, m.items.length - 1));
     this.menu = { ...createMenu(m.items, focus), scroll: resetFocus ? 0 : this.menu.scroll };

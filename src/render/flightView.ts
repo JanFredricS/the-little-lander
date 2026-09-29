@@ -1,24 +1,30 @@
 /**
- * S1 placeholder rendering of the flight systems (rectangles and circles —
- * art is S2's job): the vessel per mode with engine flames, harpoon ropes,
- * gravity / brittle / wind zones, radiation emitters + pulses, debris, goo,
- * orbs, fuel pickups and beacon sites. Everything in world px; added to the
- * LevelView's world container.
+ * Rendering of the flight systems. The vessel is S2 pixel art: the mode's
+ * sprite at native size, fitted onto the S1 collision geometry
+ * (vesselFit.ts), with animated flames on the sprite's engine anchors
+ * (getVesselAnchors) driven by VesselState.engines, and harpoon-head
+ * sprites on the ropes. Zones, radiation, debris, goo, pickups and beacon
+ * sites are still S1 placeholder shapes (TODO(S8): obj.* sprites). Everything
+ * in world px; added to the LevelView's world container.
  */
 
-import { Container, Graphics } from 'pixi.js';
-import type { LevelSpec, VesselMode } from '../contracts';
+import { Container, Graphics, Sprite, Texture } from 'pixi.js';
+import type { ArtApi, LevelSpec, SpriteFrame, SpriteName, ThemeId, VesselMode } from '../contracts';
+import { getVesselAnchors, type EngineAnchor } from '../art/sprites/vessels';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
 import { ropePolyline } from './ropeLine';
+import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from './vesselFit';
 
-const HULL_COLORS: Record<VesselMode, number> = {
-  csm: 0xc8ccd8,
-  lander: 0xd8c080,
-  harpoon: 0xa8c8e0,
-  harpoonThrust: 0x90d0b0,
-};
+/** Flame animation frame period (ms). */
+const FLAME_FRAME_MS = 60;
+
+function spriteOf(frame: SpriteFrame): Sprite {
+  const s = new Sprite(Texture.from(frame.canvas as HTMLCanvasElement));
+  s.anchor.set(frame.pivot.x / frame.width, frame.pivot.y / frame.height);
+  return s;
+}
 
 /** Seconds a radiation pulse line stays visible. */
 const PULSE_FLASH = 0.35;
@@ -31,16 +37,26 @@ export class FlightView {
   private readonly zones = new Graphics();
   private readonly dynamic = new Graphics();
   private readonly vessel = new Container();
-  private readonly hull = new Graphics();
-  private readonly flames = new Graphics();
+  /** Sprite-space layer (origin = sprite pivot), shifted onto the collision geometry. */
+  private readonly vesselArt = new Container();
+  private readonly hull = new Sprite(Texture.EMPTY);
+  private readonly flames = new Container();
+  private flameSprites: { anchor: EngineAnchor; sprite: Sprite }[] = [];
+  private readonly heads = new Container();
   private readonly fx = new Graphics();
-  private hullMode: VesselMode | null = null;
+  private readonly theme: ThemeId;
+  private hullKey = '';
 
-  constructor(private readonly session: LevelSession) {
+  constructor(
+    private readonly session: LevelSession,
+    private readonly art: ArtApi,
+  ) {
+    this.theme = session.spec.themeId;
     this.drawZones(session.spec);
     this.under.addChild(this.zones);
-    this.vessel.addChild(this.flames, this.hull);
-    this.over.addChild(this.dynamic, this.vessel, this.fx);
+    this.vesselArt.addChild(this.flames, this.hull);
+    this.vessel.addChild(this.vesselArt);
+    this.over.addChild(this.dynamic, this.heads, this.vessel, this.fx);
   }
 
   render(alpha: number, nowMs: number): void {
@@ -88,7 +104,8 @@ export class FlightView {
       g.circle(mToPx(tr.x), mToPx(tr.y), r).fill(b.burn > 0 ? 0xff60c0 : b.attached ? 0x8030a0 : 0xb050e0);
     }
 
-    // ropes
+    // ropes (line) + harpoon heads (sprite, tip first along the rope)
+    let headCount = 0;
     const vs = s.state;
     const vt = p.getInterpolatedTransform(s.vessel.body, alpha);
     const geo = s.vessel.geometry;
@@ -107,22 +124,24 @@ export class FlightView {
         g.moveTo(pts[0]!.x, pts[0]!.y);
         for (let i = 1; i < pts.length; i++) g.lineTo(pts[i]!.x, pts[i]!.y);
         g.stroke({ width: 1, color });
-        g.rect(gun.head.x - 2, gun.head.y - 2, 4, 4).fill(color);
+        const head = this.headSprite(headCount++);
+        head.position.set(gun.head.x, gun.head.y);
+        const prev = pts[pts.length - 2] ?? { x: mx, y: my };
+        head.rotation = Math.atan2(gun.head.x - prev.x, -(gun.head.y - prev.y));
       }
     }
+    this.heads.children.forEach((h, i) => (h.visible = i < headCount));
 
     // vessel
-    if (this.hullMode !== s.vessel.mode) this.drawHull(s.vessel.mode, geo);
+    const frame = vesselFrame(s.vessel.mode, vs.landed);
+    this.syncHull(s.vessel.mode, frame, geo);
     this.vessel.position.set(mToPx(vt.x), mToPx(vt.y));
     this.vessel.rotation = vt.angle;
     this.vessel.alpha = vs.crashed ? 0.4 : 1;
-    const f = this.flames.clear();
-    for (const n of geo.nozzles) {
-      if (!vs.engines[n.engine] || !flicker) continue;
-      const big = n.engine === 'main';
-      const w = big ? 8 : 5;
-      const h = big ? 16 + ((nowMs / 40) % 6) : 10 + ((nowMs / 40) % 4);
-      f.poly([n.x - w / 2, n.y, n.x + w / 2, n.y, n.x, n.y + h]).fill(0xffb040);
+    const flameFrame = Math.floor(nowMs / FLAME_FRAME_MS);
+    for (const { anchor, sprite } of this.flameSprites) {
+      sprite.visible = !vs.crashed && !!vs.engines[anchor.engine];
+      if (sprite.visible) sprite.texture = Texture.from(this.art.getSprite(anchor.flame, flameFrame, this.theme).canvas as HTMLCanvasElement);
     }
 
     // radiation pulse flash
@@ -150,17 +169,36 @@ export class FlightView {
     this.over.destroy({ children: true });
   }
 
-  private drawHull(mode: VesselMode, geo: VesselGeometry): void {
-    this.hullMode = mode;
-    const h = this.hull.clear();
-    geo.boxes.forEach((b, i) => {
-      h.rect(b.x - b.w / 2, b.y - b.h / 2, b.w, b.h).fill(i === 0 ? HULL_COLORS[mode] : 0x909090);
+  /** Swap the hull sprite / flame anchors when the mode or pose changes. */
+  private syncHull(mode: VesselMode, frame: number, geo: VesselGeometry): void {
+    const key = `${mode}#${frame}`;
+    if (key === this.hullKey) return;
+    this.hullKey = key;
+    const name = MODE_SPRITES[mode];
+    const hf = this.art.getSprite(name, frame, this.theme);
+    this.hull.texture = Texture.from(hf.canvas as HTMLCanvasElement);
+    this.hull.anchor.set(hf.pivot.x / hf.width, hf.pivot.y / hf.height);
+    // native size, ground line on the collision bottom (hull / feet)
+    this.vesselArt.position.set(0, vesselArtOffsetY(name, geo.h, frame));
+    for (const f of this.flameSprites) f.sprite.destroy();
+    const anchors = getVesselAnchors(name).engines;
+    this.flameSprites = (anchors[frame] ?? anchors[0] ?? []).map((anchor) => {
+      const sprite = spriteOf(this.art.getSprite(anchor.flame as SpriteName, 0, this.theme));
+      // anchors are px from the sprite's top-left; flames point down (+y) unrotated
+      sprite.position.set(anchor.x - hf.pivot.x, anchor.y - hf.pivot.y);
+      sprite.rotation = Math.atan2(-anchor.dir.x, anchor.dir.y);
+      sprite.visible = false;
+      this.flames.addChild(sprite);
+      return { anchor, sprite };
     });
-    // nose marker
-    const top = geo.boxes[0]!;
-    h.rect(-2, top.y - top.h / 2, 4, 4).fill(0xf0b030);
-    for (const n of geo.nozzles) h.rect(n.x - 2, n.y - 2, 4, 3).fill(0x505050);
-    if (geo.mount) h.circle(geo.mount.x, geo.mount.y, 2).fill(0x303030);
+  }
+
+  private headSprite(i: number): Sprite {
+    const existing = this.heads.children[i];
+    if (existing) return existing as Sprite;
+    const s = spriteOf(this.art.getSprite('obj.harpoonHead', 0, this.theme));
+    this.heads.addChild(s);
+    return s;
   }
 
   private drawZones(spec: LevelSpec): void {

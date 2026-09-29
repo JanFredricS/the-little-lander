@@ -8,7 +8,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "export-art": "node tools/export-art.mjs"
   },
   "dependencies": {
     "box2d3-wasm": "^5.2.0",

@@ -1,16 +1,16 @@
 /**
- * Placeholder level renderer: flat-colour terrain polygons, prop sprites
- * (stub ArtApi textures), the S1 flight systems as rectangles/circles
- * (src/render/flightView.ts: vessel per mode, flames, ropes, zones, goo,
- * debris, pickups, beacons, radiation) and a dim debug telemetry line (the
- * player HUD is src/ui, S4). Everything is in
+ * Level renderer: the theme's palette background + parallax backdrop layers
+ * (S2 ArtApi), flat-colour terrain polygons (TODO(S8): S2 terrain tiles),
+ * prop sprites, the flight systems (src/render/flightView.ts: pixel-art
+ * vessel per mode with anchored flames and harpoon heads; zones, goo,
+ * debris, pickups, beacons, radiation still placeholder shapes) and a dim
+ * debug telemetry line (the player HUD is src/ui, S4). Everything is in
  * virtual px; the world container is offset by the interpolated camera.
- * S2/S4 replace this with real art.
  */
 
-import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
-import { VIEW_WIDTH } from '../contracts';
-import type { ArtApi, LevelSpec, TerrainPiece } from '../contracts';
+import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
+import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
+import type { ArtApi, BackdropLayer, LevelSpec, TerrainPiece } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import { FlightView } from './flightView';
@@ -28,6 +28,7 @@ export class LevelView {
   readonly root = new Container();
   private readonly world = new Container();
   private readonly flight: FlightView;
+  private readonly backdrop: { layer: BackdropLayer; view: Sprite | TilingSprite }[] = [];
   private readonly props = new Map<string, Sprite>();
   private readonly hud: Text;
   private fpsFrames = 0;
@@ -39,10 +40,20 @@ export class LevelView {
     private readonly art: ArtApi,
   ) {
     const spec = session.spec;
-    const bg = new Graphics().rect(0, 0, VIEW_WIDTH, 360).fill(art.palettes[spec.themeId].colors[12] ?? 0x16202e);
-    this.root.addChild(bg, this.world);
+    const bg = new Graphics().rect(0, 0, VIEW_WIDTH, VIEW_HEIGHT).fill(art.palettes[spec.themeId].background);
+    this.root.addChild(bg);
+    for (const layer of art.getBackdropLayers(spec.themeId)) {
+      const texture = Texture.from(layer.canvas as HTMLCanvasElement);
+      const view =
+        layer.repeatX || layer.repeatY
+          ? new TilingSprite({ texture, width: layer.repeatX ? VIEW_WIDTH : layer.width, height: layer.repeatY ? VIEW_HEIGHT : layer.height })
+          : new Sprite(texture);
+      this.backdrop.push({ layer, view });
+      this.root.addChild(view);
+    }
+    this.root.addChild(this.world);
 
-    this.flight = new FlightView(session);
+    this.flight = new FlightView(session, art);
     this.world.addChild(this.flight.under);
     this.world.addChild(this.drawTerrain(spec));
     this.world.addChild(this.drawExits(spec));
@@ -73,6 +84,15 @@ export class LevelView {
     const cam = s.camera.interpolated(alpha);
     const o = s.camera.viewOrigin(cam);
     this.world.position.set(-o.x, -o.y);
+    // parallax: 0 = fixed to the screen, 1 = moves with the world
+    for (const { layer, view } of this.backdrop) {
+      const dx = -o.x * layer.parallax;
+      const dy = layer.offsetY - o.y * layer.parallax;
+      if (view instanceof TilingSprite) {
+        view.position.set(layer.repeatX ? 0 : dx, layer.repeatY ? 0 : dy);
+        view.tilePosition.set(layer.repeatX ? dx : 0, layer.repeatY ? dy : 0);
+      } else view.position.set(dx, dy);
+    }
 
     for (const [id, { body }] of s.built.props) {
       const sprite = this.props.get(id);
