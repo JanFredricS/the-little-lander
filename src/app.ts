@@ -7,7 +7,7 @@
 
 import { Container, Graphics, Text } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
-import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, StillId } from './contracts';
 import { createArt, hasPreload } from './art/art';
 import { STILL_IDS } from './art/stills';
 import { LevelSession } from './game/session';
@@ -23,6 +23,19 @@ export interface AppOptions {
   art?: ArtApi;
   /** Game events (HUD/audio hooks, debugging). */
   onEvent?: (e: GameEvent) => void;
+  /**
+   * Cutscene script lookup (S3's `getCutscene` from src/story/scripts).
+   * App glue only, used to preload the entered cutscene's stills in shot
+   * order. NOTE(S8): wire `getCutscene` here when merging S2 with S3; S3 is
+   * not on this branch, so without it every still is warmed in background.
+   */
+  getCutscene?: (id: CutsceneId) => CutsceneScript | undefined;
+}
+
+/** Unique stills of a cutscene in shot order (current shot first). */
+export function cutsceneStills(script: CutsceneScript, fromShot = 0): StillId[] {
+  const shots = [...script.shots.slice(fromShot), ...script.shots.slice(0, fromShot)];
+  return [...new Set(shots.map((s) => s.still))];
 }
 
 export class App {
@@ -119,10 +132,16 @@ export class App {
         if (!lines.length) lines.push('(no levels yet — try ?level=testpad)');
         return this.showOverlay(`SELECT LEVEL\n\n${lines.join('\n')}\n\nnumber / Enter / tap · Esc back`);
       }
-      case 'cutscene':
+      case 'cutscene': {
         this.endSession();
-        this.warmCutsceneStills();
-        return this.showOverlay(`[cutscene: ${next.cutsceneId}]\n\nany key / tap`);
+        const token = this.levelToken;
+        this.showOverlay('Loading…');
+        void this.warmCutsceneStills(next.cutsceneId).then(() => {
+          if (token === this.levelToken && this.state === next)
+            this.showOverlay(`[cutscene: ${next.cutsceneId}]\n\nany key / tap`);
+        });
+        return;
+      }
       case 'paused':
         this.loop.setPaused(true);
         return this.showOverlay('PAUSED\n\nEsc / tap resume · R retry · Q quit');
@@ -144,8 +163,9 @@ export class App {
   }
 
   private async startLevel(levelId: LevelId): Promise<void> {
-    this.endSession(); // bumps levelToken, cancelling any in-flight load
+    this.endSession(); // bumps levelToken + aborts warmups, cancelling any in-flight load
     const token = this.levelToken;
+    const warm = (this.levelWarm = new AbortController());
     const spec = getLevel(levelId);
     if (!spec) {
       this.dispatch({ type: 'levelEnded', outcome: { kind: 'failed', cause: 'outOfBounds' } });
@@ -153,10 +173,9 @@ export class App {
       return;
     }
     this.showOverlay('Loading…');
-    this.stillWarm?.abort();
     // pre-generate the theme's art during the loading screen, not mid-flight
-    if (hasPreload(this.art)) await this.art.warmup(spec.themeId);
-    if (token !== this.levelToken) return;
+    if (hasPreload(this.art)) await this.art.warmup(spec.themeId, { signal: warm.signal });
+    if (token !== this.levelToken || warm.signal.aborted) return;
     const session = await LevelSession.create(spec);
     if (token !== this.levelToken || this.state.id !== 'playing') {
       session.destroy();
@@ -173,21 +192,31 @@ export class App {
   }
 
   private stillWarm: AbortController | null = null;
+  private levelWarm: AbortController | null = null;
 
   /**
-   * Pre-generate cutscene stills in time slices while a cutscene screen is
-   * up (aborted when a level starts). Until the story slice exposes each
-   * cutscene's shot list, this warms every still.
+   * Preload the entered cutscene's stills: the first shot's still is awaited
+   * (the screen shows 'Loading…' until then), the rest of that cutscene and
+   * then all other stills keep warming in background time slices. Aborted by
+   * the next screen change that ends the session (level start, menus).
    */
-  private warmCutsceneStills(): void {
+  private async warmCutsceneStills(id: CutsceneId): Promise<void> {
     if (!hasPreload(this.art)) return;
     this.stillWarm?.abort();
-    this.stillWarm = new AbortController();
-    void this.art.warmupStills(STILL_IDS, { signal: this.stillWarm.signal });
+    const ac = (this.stillWarm = new AbortController());
+    const script = this.options.getCutscene?.(id);
+    const own = script ? cutsceneStills(script) : [];
+    const rest = STILL_IDS.filter((s) => !own.includes(s));
+    if (own.length) await this.art.warmupStills(own.slice(0, 1), { signal: ac.signal });
+    void this.art.warmupStills([...own.slice(1), ...rest], { signal: ac.signal });
   }
 
   private endSession(): void {
     this.levelToken++;
+    this.levelWarm?.abort();
+    this.levelWarm = null;
+    this.stillWarm?.abort();
+    this.stillWarm = null;
     this.view?.destroy();
     this.view = null;
     this.session?.destroy();
