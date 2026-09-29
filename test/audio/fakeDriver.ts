@@ -45,9 +45,22 @@ export class FakeDriver implements AudioDriver {
   now(): number {
     return this.time;
   }
-  async resume(): Promise<void> {
-    if (this.denyResume) throw new Error('NotAllowedError');
-    this.state = 'running';
+  /** When true, resume() stays pending until releaseResume() (models a slow async resume). */
+  holdResume = false;
+  private pendingResume: (() => void)[] = [];
+  resume(): Promise<void> {
+    if (this.denyResume) return Promise.reject(new Error('NotAllowedError'));
+    const land = () => {
+      this.state = 'running';
+    };
+    if (!this.holdResume) {
+      land();
+      return Promise.resolve();
+    }
+    return new Promise((res) => this.pendingResume.push(() => (land(), res())));
+  }
+  releaseResume(): void {
+    this.pendingResume.splice(0).forEach((f) => f());
   }
   /** When true, suspend() stays pending until releaseSuspend() (models a slow async suspend). */
   holdSuspend = false;

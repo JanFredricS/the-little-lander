@@ -102,8 +102,10 @@ export class AudioEngine {
     } catch {
       return; // not allowed yet; the next gesture retries
     }
-    if (this.hidden || !this.running) return; // hidden again meanwhile: the queued hide handles it
+    // resume() resolved: the gesture unlock succeeded. Record it before any
+    // bail-out so a later visibility restore may resume without a new gesture.
     this.unlocked = true;
+    if (this.hidden || !this.running) return; // hidden again meanwhile: the queued hide handles it
     this.applyGains(0);
     if (this.opts.autoTick !== false && !this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
     this.thrusters.relight(); // engines that were lit when the tab was hidden

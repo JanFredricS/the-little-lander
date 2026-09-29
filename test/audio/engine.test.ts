@@ -131,6 +131,24 @@ describe('engine lifecycle + wiring', () => {
     expect(d.state).toBe('suspended');
   });
 
+  it('records a first unlock even if the page hides while resume() is pending', async () => {
+    const { d, e } = mk();
+    d.holdResume = true;
+    const unlock = e.unlock(); // first gesture; resume() held pending
+    await Promise.resolve();
+    const hide = e.setHidden(true); // user backgrounds the tab before resume resolves
+    d.releaseResume();
+    await unlock;
+    await hide;
+    expect(d.state).toBe('suspended'); // the queued hide still suspends
+    d.holdResume = false;
+    await e.setHidden(false); // back to the tab, no second gesture
+    expect(d.state).toBe('running');
+    expect(e.running).toBe(true);
+    expect(e.play('uiMove')).toBe(true);
+    e.dispose();
+  });
+
   it('never unlocks on show without a prior gesture', async () => {
     const { d, e } = mk();
     await e.setHidden(true);
