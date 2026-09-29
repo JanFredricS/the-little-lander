@@ -9,13 +9,19 @@ open and study them before generating anything.
 
 1. **Palette catalog**: 12–16 color ramps per ThemeId as specified in
    PLAN.md ("Palette-first theming"). Shared helper for ramp shading and
-   ordered dithering. All generators pick palette indices only.
+   ordered dithering. All generators pick palette indices only. Each
+   named ramp has 3–4 shades. A shared **craft palette** (`CRAFT`) is used
+   for vessels, effects and cross-theme gameplay objects (goo, orbs,
+   beacons, pickups, docks) so they read identically in every theme;
+   themed props use their theme palette.
 2. **Seeded RNG** (mulberry32 or similar) — same seed → identical pixels.
-   All generation happens at load into offscreen canvases, uploaded to
-   Pixi textures with nearest scaling.
+   Generation is memoised and lazy per asset (OffscreenCanvas when
+   available), uploaded to Pixi textures with nearest scaling. An explicit
+   preload API (`warmup(theme)`, `warmupStills(ids)`, time-sliced and
+   abortable) is called from the level and cutscene start paths.
 3. **Vessel sprites** (match the Apollo references: gold-foil descent
    stage, grey angular ascent stage, cone+cylinder+bell CSM, spindly legs
-   with pads): csm stack (~48×24), lander (~24×24), harpoon pod (~16×16),
+   with pads): csm stack (24×48, upright; the S0 stub box was 20×28), lander (~24×24), harpoon pod (~16×16),
    plus docked full-stack. 1px dark outline + top rim light. Thruster
    flame animations (2–4 frames, per-engine anchor points exposed),
    landing legs contact pose.
@@ -52,7 +58,9 @@ open and study them before generating anything.
    small node/vitest-friendly export script if feasible; otherwise the
    button suffices.
 8. **Tests**: determinism (same seed → same pixel hash), palette
-   compliance (every generated pixel ∈ theme palette or transparent),
+   compliance (every sprite/tile/backdrop pixel ∈ theme palette ∪ shared
+   craft palette ∪ transparent; themed props on the theme palette only;
+   stills on their own ≤40-colour palettes), ramps 3–4 shades,
    size/anchor contracts for vessels, all ThemeIds/StillIds covered.
 
 ## Non-goals
@@ -60,4 +68,6 @@ Physics, levels, UI, audio, cutscene *player* (S3 — you provide stills).
 
 ## Acceptance
 - `npm test` + `npm run build` green.
-- `?gallery=1` shows the complete labelled art set per theme.
+- `?gallery=1` shows the complete labelled art set per theme; craft
+  sprites in their own section, and cross-theme objects additionally in
+  every theme section over that theme's backdrop and tiles.
