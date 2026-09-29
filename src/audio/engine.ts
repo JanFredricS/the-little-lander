@@ -81,6 +81,7 @@ export class AudioEngine {
     if (!this.running) return;
     this.applyGains(0);
     if (this.opts.autoTick !== false && !this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
+    this.thrusters.relight(); // engines that were lit when the tab was hidden
     if (this.mood && this.seqs.length === 0) this.startSeq(this.mood, this.moodSeed, 0.6);
     this.tick();
     this.emitChange();
@@ -110,7 +111,7 @@ export class AudioEngine {
     const wasRunning = this.running || this.driver.state === 'suspended';
     this.hidden = hidden;
     if (hidden) {
-      this.thrusters.stopAll();
+      this.thrusters.silence(); // keeps the engine flags so unlock() can relight them
       void this.driver.suspend();
     } else if (wasRunning && this.driver.state !== 'uninit') {
       void this.unlock();
@@ -132,7 +133,11 @@ export class AudioEngine {
       s.tension = this.tension;
       s.schedule(now + LOOKAHEAD, now);
     }
-    this.seqs = this.seqs.filter((s) => !s.isSilentAfter(now));
+    this.seqs = this.seqs.filter((s) => {
+      if (!s.isSilentAfter(now + 0.5)) return true; // keep release/echo tails alive a moment
+      s.dispose();
+      return false;
+    });
   }
 
   // ------------------------------------------------------------ settings
@@ -198,6 +203,7 @@ export class AudioEngine {
     if (mood !== 'asteroid') this.tension = 0;
     const fade = this.opts.crossfade ?? 1.2;
     if (!this.running) {
+      this.seqs.forEach((q) => q.dispose());
       this.seqs = [];
       this.emitChange();
       return;

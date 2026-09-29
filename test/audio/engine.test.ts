@@ -92,6 +92,22 @@ describe('engine lifecycle + wiring', () => {
     expect(d.state).toBe('running');
   });
 
+  it('relights thrusters that were lit when the page was hidden', async () => {
+    const { d, e } = mk();
+    await e.unlock();
+    e.handle({ type: 'levelStarted', levelId: 'hangarRun', themeId: 'hangar', mode: 'lander' });
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: true });
+    expect(d.liveLoops.size).toBe(2);
+    e.setHidden(true);
+    await Promise.resolve();
+    expect(d.liveLoops.size).toBe(0);
+    e.setHidden(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(d.state).toBe('running');
+    expect(d.liveLoops.size).toBe(2);
+    expect(e.thrusters.active.sort()).toEqual(['left', 'right']);
+  });
+
   it('handles every sample event without throwing', async () => {
     const { d, e } = mk();
     await e.unlock();
@@ -123,8 +139,11 @@ describe('engine lifecycle + wiring', () => {
     e.setMood('hangar');
     e.setMood('caves');
     expect(e.sequencers.map((s) => s.mood)).toEqual(['hangar', 'caves']);
+    const hangarGroup = d.groups[0]!;
     for (d.time = 0; d.time < 3; d.time += 0.025) e.tick();
     expect(e.sequencers.map((s) => s.mood)).toEqual(['caves']);
+    expect(hangarGroup.gainAt(d.time)).toBe(0);
+    expect(hangarGroup.disposed).toBe(true);
     e.onScreen({ id: 'cutscene', cutsceneId: 'briefing', then: { id: 'title' } });
     expect(e.currentMood).toBe('cutscene');
     e.onScreen({ id: 'title' });

@@ -74,6 +74,17 @@ export class Thrusters {
     }
   }
 
+  /** Stop the loops but REMEMBER which engines are lit (tab hidden / context suspended). */
+  silence(): void {
+    for (const l of this.loops.values()) l.stop(0.03);
+    this.loops.clear();
+  }
+
+  /** Rebuild loops for the remembered flags (after resume). */
+  relight(): void {
+    this.update(this.flags);
+  }
+
   /** Silence everything (pause, crash, level end). Engines re-light on the next enginesChanged. */
   stopAll(): void {
     for (const l of this.loops.values()) l.stop(0.05);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { THEME_IDS } from '../../src/contracts';
 import { composeBar, MOOD_IDS, MOODS, moodBpm, Sequencer } from '../../src/audio/music';
-import { FakeDriver } from './fakeDriver';
+import { FakeDriver, FakeGroup } from './fakeDriver';
 
 describe('music sequencer', () => {
   it('has a mood for every ThemeId plus title and cutscene', () => {
@@ -69,6 +69,26 @@ describe('music sequencer', () => {
     const late = d.voices().filter((c) => c.spec.start > 1.01);
     expect(late).toEqual([]);
     expect(s.isSilentAfter(1.1)).toBe(true);
+  });
+
+  it('crossfade reaches voices that were already sounding before the mood change', () => {
+    const d = new FakeDriver();
+    d.state = 'running';
+    const s = new Sequencer(d, 'cutscene', 1, 0);
+    s.schedule(0.1); // bar 0 step 0: the underscore pad (whole bar, ~3.4 s) is scheduled now
+    const pad = d.voices().find((c) => c.kind === 'tone' && c.spec.dur > 3);
+    expect(pad).toBeDefined();
+    const g = pad!.spec.group as FakeGroup;
+    expect(g).toBe(s.group);
+    expect(g.gainAt(0.5)).toBe(1);
+    s.fadeTo(0, 0.5, 1.2); // mood change after the pad started
+    const padEnd = pad!.spec.start + pad!.spec.dur;
+    expect(padEnd).toBeGreaterThan(1.7);
+    expect(g.gainAt(1.1)).toBeCloseTo(0.5);
+    expect(g.gainAt(1.7)).toBe(0);
+    expect(g.gainAt(padEnd)).toBe(0);
+    s.dispose();
+    expect(g.disposed).toBe(true);
   });
 
   it('skips missed steps after a stalled timer instead of bunching them', () => {

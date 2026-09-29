@@ -12,8 +12,22 @@ export type Wave = 'square' | 'triangle' | 'sawtooth' | 'sine';
 export type FilterType = 'lowpass' | 'highpass' | 'bandpass';
 
 /** A one-shot oscillator note with a simple AD(S)R envelope. Times in seconds (context clock). */
+/**
+ * A sub-bus (gain node) feeding a bus. Voices routed through it can be faded
+ * AFTER they were scheduled (music crossfades fade notes already sounding).
+ */
+export interface GroupHandle {
+  readonly bus: BusId;
+  /** Linear ramp of the group gain from `from` at `at` to `to` at `at + dur` (context time). */
+  fade(from: number, to: number, at: number, dur: number): void;
+  /** Disconnect once nothing audible is left. */
+  dispose(): void;
+}
+
 export interface ToneSpec {
   bus: BusId;
+  /** Route through this group (must belong to `bus`) instead of straight into the bus. */
+  group?: GroupHandle;
   wave: Wave;
   /** Start frequency (Hz). */
   freq: number;
@@ -40,6 +54,7 @@ export interface ToneSpec {
 /** A one-shot filtered white-noise burst. */
 export interface NoiseSpec {
   bus: BusId;
+  group?: GroupHandle;
   start: number;
   dur: number;
   gain: number;
@@ -86,4 +101,6 @@ export interface AudioDriver {
   tone(t: ToneSpec): void;
   noise(n: NoiseSpec): void;
   loop(l: LoopSpec): LoopHandle;
+  /** Create a fadeable sub-bus on `bus` (starts at gain 1). */
+  group(bus: BusId): GroupHandle;
 }

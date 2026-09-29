@@ -1,4 +1,4 @@
-import type { AudioDriver, BusId, LoopHandle, LoopSpec, NoiseSpec, ToneSpec } from '../../src/audio/driver';
+import type { AudioDriver, BusId, GroupHandle, LoopHandle, LoopSpec, NoiseSpec, ToneSpec } from '../../src/audio/driver';
 
 export type Call =
   | { kind: 'tone'; spec: ToneSpec }
@@ -8,6 +8,28 @@ export type Call =
   | { kind: 'gain'; target: BusId | 'master'; value: number };
 
 export type VoiceCall = Extract<Call, { kind: 'tone' | 'noise' }>;
+
+/** Recorded sub-bus: evaluates its gain automation like an AudioParam (linear ramps). */
+export class FakeGroup implements GroupHandle {
+  ramps: { from: number; to: number; at: number; dur: number }[] = [];
+  disposed = false;
+  constructor(readonly bus: BusId) {}
+  fade(from: number, to: number, at: number, dur: number): void {
+    this.ramps = this.ramps.filter((r) => r.at < at); // cancelScheduledValues(at)
+    this.ramps.push({ from, to, at, dur });
+  }
+  dispose(): void {
+    this.disposed = true;
+  }
+  gainAt(t: number): number {
+    let g = 1;
+    for (const r of this.ramps) {
+      if (t < r.at) break;
+      g = r.dur <= 0 || t >= r.at + r.dur ? r.to : r.from + (r.to - r.from) * ((t - r.at) / r.dur);
+    }
+    return g;
+  }
+}
 
 /** Recording AudioDriver for Node tests. Advance `time` by hand. */
 export class FakeDriver implements AudioDriver {
@@ -51,6 +73,13 @@ export class FakeDriver implements AudioDriver {
         this.calls.push({ kind: 'loopStop', id });
       },
     };
+  }
+
+  groups: FakeGroup[] = [];
+  group(bus: BusId): GroupHandle {
+    const g = new FakeGroup(bus);
+    this.groups.push(g);
+    return g;
   }
 
   voices(): VoiceCall[] {

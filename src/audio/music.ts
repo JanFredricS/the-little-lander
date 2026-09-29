@@ -9,7 +9,7 @@
  */
 
 import type { ThemeId } from '../contracts';
-import type { AudioDriver, ToneSpec, Wave } from './driver';
+import type { AudioDriver, GroupHandle, ToneSpec, Wave } from './driver';
 import { clamp01, hashSeed, hashString, mtof, rng } from './util';
 
 export type MoodId = ThemeId | 'title' | 'cutscene';
@@ -256,6 +256,8 @@ export class Sequencer {
   private barNotes: NoteEvent[] = [];
   tension = 0;
   private fade = { from: 0, to: 1, t0: 0, dur: 0 };
+  /** All of this sequencer's voices go through this sub-bus, so fades reach notes already sounding. */
+  readonly group: GroupHandle;
 
   constructor(
     private readonly driver: AudioDriver,
@@ -266,6 +268,8 @@ export class Sequencer {
   ) {
     this.nextTime = startTime;
     this.fade = { from: fadeIn > 0 ? 0 : 1, to: 1, t0: startTime, dur: fadeIn };
+    this.group = driver.group('music');
+    this.group.fade(this.fade.from, 1, startTime, fadeIn);
   }
 
   /** Fade level at context time t (0..1). */
@@ -278,6 +282,12 @@ export class Sequencer {
 
   fadeTo(level: number, at: number, dur: number): void {
     this.fade = { from: this.levelAt(at), to: level, t0: at, dur };
+    this.group.fade(this.fade.from, level, at, dur);
+  }
+
+  /** Free the sub-bus (call once isSilentAfter()). */
+  dispose(): void {
+    this.group.dispose();
   }
 
   /** True once fully faded out (safe to drop). */
@@ -298,9 +308,9 @@ export class Sequencer {
       const stepDur = 60 / moodBpm(this.mood, this.tension) / 4;
       const swing = this.step % 2 === 1 ? (m.swing ?? 0) * stepDur : 0;
       const t = this.nextTime + swing;
-      const level = this.levelAt(t);
-      if (level > 0.001) {
-        for (const n of this.barNotes) if (n.step === this.step) this.render(n, t, stepDur, level);
+      // The group gain carries the fade; just skip notes that would start inaudible.
+      if (this.levelAt(t) > 0.001) {
+        for (const n of this.barNotes) if (n.step === this.step) this.render(n, t, stepDur);
       }
       this.nextTime += stepDur;
       this.step++;
@@ -311,37 +321,38 @@ export class Sequencer {
     }
   }
 
-  private render(n: NoteEvent, t: number, stepDur: number, level: number): void {
+  private render(n: NoteEvent, t: number, stepDur: number): void {
     const d = this.driver;
+    const group = this.group;
     const m = MOODS[this.mood];
     const dur = n.len * stepDur;
     switch (n.voice) {
       case 'lead': {
         const v = m.lead!;
-        d.tone({ bus: 'music', wave: v.wave, freq: mtof(n.midi), start: t, dur: dur * 0.85, gain: v.gain * n.vel * level, attack: 0.006, release: 0.05, echo: v.echo, vibrato: dur > 0.3 ? v.vibrato : undefined, filter: v.wave === 'sawtooth' ? { type: 'lowpass', freq: 2400 } : undefined });
+        d.tone({ bus: 'music', group, wave: v.wave, freq: mtof(n.midi), start: t, dur: dur * 0.85, gain: v.gain * n.vel, attack: 0.006, release: 0.05, echo: v.echo, vibrato: dur > 0.3 ? v.vibrato : undefined, filter: v.wave === 'sawtooth' ? { type: 'lowpass', freq: 2400 } : undefined });
         return;
       }
       case 'arp': {
         const v = m.arp!;
-        d.tone({ bus: 'music', wave: v.wave, freq: mtof(n.midi), start: t, dur: dur * 0.6, gain: v.gain * n.vel * level, release: 0.04, echo: v.echo });
+        d.tone({ bus: 'music', group, wave: v.wave, freq: mtof(n.midi), start: t, dur: dur * 0.6, gain: v.gain * n.vel, release: 0.04, echo: v.echo });
         return;
       }
       case 'bass':
-        d.tone({ bus: 'music', wave: m.bass.wave, freq: mtof(n.midi), start: t, dur: dur * 0.9, gain: m.bass.gain * n.vel * level, release: 0.04, filter: m.bass.wave === 'square' ? { type: 'lowpass', freq: 900 } : undefined });
+        d.tone({ bus: 'music', group, wave: m.bass.wave, freq: mtof(n.midi), start: t, dur: dur * 0.9, gain: m.bass.gain * n.vel, release: 0.04, filter: m.bass.wave === 'square' ? { type: 'lowpass', freq: 900 } : undefined });
         return;
       case 'pad': {
         const v = m.pad!;
-        d.tone({ bus: 'music', wave: v.wave, freq: mtof(n.midi), start: t, dur, gain: v.gain * n.vel * level, attack: Math.min(0.4, dur * 0.3), release: 0.3, filter: { type: 'lowpass', freq: 1500 } });
+        d.tone({ bus: 'music', group, wave: v.wave, freq: mtof(n.midi), start: t, dur, gain: v.gain * n.vel, attack: Math.min(0.4, dur * 0.3), release: 0.3, filter: { type: 'lowpass', freq: 1500 } });
         return;
       }
       case 'kick':
-        d.tone({ bus: 'music', wave: 'triangle', freq: 150, freqEnd: 42, start: t, dur: 0.1, gain: 0.45 * m.drums!.gain * n.vel * level, release: 0.04 });
+        d.tone({ bus: 'music', group, wave: 'triangle', freq: 150, freqEnd: 42, start: t, dur: 0.1, gain: 0.45 * m.drums!.gain * n.vel, release: 0.04 });
         return;
       case 'snare':
-        d.noise({ bus: 'music', start: t, dur: 0.07, gain: 0.25 * m.drums!.gain * n.vel * level, filter: { type: 'bandpass', freq: 1800, q: 0.8 } });
+        d.noise({ bus: 'music', group, start: t, dur: 0.07, gain: 0.25 * m.drums!.gain * n.vel, filter: { type: 'bandpass', freq: 1800, q: 0.8 } });
         return;
       case 'hat':
-        d.noise({ bus: 'music', start: t, dur: 0.018, gain: 0.12 * m.drums!.gain * n.vel * level, filter: { type: 'highpass', freq: 7000 } });
+        d.noise({ bus: 'music', group, start: t, dur: 0.018, gain: 0.12 * m.drums!.gain * n.vel, filter: { type: 'highpass', freq: 7000 } });
         return;
     }
   }

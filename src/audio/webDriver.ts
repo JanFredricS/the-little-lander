@@ -7,7 +7,25 @@
  * here decides WHAT to play.
  */
 
-import type { AudioDriver, BusId, LoopHandle, LoopSpec, NoiseSpec, ToneSpec } from './driver';
+import type { AudioDriver, BusId, GroupHandle, LoopHandle, LoopSpec, NoiseSpec, ToneSpec } from './driver';
+
+/** GroupHandle backed by a GainNode (null node before the context exists). */
+class WebGroup implements GroupHandle {
+  constructor(
+    readonly bus: BusId,
+    readonly node: GainNode | null,
+  ) {}
+  fade(from: number, to: number, at: number, dur: number): void {
+    const g = this.node?.gain;
+    if (!g) return;
+    g.cancelScheduledValues(at);
+    g.setValueAtTime(from, at);
+    g.linearRampToValueAtTime(to, at + Math.max(0.005, dur));
+  }
+  dispose(): void {
+    this.node?.disconnect();
+  }
+}
 
 type Ctor = typeof AudioContext;
 
@@ -100,9 +118,10 @@ export class WebAudioDriver implements AudioDriver {
     filter?: ToneSpec['filter'],
     pan?: number,
     echo?: ToneSpec['echo'],
+    group?: GroupHandle,
   ): AudioNode {
     const ctx = this.ctx!;
-    let out: AudioNode = this.buses[bus];
+    let out: AudioNode = (group instanceof WebGroup && group.node) || this.buses[bus];
     if (echo) {
       const dry = ctx.createGain();
       const delay = ctx.createDelay(1);
@@ -170,7 +189,7 @@ export class WebAudioDriver implements AudioDriver {
     const g = ctx.createGain();
     this.envelope(g, t.start, t.dur, t.gain, attack, release);
     osc.connect(g);
-    g.connect(this.chain(t.bus, t.start, end, t.filter, t.pan, t.echo));
+    g.connect(this.chain(t.bus, t.start, end, t.filter, t.pan, t.echo, t.group));
     const extra: OscillatorNode[] = [];
     if (t.fm) {
       const mod = ctx.createOscillator();
@@ -209,10 +228,19 @@ export class WebAudioDriver implements AudioDriver {
     const g = ctx.createGain();
     this.envelope(g, n.start, n.dur, n.gain, attack, release);
     src.connect(g);
-    g.connect(this.chain(n.bus, n.start, end, n.filter, n.pan));
+    g.connect(this.chain(n.bus, n.start, end, n.filter, n.pan, undefined, n.group));
     src.start(n.start, Math.random() * 0.9);
     src.stop(end + 0.01);
     src.onended = () => g.disconnect();
+  }
+
+  group(bus: BusId): GroupHandle {
+    const ctx = this.ctx;
+    if (!ctx) return new WebGroup(bus, null);
+    const g = ctx.createGain();
+    g.gain.value = 1;
+    g.connect(this.buses[bus]);
+    return new WebGroup(bus, g);
   }
 
   loop(l: LoopSpec): LoopHandle {
