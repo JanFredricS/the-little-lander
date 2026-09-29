@@ -15,6 +15,15 @@ export function getLevel(id: LevelId): LevelSpec | undefined {
   return LEVELS[id];
 }
 
+/**
+ * Level ids shown to players (level select): registered levels without
+ * `debug: true`, in registry order. Debug levels stay reachable through
+ * `?level=<id>` / debug routes via getLevel.
+ */
+export function playableLevelIds(levels: Partial<Record<LevelId, LevelSpec>> = LEVELS): LevelId[] {
+  return (Object.keys(levels) as LevelId[]).filter((id) => !levels[id]?.debug);
+}
+
 export function isLevelId(v: string): v is LevelId {
   return v === 'testpad' || v === 'physlab' || (STORY_LEVELS as readonly string[]).includes(v);
 }

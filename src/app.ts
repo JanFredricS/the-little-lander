@@ -10,7 +10,7 @@ import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
 import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
 import { createStubArt } from './art/stubArt';
 import { LevelSession } from './game/session';
-import { getLevel, LEVELS } from './levels/registry';
+import { getLevel, playableLevelIds } from './levels/registry';
 import { loadPhysics } from './physics/engine';
 import { createPixiHost, type PixiHost } from './render/pixiApp';
 import { LevelView } from './render/levelView';
@@ -115,6 +115,7 @@ export class App {
       case 'levelSelect': {
         this.endSession();
         const lines = this.levelIds().map((id, i) => `${i + 1}  ${getLevel(id)?.title ?? id}`);
+        if (!lines.length) lines.push('(no levels yet — try ?level=testpad)');
         return this.showOverlay(`SELECT LEVEL\n\n${lines.join('\n')}\n\nnumber / Enter / tap · Esc back`);
       }
       case 'cutscene':
@@ -173,8 +174,9 @@ export class App {
     this.session = null;
   }
 
+  /** Player-facing levels only (debug levels are reached via ?level=). */
   private levelIds(): LevelId[] {
-    return Object.keys(LEVELS) as LevelId[];
+    return playableLevelIds();
   }
 
   // ------------------------------------------------------------ loop
