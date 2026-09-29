@@ -25,10 +25,17 @@ const route = DEBUG_ROUTES.find((r) => params.has(r.param));
 if (route) {
   route.run(host, params.get(route.param) ?? '').catch(fail);
 } else {
-  // Root URL -> title screen (Continue / level select); ?level=<id> jumps straight in.
+  // Root URL -> title screen (Continue / level select). `?level=<id|map1..map8>`
+  // starts that level directly (the menus still work from there; `?screen=title`
+  // overrides it); `?debug` lists debug levels (testpad, physlab) in level
+  // select; `?touch=on|off|auto` forces the on-screen touch controls (else the
+  // saved preference applies).
   const actions = bootActions(params);
+  const touchParam = params.get('touch');
+  const touchPref = touchParam === 'on' || touchParam === 'off' || touchParam === 'auto' ? touchParam : undefined;
   const audio = getAudio();
   const app = new App(host, {
+    ui: { showDebugLevels: params.has('debug'), touchPref },
     onEvent: (e) => {
       audio.handle(e);
       if (import.meta.env.DEV && (e.type === 'crash' || e.type === 'levelComplete')) console.info('[event]', e);

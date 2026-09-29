@@ -20,6 +20,7 @@ describe('boot actions', () => {
 
   it('an unknown level falls back to the title', () => {
     expect(run('?level=nope')).toEqual({ id: 'title' });
+    expect(run('?screen=title&level=testpad')).toEqual({ id: 'title' });
     expect(run('?level=')).toEqual({ id: 'title' });
   });
 });

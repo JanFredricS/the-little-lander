@@ -27,3 +27,7 @@ npm run dev     # Vite dev server
 npm test        # Vitest
 npm run build   # typecheck + production build
 ```
+
+URL flags (dev and production): `?level=<id|map1..map8>` starts a level
+directly, `?debug` lists debug levels (testpad, physlab) in level select,
+`?touch=on|off|auto` forces the on-screen touch controls.

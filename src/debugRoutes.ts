@@ -6,7 +6,8 @@
  * never bloat the game bundle.
  *
  * `?level=<id|map1..map8>` is not a route: the game itself starts that level.
- * The root URL boots to the title screen (src/shell/boot.ts).
+ * The root URL boots to the title screen (src/shell/boot.ts); `?screen=title`
+ * ignores `?level=` and stays on the title screen.
  */
 
 export interface DebugRoute {
