@@ -137,3 +137,18 @@ describe('cutscene playback', () => {
     }
   });
 });
+
+describe('still scaling', () => {
+  it('integer scale when >= 2x fits, fractional fill below', async () => {
+    const { stillScale } = await import('../src/story/cutscenePlayer');
+    const land = stillScale(812, 375, 2); // phone landscape: 3x
+    expect(land.fractional).toBe(false);
+    expect(land.deviceScale).toBe(3);
+    expect(land.cssWidth).toBe(639);
+    const port = stillScale(375, 812, 2); // phone portrait: fill the width
+    expect(port.fractional).toBe(true);
+    expect(port.cssWidth).toBeCloseTo(375);
+    expect(port.offsetX).toBeCloseTo(0);
+    expect(port.offsetY).toBeGreaterThan(0);
+  });
+});

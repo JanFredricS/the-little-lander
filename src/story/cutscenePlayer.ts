@@ -1,8 +1,8 @@
 /**
  * Full-screen cutscene player: a DOM canvas at the still's native size
  * (STILL_WIDTH×STILL_HEIGHT) layered over the game, scaled to the window by
- * the largest integer factor that fits (fractional below 1×), letterboxed
- * on black. It does NOT draw into the 640×360 Pixi stage — 426×240 stills
+ * the largest integer factor that fits (fractional fill when that would be
+ * under 2×, see stillScale), letterboxed on black. It does NOT draw into the 640×360 Pixi stage — 426×240 stills
  * don't integer-scale into it (see contracts/constants.ts).
  *
  * Input (desktop + mobile):
@@ -13,7 +13,7 @@
 
 import { STILL_HEIGHT, STILL_WIDTH } from '../contracts';
 import type { ArtApi, CutsceneScript, Speaker } from '../contracts';
-import { computeViewScale } from '../shell/scaler';
+import { computeViewScale, type ViewScale } from '../shell/scaler';
 import { drawText, GLYPH_ADVANCE, LINE_HEIGHT, textWidth } from './font';
 import { CutscenePlayback, TEXT_BOX_ROWS } from './playback';
 
@@ -79,7 +79,7 @@ export function playCutscene(host: HTMLElement, script: CutsceneScript, opts: Cu
 
   // ------------------------------------------------------------ scaling
   const layout = () => {
-    const s = computeViewScale(root.clientWidth, root.clientHeight, win.devicePixelRatio || 1, STILL_WIDTH, STILL_HEIGHT);
+    const s = stillScale(root.clientWidth, root.clientHeight, win.devicePixelRatio || 1);
     canvas.style.width = `${s.cssWidth}px`;
     canvas.style.height = `${s.cssHeight}px`;
     canvas.style.left = `${s.offsetX}px`;
@@ -108,7 +108,11 @@ export function playCutscene(host: HTMLElement, script: CutsceneScript, opts: Cu
     e.preventDefault();
     if (pointerId !== null) return;
     pointerId = e.pointerId;
-    root.setPointerCapture?.(e.pointerId);
+    try {
+      root.setPointerCapture?.(e.pointerId);
+    } catch {
+      /* synthetic / already-released pointer: capture is only a nicety */
+    }
   };
   const onPointerUp = (e: PointerEvent) => {
     if (e.pointerId !== pointerId) return;
@@ -164,6 +168,21 @@ export function playCutscene(host: HTMLElement, script: CutsceneScript, opts: Cu
   raf = win.requestAnimationFrame(frame);
 
   return { playback, destroy };
+}
+
+/**
+ * Integer device-pixel scale (crisp) when at least 2× fits; below that
+ * (portrait phones) fill the width fractionally — a 1× still would leave
+ * the 5 px font unreadably small.
+ */
+export function stillScale(cssW: number, cssH: number, dpr: number): ViewScale {
+  const s = computeViewScale(cssW, cssH, dpr, STILL_WIDTH, STILL_HEIGHT);
+  if (s.fractional || s.deviceScale >= 2) return s;
+  const r = dpr > 0 && Number.isFinite(dpr) ? dpr : 1;
+  const fit = Math.min((Math.max(1, cssW) * r) / STILL_WIDTH, (Math.max(1, cssH) * r) / STILL_HEIGHT);
+  const cssWidth = (STILL_WIDTH * fit) / r;
+  const cssHeight = (STILL_HEIGHT * fit) / r;
+  return { deviceScale: fit, fractional: true, cssWidth, cssHeight, offsetX: (cssW - cssWidth) / 2, offsetY: (cssH - cssHeight) / 2, cssPerVirtual: fit / r };
 }
 
 // ------------------------------------------------------------------ drawing
