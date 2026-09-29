@@ -93,7 +93,7 @@ export class Autopilot {
           return f; // engines off while landed
         }
         this.held = 0;
-      } else if (dist < tol && (!node.stop || Math.hypot(vel.x, vel.y) < 30)) {
+      } else if ((dist < tol || this.passed(node, pos, tol)) && (!node.stop || Math.hypot(vel.x, vel.y) < 30)) {
         this.held += 1 / 60;
         if (this.held >= (node.hold ?? 0)) this.advance();
       }
@@ -138,17 +138,6 @@ export class Autopilot {
       const sp = Math.min(cruise, Math.sqrt(2 * brake * dist), dist * kpos);
       vdx = dist > 1 ? (dx / dist) * sp : 0;
       vdy = dist > 1 ? (dy / dist) * sp : 0;
-      if (!node.stop && !this.isLast() && dist < tol * 2) {
-        // carry speed through toward the next node
-        const nx = this.route[this.i + 1];
-        if (nx) {
-          const ex = nx.x - pos.x;
-          const ey = nx.y - pos.y;
-          const ed = Math.hypot(ex, ey) || 1;
-          vdx = (vdx + (ex / ed) * cruise * 0.5) / 1.5;
-          vdy = (vdy + (ey / ed) * cruise * 0.5) / 1.5;
-        }
-      }
     }
     const kv = lander ? 1.2 : 2.0;
     let ax = kv * (vdx - vel.x);
@@ -227,6 +216,15 @@ export class Autopilot {
       }
     }
     return f;
+  }
+
+  /** Flew past a pass-through node (beyond it along the leg from the previous node, within 3·tol). */
+  private passed(node: RouteNode, pos: Vec2, tol: number): boolean {
+    const prev = this.route[this.i - 1];
+    if (!prev || node.stop || node.hold) return false;
+    const lx = node.x - prev.x;
+    const ly = node.y - prev.y;
+    return (pos.x - node.x) * lx + (pos.y - node.y) * ly > 0 && Math.hypot(pos.x - node.x, pos.y - node.y) < 3 * tol;
   }
 
   private isLast(): boolean {

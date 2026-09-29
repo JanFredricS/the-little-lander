@@ -5,12 +5,14 @@
 
 import { STORY_LEVELS } from '../contracts';
 import type { LevelId, LevelSpec } from '../contracts';
+import { hangarRun } from './hangarRun';
 import { physlab } from './physlab';
 import { testpad } from './testpad';
 
 export const LEVELS: Partial<Record<LevelId, LevelSpec>> = {
   testpad,
   physlab,
+  hangarRun,
 };
 
 export function getLevel(id: LevelId): LevelSpec | undefined {
