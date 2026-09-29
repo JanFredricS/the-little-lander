@@ -172,6 +172,43 @@ function checkPolygon(points: readonly Vec2[], what: string, err: (m: string) =>
   const last = points[points.length - 1]!;
   if (points.length > 3 && first.x === last.x && first.y === last.y) err(`${what}: do not repeat the first point at the end`);
   if (Math.abs(signedArea(points)) < 1e-6) err(`${what}: polygon has zero area`);
+  if (selfIntersects(points)) err(`${what}: polygon edges must not self-intersect`);
+}
+
+/** O(n²) check: any two non-adjacent edges touching or crossing. */
+function selfIntersects(pts: readonly Vec2[]): boolean {
+  const n = pts.length;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % n]!;
+    for (let j = i + 1; j < n; j++) {
+      if (j === i + 1 || (i === 0 && j === n - 1)) continue; // adjacent edges share a vertex
+      if (segmentsIntersect(a, b, pts[j]!, pts[(j + 1) % n]!)) return true;
+    }
+  }
+  return false;
+}
+
+function cross(o: Vec2, a: Vec2, b: Vec2): number {
+  return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+}
+
+function onSegment(p: Vec2, a: Vec2, b: Vec2): boolean {
+  return Math.min(a.x, b.x) <= p.x && p.x <= Math.max(a.x, b.x) && Math.min(a.y, b.y) <= p.y && p.y <= Math.max(a.y, b.y);
+}
+
+function segmentsIntersect(p1: Vec2, p2: Vec2, q1: Vec2, q2: Vec2): boolean {
+  const d1 = cross(q1, q2, p1);
+  const d2 = cross(q1, q2, p2);
+  const d3 = cross(p1, p2, q1);
+  const d4 = cross(p1, p2, q2);
+  if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+  return (
+    (d1 === 0 && onSegment(p1, q1, q2)) ||
+    (d2 === 0 && onSegment(p2, q1, q2)) ||
+    (d3 === 0 && onSegment(q1, p1, p2)) ||
+    (d4 === 0 && onSegment(q2, p1, p2))
+  );
 }
 
 function checkPiece(piece: TerrainPiece, what: string, inside: (p: Vec2) => boolean, err: (m: string) => void): void {

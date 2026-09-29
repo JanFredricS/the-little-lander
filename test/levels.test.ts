@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { ENTITY_KINDS } from '../src/contracts';
 import type { EntitySpec, LevelSpec, ZoneSpec } from '../src/contracts';
-import { LEVELS, resolveLevelParam } from '../src/levels/registry';
+import { LEVELS, playableLevelIds, resolveLevelParam } from '../src/levels/registry';
 import { terrainChain } from '../src/levels/build';
 import { assertValidLevel, validateLevel } from '../src/levels/validate';
 
@@ -90,6 +90,11 @@ describe('validateLevel', () => {
       (l) => ({ ...l, terrain: { pieces: [{ id: 'p', kind: 'polygon', points: [{ x: 0, y: 0 }, { x: 10, y: 10 }, { x: 20, y: 20 }], style: { material: 'rock' } }] } }),
       /zero area/,
     ],
+    [
+      'self-intersecting polygon',
+      (l) => ({ ...l, terrain: { pieces: [{ id: 'bow', kind: 'polygon', points: [{ x: 0, y: 0 }, { x: 4, y: 4 }, { x: 0, y: 4 }, { x: 3, y: 0 }], style: { material: 'rock' } }] } }),
+      /self-intersect/,
+    ],
     ['no objectives', (l) => ({ ...l, objectives: [] }), /at least one objective/],
     ['exit is not an exitDock', (l) => ({ ...l, objectives: [{ kind: 'reachExit', id: 'x', exitId: 'orb1' }] }), /not an exitDock/],
     ['too many beacons', (l) => ({ ...l, objectives: [{ kind: 'plantBeacons', id: 'b', count: 3, siteIds: ['site1'] }] }), /exceeds/],
@@ -122,6 +127,14 @@ describe('level helpers', () => {
     expect(resolveLevelParam('map9')).toBeNull();
     expect(resolveLevelParam('nope')).toBeNull();
     expect(resolveLevelParam(null)).toBeNull();
+  });
+
+  it('player-facing level list hides debug levels; ?level= still reaches them', () => {
+    const mock = mockLevel();
+    expect(playableLevelIds({ testpad: LEVELS.testpad!, hangarRun: mock })).toEqual(['hangarRun']);
+    expect(playableLevelIds()).not.toContain('testpad');
+    expect(resolveLevelParam('testpad')).toBe('testpad');
+    expect(LEVELS.testpad?.debug).toBe(true);
   });
 
   it('turns ceilings around so the solid side is above', () => {
