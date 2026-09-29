@@ -9,7 +9,7 @@ import { Container, Graphics, Sprite, Text, Texture } from 'pixi.js';
 import { VIEW_WIDTH } from '../contracts';
 import type { ArtApi, LevelSpec, TerrainPiece } from '../contracts';
 import type { LevelSession } from '../game/session';
-import { PLACEHOLDER_VESSEL } from '../game/placeholderVessel';
+import { getVesselAnchors } from '../art/sprites/vessels';
 import { mToPx } from '../physics/units';
 
 const TERRAIN_COLORS: Record<string, number> = {
@@ -55,17 +55,22 @@ export class LevelView {
       this.world.addChild(s);
     }
 
+    // Vessel sprites are drawn at NATIVE size around their pivot (centre of
+    // mass). vessel.csm is the upright docked stack, 24x48 — the S0 stub was
+    // 20x28 (PLACEHOLDER_VESSEL, still the physics collision box); never
+    // stretch the art to the collision box.
     this.vessel = new Container();
-    const hull = new Sprite(Texture.from(art.getSprite('vessel.csm', 0, spec.themeId).canvas as HTMLCanvasElement));
-    hull.anchor.set(0.5);
-    hull.width = PLACEHOLDER_VESSEL.w;
-    hull.height = PLACEHOLDER_VESSEL.h;
-    this.flame = new Sprite(Texture.from(art.getSprite('fx.flameMain', 0, spec.themeId).canvas as HTMLCanvasElement));
-    this.flame.anchor.set(0.5, 0);
-    this.flame.position.set(0, PLACEHOLDER_VESSEL.h / 2);
+    const hullFrame = art.getSprite('vessel.csm', 0, spec.themeId);
+    const hull = new Sprite(Texture.from(hullFrame.canvas as HTMLCanvasElement));
+    hull.anchor.set(hullFrame.pivot.x / hullFrame.width, hullFrame.pivot.y / hullFrame.height);
+    const flameFrame = art.getSprite('fx.flameMain', 0, spec.themeId);
+    this.flame = new Sprite(Texture.from(flameFrame.canvas as HTMLCanvasElement));
+    this.flame.anchor.set(flameFrame.pivot.x / flameFrame.width, flameFrame.pivot.y / flameFrame.height);
+    // main-engine flame anchor, relative to the hull pivot
+    const main = getVesselAnchors('vessel.csm').engines[0]?.find((e) => e.engine === 'main');
+    this.flame.position.set((main?.x ?? hullFrame.pivot.x) - hullFrame.pivot.x, (main?.y ?? hullFrame.height) - hullFrame.pivot.y);
     this.flame.visible = false;
-    const nose = new Graphics().rect(-2, -PLACEHOLDER_VESSEL.h / 2, 4, 4).fill(0xf0b030);
-    this.vessel.addChild(this.flame, hull, nose);
+    this.vessel.addChild(this.flame, hull);
     this.world.addChild(this.vessel);
 
     this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 10, fill: 0xd8dce8 } });
