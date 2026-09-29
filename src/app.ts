@@ -22,6 +22,8 @@ export interface AppOptions {
   art?: ArtApi;
   /** Game events (HUD/audio hooks, debugging). */
   onEvent?: (e: GameEvent) => void;
+  /** Screen-state changes (audio mood / ducking, analytics). */
+  onScreen?: (s: ScreenState) => void;
 }
 
 export class App {
@@ -92,6 +94,7 @@ export class App {
     const next = transition(prev, action);
     if (next === prev) return;
     this.state = next;
+    this.options.onScreen?.(next);
     this.enter(prev, action, next);
   }
 

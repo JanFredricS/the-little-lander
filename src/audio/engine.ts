@@ -148,7 +148,6 @@ export class AudioEngine {
 
   setMuted(muted: boolean): void {
     this._settings = { ...this._settings, muted };
-    if (muted) this.thrusters.stopAll();
     this.persist();
   }
 
@@ -268,7 +267,7 @@ export class AudioEngine {
         this.thrusters.setMode(e.to);
         break;
       case 'enginesChanged':
-        if (!this._settings.muted) this.thrusters.update(e);
+        this.thrusters.update(e); // muted = master gain 0, so loops resume audibly on unmute
         break;
       case 'gravityChanged':
         if (e.rampProgress !== undefined) this.setTension(e.rampProgress);
