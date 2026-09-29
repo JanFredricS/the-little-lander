@@ -1,7 +1,8 @@
 /**
  * Level renderer: the theme's palette background + parallax backdrop layers
- * (S2 ArtApi), flat-colour terrain polygons (TODO(S8): S2 terrain tiles),
- * prop sprites, the flight systems (src/render/flightView.ts: pixel-art
+ * (S2 ArtApi), tiled terrain (terrainView.ts: S2 tiles painted into culled
+ * chunks), level-runtime entities (entityView.ts: doors, moving islands,
+ * vines, creatures), prop sprites, the flight systems (src/render/flightView.ts: pixel-art
  * vessel per mode with anchored flames and harpoon heads; zones, goo,
  * debris, pickups, beacons, radiation still placeholder shapes) and a dim
  * debug telemetry line (the player HUD is src/ui, S4). Everything is in
@@ -10,24 +11,19 @@
 
 import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
-import type { ArtApi, BackdropLayer, LevelSpec, TerrainPiece } from '../contracts';
+import type { ArtApi, BackdropLayer, LevelSpec } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
+import { EntityView } from './entityView';
 import { FlightView } from './flightView';
-
-const TERRAIN_COLORS: Record<string, number> = {
-  metal: 0x4a5064,
-  rock: 0x6a5a4a,
-  soil: 0x5a4a30,
-  crystal: 0x4a8aa0,
-  organic: 0x3a7a4a,
-  ruin: 0x6a6a70,
-};
+import { TerrainView } from './terrainView';
 
 export class LevelView {
   readonly root = new Container();
   private readonly world = new Container();
   private readonly flight: FlightView;
+  private readonly terrain: TerrainView;
+  private readonly entities: EntityView;
   private readonly backdrop: { layer: BackdropLayer; view: Sprite | TilingSprite }[] = [];
   private readonly props = new Map<string, Sprite>();
   private readonly hud: Text;
@@ -54,8 +50,12 @@ export class LevelView {
     this.root.addChild(this.world);
 
     this.flight = new FlightView(session, art);
+    this.terrain = new TerrainView(spec, art);
+    this.entities = new EntityView(session, art);
+    this.world.addChild(this.entities.back);
     this.world.addChild(this.flight.under);
-    this.world.addChild(this.drawTerrain(spec));
+    this.world.addChild(this.terrain.root);
+    this.world.addChild(this.entities.mid);
     this.world.addChild(this.drawExits(spec));
 
     for (const e of spec.entities) {
@@ -71,6 +71,7 @@ export class LevelView {
     }
 
     this.world.addChild(this.flight.over);
+    this.world.addChild(this.entities.front);
 
     // S0 debug line; the player HUD is src/ui (S4), so this sits at the bottom, dimmed.
     this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
@@ -84,6 +85,8 @@ export class LevelView {
     const cam = s.camera.interpolated(alpha);
     const o = s.camera.viewOrigin(cam);
     this.world.position.set(-o.x, -o.y);
+    this.terrain.update(o);
+    this.entities.render(alpha, o, nowMs);
     // parallax: 0 = fixed to the screen, 1 = moves with the world
     for (const { layer, view } of this.backdrop) {
       const dx = -o.x * layer.parallax;
@@ -121,18 +124,9 @@ export class LevelView {
   }
 
   destroy(): void {
+    this.terrain.destroy();
+    this.entities.destroy();
     this.root.destroy({ children: true });
-  }
-
-  private drawTerrain(spec: LevelSpec): Graphics {
-    const g = new Graphics();
-    for (const piece of spec.terrain.pieces) {
-      g.poly(fillOutline(piece, spec.worldSize.h).flatMap((p) => [p.x, p.y])).fill(TERRAIN_COLORS[piece.style.material] ?? 0x4a5064);
-      // 1px surface line
-      const pts = piece.points.flatMap((p) => [p.x, p.y]);
-      g.poly(pts, piece.kind === 'polygon').stroke({ width: 1, color: 0x9aa4b8, alignment: 0.5 });
-    }
-    return g;
   }
 
   private drawExits(spec: LevelSpec): Graphics {
@@ -144,14 +138,4 @@ export class LevelView {
     }
     return g;
   }
-}
-
-/** Closed fill outline for a terrain piece (ground fills down, ceiling fills up). */
-function fillOutline(piece: TerrainPiece, worldH: number): { x: number; y: number }[] {
-  const pts = piece.points.map((p) => ({ x: p.x, y: p.y }));
-  if (piece.kind === 'polygon') return pts;
-  const first = pts[0]!;
-  const last = pts[pts.length - 1]!;
-  const edgeY = piece.kind === 'ground' ? worldH : 0;
-  return [...pts, { x: last.x, y: edgeY }, { x: first.x, y: edgeY }];
 }
