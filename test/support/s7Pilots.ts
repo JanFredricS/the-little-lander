@@ -173,6 +173,122 @@ export function harpoonPilot(o: HarpoonPilotOptions = {}): Pilot {
   };
 }
 
+export interface ThrustPilotOptions {
+  /** Waypoints (px), in order. */
+  path: Vec2[];
+  /** Points that must be hit precisely (orbs): tolerance `tight`; others `loose`. */
+  precise?: (p: Vec2) => boolean;
+  tight?: number;
+  loose?: number;
+  /** Cruise speed (px/s). */
+  vmax?: number;
+  /** Radiation cover: shelters + sun; hide while the sun charges. */
+  shelters?: Vec2[];
+  /** Max distance (px) worth flying to a shelter. */
+  shelterReach?: number;
+  /** Max tilt (rad) away from "against gravity". */
+  maxTilt?: number;
+  /** Stop at the last waypoint (hover) instead of flying through. */
+  hover?: boolean;
+}
+
+/** Angle wrap to (-pi, pi]. */
+const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Thruster autopilot (harpoonThrust / CSM-style controls: thrust + rotate):
+ * velocity-command waypoint follower. Desired acceleration = velocity error
+ * minus local gravity (read the way the HUD shows it: vessel.hooks.gravityAt);
+ * rotate the nose to it, burn while aligned. Hides in the nearest shelter
+ * while the sun is charging.
+ */
+export function thrustPilot(o: ThrustPilotOptions) {
+  const tight = o.tight ?? 10;
+  const loose = o.loose ?? 70;
+  const vmax = o.vmax ?? 160;
+  const maxTilt = o.maxTilt ?? 0.8;
+  let i = 0;
+  let shelter: Vec2 | null = null;
+  const pilot: Pilot = (s) => {
+    const st = s.state;
+    const f = frame();
+    // advance waypoints
+    while (i < o.path.length - 1) {
+      const w = o.path[i]!;
+      const tol = o.precise?.(w) ? tight : loose;
+      const d = Math.hypot(w.x - st.pos.x, w.y - st.pos.y);
+      if (d < tol || st.pos.x > w.x + (o.precise?.(w) ? 220 : 20)) i++;
+      else break;
+    }
+    // radiation: hide while charging
+    let target = o.path[i]!;
+    let speedCap = vmax;
+    if (o.shelters && o.shelters.length) {
+      const charging = s.env.radiation.emitters.some((e) => e.charging || s.env.radiation.charge(e, s.simTime) > 0);
+      if (charging) {
+        if (!shelter) {
+          let best: Vec2 | null = null;
+          let bd = o.shelterReach ?? 600;
+          for (const q of o.shelters) {
+            const d = Math.hypot(q.x - st.pos.x, q.y - st.pos.y);
+            if (d < bd && !castSolid(s.physics, vPxToM(st.pos), vPxToM(q), [...s.vessel.parts])) {
+              bd = d;
+              best = q;
+            }
+          }
+          shelter = best;
+        }
+        if (shelter) target = shelter;
+      } else shelter = null;
+    }
+    const isLast = i === o.path.length - 1;
+    // blocked (a rock in the way): detour via a side point that sees both
+    const ignore = [...s.vessel.parts];
+    const clear = (a: Vec2, b: Vec2) => !castSolid(s.physics, vPxToM(a), vPxToM(b), ignore);
+    if (!clear(st.pos, target)) {
+      const fwd = target.x >= st.pos.x ? 1 : -1;
+      let best: Vec2 | null = null;
+      outer: for (const k of [1, -1, 2, -2, 3, -3]) {
+        for (const dy of [0, -150, 150, -300, 300]) {
+          const c = { x: st.pos.x + fwd * k * 160, y: st.pos.y + dy };
+          if (clear(st.pos, c) && clear(c, target)) {
+            best = c;
+            break outer;
+          }
+        }
+      }
+      if (best) target = best;
+    }
+    const d = { x: target.x - st.pos.x, y: target.y - st.pos.y };
+    const dist = Math.hypot(d.x, d.y);
+    const slow = shelter !== null || isLast || o.precise?.(target) ? 1.2 : 3;
+    const sp = Math.min(speedCap, Math.max(40, dist * slow));
+    const vd = dist > 1e-6 ? { x: (d.x / dist) * sp, y: (d.y / dist) * sp } : { x: 0, y: 0 };
+    if ((shelter || (isLast && o.hover)) && dist < 12) {
+      vd.x = 0;
+      vd.y = 0;
+    }
+    const g = s.vessel.hooks.gravityAt(st.pos); // m/s²
+    const k = 1.6; // 1/s
+    const req = { x: ((vd.x - st.vel.x) * k) / 30 - g.x, y: ((vd.y - st.vel.y) * k) / 30 - g.y };
+    // never tilt more than maxTilt away from "against gravity" (keep lift)
+    const gUp = Math.atan2(-g.x, g.y);
+    const raw = wrap(Math.atan2(req.x, -req.y) - gUp);
+    const want = gUp + Math.max(-maxTilt, Math.min(maxTilt, raw));
+    const err = wrap(want - st.angle);
+    const u = err * 4 - st.angularVel * 1.2;
+    f.rotateCW = u > 0.15;
+    f.rotateCCW = u < -0.15;
+    const thrustAcc = s.tuning.harpoonThrust.thrust * Math.max(1.6, Math.hypot(s.spec.gravity.x, s.spec.gravity.y));
+    const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
+    const along = req.x * upNow.x + req.y * upNow.y;
+    // on the ground a pod cannot pivot: lift off straight first
+    f.thrust = (Math.abs(err) < 0.5 || st.landed) && along > thrustAcc * 0.45;
+    return f;
+  };
+  return pilot;
+}
+
 /** Any anchor at all (straight-ish up first), for recovery. */
 function pickAny(s: LevelSession, fwd: 1 | -1): AnchorPick | null {
   const c = anchorCandidates(s, fwd, { minDeg: 30, maxDeg: 150 });
