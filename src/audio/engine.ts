@@ -35,6 +35,8 @@ export interface AudioEngineOptions {
 const LOOKAHEAD = 0.15;
 const TICK_MS = 25;
 const DUCK = 0.35;
+/** Seconds a fully faded sequencer is kept after its fade ends (release / echo tails). */
+const TAIL = 0.5;
 
 /** DOM events that count as a user gesture for the autoplay policy. */
 export const GESTURE_EVENTS = ['pointerdown', 'mousedown', 'touchstart', 'touchend', 'keydown'] as const;
@@ -49,6 +51,8 @@ export class AudioEngine {
   private tension = 0;
   private ducked = false;
   private hidden = false;
+  private unlocked = false;
+  private queue: Promise<void> = Promise.resolve();
   private timer: ReturnType<typeof setInterval> | null = null;
   private readonly lastPlayed = new Map<SfxId, number>();
   private readonly cleanups: (() => void)[] = [];
@@ -70,15 +74,36 @@ export class AudioEngine {
     return this.driver.state === 'running';
   }
 
-  /** Start / resume audio. Must run inside a user gesture the first time. */
-  async unlock(): Promise<void> {
-    if (this.hidden) return;
+  /**
+   * Start / resume audio. Must run inside a user gesture the first time.
+   * All context state changes (unlock, hide, show) run through one serial
+   * queue and act on the LATEST desired visibility, so a fast
+   * hide -> show can never end with a late suspend() silencing a visible page.
+   */
+  unlock(): Promise<void> {
+    return this.enqueue(() => this.reconcile(true));
+  }
+
+  private enqueue(op: () => Promise<void>): Promise<void> {
+    this.queue = this.queue.then(op, op);
+    return this.queue;
+  }
+
+  /** Bring the context in line with `hidden`. `gesture` = allowed to create/unlock it. */
+  private async reconcile(gesture: boolean): Promise<void> {
+    if (this.hidden) {
+      this.thrusters.silence(); // keeps the engine flags so the show path can relight them
+      if (this.driver.state === 'running') await this.driver.suspend();
+      return;
+    }
+    if (!gesture && !this.unlocked) return; // never unlocked: wait for a gesture
     try {
       await this.driver.resume();
     } catch {
       return; // not allowed yet; the next gesture retries
     }
-    if (!this.running) return;
+    if (this.hidden || !this.running) return; // hidden again meanwhile: the queued hide handles it
+    this.unlocked = true;
     this.applyGains(0);
     if (this.opts.autoTick !== false && !this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
     this.thrusters.relight(); // engines that were lit when the tab was hidden
@@ -106,16 +131,11 @@ export class AudioEngine {
     this.cleanups.push(() => doc.removeEventListener('visibilitychange', onVis));
   }
 
-  setHidden(hidden: boolean): void {
-    if (hidden === this.hidden) return;
-    const wasRunning = this.running || this.driver.state === 'suspended';
+  setHidden(hidden: boolean): Promise<void> {
+    if (hidden === this.hidden) return this.queue;
     this.hidden = hidden;
-    if (hidden) {
-      this.thrusters.silence(); // keeps the engine flags so unlock() can relight them
-      void this.driver.suspend();
-    } else if (wasRunning && this.driver.state !== 'uninit') {
-      void this.unlock();
-    }
+    if (hidden) this.thrusters.silence(); // immediately, not after queued ops
+    return this.enqueue(() => this.reconcile(false));
   }
 
   dispose(): void {
@@ -134,7 +154,7 @@ export class AudioEngine {
       s.schedule(now + LOOKAHEAD, now);
     }
     this.seqs = this.seqs.filter((s) => {
-      if (!s.isSilentAfter(now + 0.5)) return true; // keep release/echo tails alive a moment
+      if (!s.isSilentAfter(now - TAIL)) return true; // alive until fade end + release/echo tail
       s.dispose();
       return false;
     });

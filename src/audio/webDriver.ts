@@ -58,7 +58,9 @@ export class WebAudioDriver implements AudioDriver {
 
   async resume(): Promise<void> {
     if (!this.ctx) this.build();
-    if (this.ctx && this.ctx.state !== 'running') await this.ctx.resume();
+    // Always call resume(): a suspend() still in flight reports 'running', and
+    // AudioContext queues resume after it, so skipping here would leave it suspended.
+    if (this.ctx) await this.ctx.resume();
   }
 
   async suspend(): Promise<void> {

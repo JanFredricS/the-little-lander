@@ -108,6 +108,36 @@ describe('engine lifecycle + wiring', () => {
     expect(e.thrusters.active.sort()).toEqual(['left', 'right']);
   });
 
+  it('overlapping hide -> show before suspend resolves ends running', async () => {
+    const { d, e } = mk();
+    await e.unlock();
+    e.handle({ type: 'enginesChanged', main: true, left: false, right: false });
+    d.holdSuspend = true;
+    const hide = e.setHidden(true);
+    const show = e.setHidden(false); // tab back before the suspend landed
+    await Promise.resolve();
+    d.releaseSuspend(); // the slow suspend lands now
+    await hide;
+    await show;
+    expect(d.state).toBe('running');
+    expect(e.running).toBe(true);
+    expect(d.liveLoops.size).toBe(1);
+    // and the reverse: show -> hide quickly ends suspended
+    d.holdSuspend = false;
+    const h2 = e.setHidden(true);
+    await e.setHidden(false);
+    await e.setHidden(true);
+    await h2;
+    expect(d.state).toBe('suspended');
+  });
+
+  it('never unlocks on show without a prior gesture', async () => {
+    const { d, e } = mk();
+    await e.setHidden(true);
+    await e.setHidden(false);
+    expect(d.state).toBe('uninit');
+  });
+
   it('handles every sample event without throwing', async () => {
     const { d, e } = mk();
     await e.unlock();
@@ -137,10 +167,21 @@ describe('engine lifecycle + wiring', () => {
     const { d, e } = mk();
     await e.unlock();
     e.setMood('hangar');
+    for (d.time = 0; d.time < 2; d.time += 0.025) e.tick(); // hangar fully faded in
+    d.time = 2;
     e.setMood('caves');
     expect(e.sequencers.map((s) => s.mood)).toEqual(['hangar', 'caves']);
     const hangarGroup = d.groups[0]!;
-    for (d.time = 0; d.time < 3; d.time += 0.025) e.tick();
+    // crossfade is 1.2 s from t=2: the old group must stay alive and audible mid-fade
+    for (; d.time < 3.0; d.time += 0.025) e.tick();
+    expect(hangarGroup.gainAt(3.0)).toBeGreaterThan(0.1);
+    expect(hangarGroup.gainAt(3.19)).toBeGreaterThan(0);
+    expect(hangarGroup.disposed).toBe(false);
+    for (; d.time < 3.6; d.time += 0.025) e.tick(); // fade ended at 3.2, tail margin 0.5 not over yet
+    expect(hangarGroup.gainAt(3.2)).toBe(0);
+    expect(hangarGroup.disposed).toBe(false);
+    expect(e.sequencers.map((s) => s.mood)).toEqual(['hangar', 'caves']);
+    for (; d.time < 5; d.time += 0.025) e.tick();
     expect(e.sequencers.map((s) => s.mood)).toEqual(['caves']);
     expect(hangarGroup.gainAt(d.time)).toBe(0);
     expect(hangarGroup.disposed).toBe(true);
