@@ -19,6 +19,11 @@ export const GOO_TUNING = {
   attachedDrag: 0.05,
   /** Seconds inside an active exhaust cone to burn a blob away. */
   burnSec: 0.4,
+  /**
+   * Out-of-cone time (s) before the burn timer resets — so a PULSED burn
+   * (the core CSM skill) still accumulates.
+   */
+  burnGraceSec: 0.2,
   /** Hull damage per attach (0..1). */
   attachDamage: 0,
   /** Max blobs welded to one hull; extra blobs keep bumping. */

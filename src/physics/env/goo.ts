@@ -28,8 +28,10 @@ export interface GooBall {
   spawnerId: string;
   attached: boolean;
   joint: JointHandle | null;
-  /** Seconds continuously inside an exhaust cone. */
+  /** Seconds inside an exhaust cone (see GOO_TUNING.burnGraceSec). */
   burn: number;
+  /** Seconds since it was last inside an active cone. */
+  cool: number;
 }
 
 interface Spawner {
@@ -100,7 +102,7 @@ export class GooSystem {
       tag: TAG_GOO,
     });
     this.physics.addCircle(body, { x: 0, y: 0 }, pxToM(t.radius), { density: t.density, friction: 0.9, restitution: 0, group: GOO_GROUP, sensorEvents: false });
-    const ball: GooBall = { id: this.nextId++, body, spawnerId, attached: false, joint: null, burn: 0 };
+    const ball: GooBall = { id: this.nextId++, body, spawnerId, attached: false, joint: null, burn: 0, cool: 0 };
     this.balls.push(ball);
     return ball;
   }
@@ -167,8 +169,9 @@ export class GooSystem {
       const pos = vMToPx(p);
       if (cones.length && cones.some((c) => coneContains(c, pos))) {
         b.burn += dt;
-        if (b.burn > this.tuning.burnSec) this.remove(b, vessel, true);
-      } else b.burn = 0;
+        b.cool = 0;
+        if (b.burn > this.tuning.burnSec + 1e-9) this.remove(b, vessel, true);
+      } else if ((b.cool += dt) > this.tuning.burnGraceSec) b.burn = 0;
     }
     this.balls = this.balls.filter((b) => this.physics.hasBody(b.body));
   }

@@ -320,27 +320,32 @@ export abstract class VesselBase implements FlightVessel {
     }
     for (const b of [...this.support.keys()]) if (!this.physics.hasBody(b)) this.support.delete(b);
 
-    const t = this.hullTuning;
+    // One impact per other body per step (a lander touching down on both
+    // legs reports two hits: it is still one impact). Fastest hit wins.
+    const fastest = new Map<BodyHandle, { speed: number; point: Vec2 }>();
     for (const h of report.hits) {
       const o = other(h.a, h.b);
       if (o === null) continue;
+      const prev = fastest.get(o);
+      if (!prev || h.approachSpeed > prev.speed) fastest.set(o, { speed: h.approachSpeed, point: h.point });
+    }
+    const t = this.hullTuning;
+    let worst = 0;
+    for (const [o, h] of fastest) {
       const tag = this.physics.hasBody(o) ? this.physics.getTag(o) : undefined;
       if (tag === TAG_GOO) continue;
-      const speedPx = mToPx(h.approachSpeed);
-      const pos = vMToPx(h.point);
-      this.events({ type: 'impact', pos, speed: speedPx, with: tag ?? 'unknown' });
+      const speedPx = mToPx(h.speed);
+      this.events({ type: 'impact', pos: vMToPx(h.point), speed: speedPx, with: tag ?? 'unknown' });
       if (isDebrisTag(tag)) {
         const d = this.options.tuning.debris;
         if (speedPx < d.minDamageSpeed) continue;
         const k = Math.min(2, speedPx / d.refSpeed) * (tag === TAG_DEBRIS_BURNING ? d.burningMultiplier : 1);
         this.damage(d.hitDamage * k, 'debris');
-      } else if (speedPx >= t.crashSpeed) {
-        this.crash('impact', speedPx);
-      } else if (speedPx > t.damageSpeed) {
-        this.damage((t.hitDamage * (speedPx - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
-      }
-      if (this.crashed) return;
+        if (this.crashed) return;
+      } else worst = Math.max(worst, speedPx);
     }
+    if (worst >= t.crashSpeed) this.crash('impact', worst);
+    else if (worst > t.damageSpeed) this.damage((t.hitDamage * (worst - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
   }
 
   private isSupport(h: BodyHandle): boolean {
