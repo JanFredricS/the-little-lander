@@ -37,10 +37,10 @@ const hangar: Palette = {
   ],
   ramps: {
     shadow: [1, 2, 3],
-    primary: [3, 4, 5, 6, 7],
+    primary: [3, 4, 5, 7],
     secondary: [2, 3, 4, 5],
     accent: [12, 13, 14],
-    sky: [1, 2, 9, 10, 11],
+    sky: [2, 9, 10, 11],
     foliage: [9, 10, 11],
     light: [7, 8, 14],
   },
@@ -72,7 +72,7 @@ const asteroid: Palette = {
   ],
   ramps: {
     shadow: [1, 2, 3],
-    primary: [3, 4, 5, 6, 7],
+    primary: [3, 4, 5, 7],
     secondary: [2, 3, 4, 5],
     accent: [8, 9, 10, 11],
     sky: [1, 2, 12, 3],
@@ -112,7 +112,7 @@ const islands: Palette = {
     accent: [13, 14, 12],
     sky: [10, 11, 12],
     foliage: [6, 7, 8, 9],
-    light: [12, 14],
+    light: [11, 14, 12],
   },
   outline: 1,
   background: 0x8ccbe8,
@@ -142,7 +142,7 @@ const caves: Palette = {
   ],
   ramps: {
     shadow: [1, 2, 3],
-    primary: [2, 3, 4, 5, 6],
+    primary: [2, 3, 4, 6],
     secondary: [15, 3, 4],
     accent: [7, 8, 9, 10],
     sky: [1, 2, 3],
@@ -179,10 +179,10 @@ const core: Palette = {
     shadow: [1, 2, 5],
     primary: [2, 3, 4],
     secondary: [9, 10, 14],
-    accent: [15, 14],
+    accent: [13, 15, 14],
     sky: [11, 12, 13, 14],
     foliage: [5, 6, 7, 8],
-    light: [15, 14],
+    light: [13, 15, 14],
   },
   outline: 1,
   background: 0x3a2a6c,
@@ -212,12 +212,12 @@ const boss: Palette = {
   ],
   ramps: {
     shadow: [1, 2, 3],
-    primary: [2, 3, 4, 5, 6],
+    primary: [2, 3, 4, 6],
     secondary: [11, 12, 13],
     accent: [7, 8, 9, 10],
     sky: [1, 2, 3, 4],
     foliage: [7, 8, 9, 10],
-    light: [14, 15],
+    light: [6, 14, 15],
   },
   outline: 1,
   background: 0x140a20,
@@ -247,12 +247,12 @@ const collapse: Palette = {
   ],
   ramps: {
     shadow: [1, 2, 3],
-    primary: [2, 3, 4, 5, 6],
+    primary: [2, 3, 4, 6],
     secondary: [2, 3, 4],
     accent: [7, 8, 9],
     sky: [7, 10, 11, 12],
-    foliage: [14, 15],
-    light: [12, 13],
+    foliage: [3, 14, 15],
+    light: [11, 12, 13],
   },
   outline: 1,
   background: 0x1e1a1e,
@@ -320,4 +320,21 @@ export const PLACEHOLDER: ArtPalette = {
 
 export function paletteFor(theme: ThemeId): Palette {
   return PALETTES[theme];
+}
+
+const padded = new WeakMap<object, unknown>();
+
+/**
+ * Contract ramps are 3-4 shades. Generators that index shades directly
+ * (ramp[3], ramp[4]) work on a padded view: every ramp repeated at its
+ * lightest end up to `n` entries. Pixels still come only from the palette.
+ */
+export function padRamps<P extends { ramps: Readonly<Record<string, readonly number[]>> }>(pal: P, n = 5): P {
+  const hit = padded.get(pal);
+  if (hit) return hit as P;
+  const ramps: Record<string, readonly number[]> = {};
+  for (const [k, r] of Object.entries(pal.ramps)) ramps[k] = r.length >= n ? r : [...r, ...Array<number>(n - r.length).fill(r[r.length - 1]!)];
+  const out = { ...pal, ramps } as P;
+  padded.set(pal, out);
+  return out;
 }

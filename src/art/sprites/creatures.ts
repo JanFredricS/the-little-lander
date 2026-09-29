@@ -11,7 +11,7 @@ import { bayer, rampAt, shiftMap } from '../core/palette';
 import { fbm } from '../core/noise';
 import { hash2 } from '../core/rng';
 import { halo } from '../core/shapes';
-import { PALETTES } from '../palettes';
+import { padRamps, PALETTES } from '../palettes';
 import type { SpriteEntry } from './types';
 
 // ---------------------------------------------------------- dragon-bird
@@ -20,7 +20,8 @@ import type { SpriteEntry } from './types';
  * Side view, facing right. 4 frames: wings up, mid, down, mid.
  * `s` scales the drawing (1 = 64×40 sprite).
  */
-export function dragonBird(pal: Palette, frame: number, s = 1): Pix {
+export function dragonBird(palIn: Palette, frame: number, s = 1): Pix {
+  const pal = padRamps(palIn);
   const W = 64 * s,
     H = 40 * s;
   const p = new Pix(W, H);
@@ -117,7 +118,8 @@ function flock(pal: Palette, frame: number): Pix {
  * The Keeper's body (mantle + face + tentacle stubs). 88×72.
  * Frames: 0-1 idle breathing, 2 hurt flash.
  */
-export function keeperBody(pal: Palette, frame: number, s = 1): Pix {
+export function keeperBody(palIn: Palette, frame: number, s = 1): Pix {
+  const pal = padRamps(palIn);
   const W = 88 * s,
     H = 72 * s;
   const p = new Pix(W, H);
@@ -216,25 +218,25 @@ function keeperEye(pal: Palette, frame: number): Pix {
 }
 
 export function creatureSprites(): Record<string, SpriteEntry> {
-  const isl = () => PALETTES.islands;
-  const boss = () => PALETTES.boss;
+  const isl = () => padRamps(PALETTES.islands);
+  const boss = () => padRamps(PALETTES.boss);
   const frames = (n: number, f: (i: number) => Pix) => Array.from({ length: n }, (_, i) => f(i));
   return {
     'creature.dragonBird': {
       home: 'islands',
       themed: false,
-      gen: () => ({ frames: frames(4, (i) => dragonBird(isl(), i)), palette: isl(), pivot: { x: 31, y: 22 } }),
+      gen: () => ({ frames: frames(4, (i) => dragonBird(isl(), i)), palette: PALETTES.islands, pivot: { x: 31, y: 22 } }),
     },
-    'creature.skyWhale': { home: 'islands', themed: false, gen: () => ({ frames: frames(2, (i) => skyWhale(isl(), i)), palette: isl(), pivot: { x: 48, y: 20 } }) },
-    'creature.dragonFlock': { home: 'islands', themed: false, gen: () => ({ frames: frames(2, (i) => flock(isl(), i)), palette: isl(), pivot: { x: 12, y: 6 } }) },
+    'creature.skyWhale': { home: 'islands', themed: false, gen: () => ({ frames: frames(2, (i) => skyWhale(isl(), i)), palette: PALETTES.islands, pivot: { x: 48, y: 20 } }) },
+    'creature.dragonFlock': { home: 'islands', themed: false, gen: () => ({ frames: frames(2, (i) => flock(isl(), i)), palette: PALETTES.islands, pivot: { x: 12, y: 6 } }) },
     'boss.keeperBody': {
       home: 'boss',
       themed: false,
       note: 'frames 0-1 idle, 2 = hurt flash; eye at (44,37): overlay boss.keeperEye to blink/narrow',
-      gen: () => ({ frames: frames(3, (i) => keeperBody(boss(), i)), palette: boss(), pivot: { x: 44, y: 34 } }),
+      gen: () => ({ frames: frames(3, (i) => keeperBody(boss(), i)), palette: PALETTES.boss, pivot: { x: 44, y: 34 } }),
     },
-    'boss.keeperTendril': { home: 'boss', themed: false, gen: () => ({ frames: frames(2, (i) => keeperTendril(boss(), i)), palette: boss(), pivot: { x: 7, y: 0 } }) },
-    'boss.keeperEye': { home: 'boss', themed: false, note: 'frame 0 open, 1 narrowed', gen: () => ({ frames: frames(2, (i) => keeperEye(boss(), i)), palette: boss(), pivot: { x: 9, y: 7 } }) },
+    'boss.keeperTendril': { home: 'boss', themed: false, gen: () => ({ frames: frames(2, (i) => keeperTendril(boss(), i)), palette: PALETTES.boss, pivot: { x: 7, y: 0 } }) },
+    'boss.keeperEye': { home: 'boss', themed: false, note: 'frame 0 open, 1 narrowed', gen: () => ({ frames: frames(2, (i) => keeperEye(boss(), i)), palette: PALETTES.boss, pivot: { x: 9, y: 7 } }) },
   };
 }
 

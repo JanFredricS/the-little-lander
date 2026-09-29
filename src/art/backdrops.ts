@@ -14,7 +14,7 @@ import { hash2, mulberry32 } from './core/rng';
 import { halo, rockBlob, vGradient } from './core/shapes';
 import { cloud, floatingIsland, palm, ridgeProfile, strand, waterfall } from './nature';
 import { natureRamps } from './sprites/props';
-import { PALETTES } from './palettes';
+import { padRamps, PALETTES } from './palettes';
 
 export interface BackdropLayerPix {
   pix: Pix;
@@ -468,7 +468,7 @@ const cache = new Map<ThemeId, BackdropLayerPix[]>();
 export function generateBackdrop(theme: ThemeId): BackdropLayerPix[] {
   let l = cache.get(theme);
   if (!l) {
-    l = BUILDERS[theme](PALETTES[theme]);
+    l = BUILDERS[theme](padRamps(PALETTES[theme]));
     cache.set(theme, l);
   }
   return l;

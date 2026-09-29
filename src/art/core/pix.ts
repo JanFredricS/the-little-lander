@@ -34,6 +34,8 @@ export class Pix {
     x = Math.floor(x);
     y = Math.floor(y);
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return this;
+    // catches out-of-range ramp lookups (undefined) instead of silently punching holes
+    if (!(c >= 0 && c <= 255)) throw new RangeError(`Pix.set: bad palette index ${String(c)}`);
     this.data[y * this.w + x] = c;
     return this;
   }

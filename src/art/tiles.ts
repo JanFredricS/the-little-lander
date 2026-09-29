@@ -17,7 +17,7 @@ import { Pix } from './core/pix';
 import { bayer, rampAt, shiftMap } from './core/palette';
 import { fbm, valueNoise } from './core/noise';
 import { hash2, mulberry32, seedOf } from './core/rng';
-import { PALETTES } from './palettes';
+import { padRamps, PALETTES } from './palettes';
 
 const T = TILE_SIZE;
 const wrap = (v: number) => ((v % T) + T) % T;
@@ -434,7 +434,7 @@ export function parseTileKind(kind: TileKind): [TerrainMaterial, TileRole] {
 }
 
 export function generateTile(theme: ThemeId, kind: TileKind, variantSeed: number): Pix {
-  const pal = PALETTES[theme];
+  const pal = padRamps(PALETTES[theme]);
   const [mat, role] = parseTileKind(kind);
   const r = rampsFor(pal, mat, theme);
   const seed = seedOf('tile', theme, mat);

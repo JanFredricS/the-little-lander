@@ -11,7 +11,7 @@ import { fbm, valueNoise } from '../core/noise';
 import { hash2, mulberry32 } from '../core/rng';
 import { halo, rockBlob, sphere } from '../core/shapes';
 import { foliageClump, floatingIsland, palm, strand, type NatureRamps } from '../nature';
-import { PALETTES } from '../palettes';
+import { padRamps, PALETTES } from '../palettes';
 import type { SpriteDef, SpriteEntry } from './types';
 
 type Gen = (pal: Palette) => { frames: Pix[]; pivot: { x: number; y: number } };
@@ -139,17 +139,6 @@ const screen: Gen = (pal) => {
   });
   return { frames, pivot: { x: 10, y: 15 } };
 };
-
-/**
- * Props are drawn in their home theme but can be requested in any theme;
- * ramps differ in length between themes, so pad every ramp to 5 entries
- * (repeating the lightest) to keep index lookups in range.
- */
-function padRamps(pal: Palette): Palette {
-  const ramps = {} as Record<string, readonly number[]>;
-  for (const [k, r] of Object.entries(pal.ramps)) ramps[k] = r.length >= 5 ? r : [...r, ...Array<number>(5 - r.length).fill(r[r.length - 1]!)];
-  return { ...pal, ramps: ramps as Palette['ramps'] };
-}
 
 /** Console desk with a screen. 24×18. */
 const consoleDesk: Gen = (pal) => {

@@ -10,7 +10,7 @@ import { rampAt, shiftMap, type ArtPalette } from '../core/palette';
 import { valueNoise } from '../core/noise';
 import { mulberry32 } from '../core/rng';
 import { halo, rockBlob, sphere } from '../core/shapes';
-import { CRAFT, PALETTES } from '../palettes';
+import { CRAFT, padRamps, PALETTES } from '../palettes';
 import { flameFrame } from './fx';
 import type { SpriteDef, SpriteEntry } from './types';
 
@@ -273,10 +273,10 @@ export function objectSprites(): Record<string, () => SpriteDef> {
 }
 
 export function themedObjectSprites(): Record<string, SpriteEntry> {
-  const pal = (t: ThemeId) => PALETTES[t];
+  const pal = (t: ThemeId) => padRamps(PALETTES[t]);
   return {
-    'obj.blastDoor': { home: 'hangar', themed: true, gen: (t) => ({ frames: [blastDoor(pal(t))], palette: pal(t), pivot: { x: 8, y: 32 } }) },
-    'obj.vineSegment': { home: 'islands', themed: true, gen: (t) => ({ frames: [vineSegment(pal(t))], palette: pal(t), pivot: { x: 2.5, y: 0 } }) },
+    'obj.blastDoor': { home: 'hangar', themed: true, gen: (t) => ({ frames: [blastDoor(pal(t))], palette: PALETTES[t], pivot: { x: 8, y: 32 } }) },
+    'obj.vineSegment': { home: 'islands', themed: true, gen: (t) => ({ frames: [vineSegment(pal(t))], palette: PALETTES[t], pivot: { x: 2.5, y: 0 } }) },
   };
 }
 
