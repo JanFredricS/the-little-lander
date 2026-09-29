@@ -17,5 +17,5 @@ export interface DebugRoute {
 }
 
 export const DEBUG_ROUTES: DebugRoute[] = [
-  // { param: 'gallery', run: async (host, v) => (await import('./art/gallery')).mountGallery(host, v) },
+  { param: 'gallery', run: async (host, v) => (await import('./art/gallery')).mountGallery(host, v) },
 ];
