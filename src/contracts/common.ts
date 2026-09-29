@@ -34,7 +34,8 @@ export type Seed = number;
  * Level ids are also save keys, so they never change once shipped.
  */
 export type LevelId =
-  | 'testpad'
+  | 'testpad' // S0 debug level (?level=testpad)
+  | 'physlab' // S1 physics playground (?level=physlab)
   | 'hangarRun' // Map 1 — lander, hangar decks
   | 'descent' // Map 2 — CSM, asteroid descent
   | 'floatingIsles' // Map 3 — CSM -> lander, 5 beacons

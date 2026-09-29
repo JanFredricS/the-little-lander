@@ -59,6 +59,8 @@ export interface TerrainPiece {
   friction?: number;
   /** Default 0.1. */
   restitution?: number;
+  /** Harpoons can anchor to this piece. Default true. */
+  anchorable?: boolean;
 }
 
 export interface TerrainSpec {
@@ -83,6 +85,10 @@ export interface StaticPropEntity extends EntityBase {
   h: number;
   /** Collidable box of w×h. Default false (decor only). */
   solid?: boolean;
+  /** Solid AND simulated as a dynamic body (crates to knock around). Implies solid. Default false. */
+  dynamic?: boolean;
+  /** kg/m² for dynamic props. Default 1. */
+  density?: number;
   angle?: number;
   /** Draw in front of the vessel. Default false. */
   foreground?: boolean;
@@ -199,13 +205,43 @@ export interface FuelPickupEntity extends EntityBase {
   amount: number;
 }
 
-/** Level exit. (x, y) = centre of the docking/landing surface. */
+/**
+ * Level exit. (x, y) = centre of the docking/landing surface; the dock
+ * region spans x ± w/2 horizontally and from y - h up to y (it sits ON the
+ * surface). The vessel centre must be inside it.
+ */
 export interface ExitDockEntity extends EntityBase {
   kind: 'exitDock';
   w: number;
   h: number;
   /** Must soft-land inside it (true) or merely enter the rect (false). */
   requireLanding: boolean;
+  /** Max vessel speed (px/s) that counts (docking "slowly"). Default: no limit. */
+  maxSpeed?: number;
+  /** Max |angle| (rad) that counts (docking "aligned"). Default: no limit. */
+  maxAngle?: number;
+}
+
+/**
+ * A rock hanging from the ceiling that a harpoon can anchor to; pulling on
+ * the rope (or the boss hitting it) past `breakForce` drops it as a dynamic
+ * body (boss arena: drop rocks on the keeper).
+ */
+export interface LooseRockEntity extends EntityBase {
+  kind: 'looseRock';
+  /** Radius (px). */
+  radius: number;
+  /** Rope pull (N) that breaks it loose. */
+  breakForce: number;
+}
+
+/** A platform that crumbles `delaySec` after the vessel first touches it (map 8). */
+export interface CrumblePlatformEntity extends EntityBase {
+  kind: 'crumblePlatform';
+  w: number;
+  h: number;
+  delaySec: number;
+  style: TerrainStyle;
 }
 
 export type EntitySpec =
@@ -220,7 +256,9 @@ export type EntitySpec =
   | CreatureEntity
   | BossSpawnEntity
   | FuelPickupEntity
-  | ExitDockEntity;
+  | ExitDockEntity
+  | LooseRockEntity
+  | CrumblePlatformEntity;
 
 export type EntityKind = EntitySpec['kind'];
 
@@ -237,21 +275,31 @@ export const ENTITY_KINDS: readonly EntityKind[] = [
   'bossSpawn',
   'fuelPickup',
   'exitDock',
+  'looseRock',
+  'crumblePlatform',
 ];
 
 // -------------------------------------------------------------------- zones
 
-/** Inside `rect`, world gravity is REPLACED by `gravity` for the vessel and dynamic bodies. */
+/**
+ * Inside the zone, world gravity is REPLACED by `gravity` for the vessel and
+ * dynamic bodies. The zone is `polygon` when given (world px, same rules as
+ * a 'polygon' TerrainPiece; `rect` must then be its bounding box), else `rect`.
+ */
 export interface GravityZone {
   kind: 'gravityZone';
   id: string;
   rect: Rect;
+  polygon?: readonly Vec2[];
   /** m/s², y-down. {0,-9.8} = inverted. */
   gravity: Vec2;
 }
 
 export interface WindGust {
+  /** Gust starts (full force) at this time; a 'warning' event fires warnSec earlier. */
   atSec: number;
+  /** Telegraph lead time. Default 1.5. */
+  warnSec?: number;
   durationSec: number;
   /** m/s² applied to the vessel (mass-independent). */
   accel: Vec2;
@@ -295,7 +343,21 @@ export interface BrittleRegion {
   breakAfterSec: number;
 }
 
-export type ZoneSpec = GravityZone | WindGustSchedule | RadiationEmitter | BrittleRegion;
+/**
+ * A moving kill line (map 8 collapse front). Starts at `start` along `axis`
+ * and moves at `speed` px/s (negative = towards 0, e.g. rising up the
+ * screen). The vessel crashes when on the wrong side of it.
+ */
+export interface KillFront {
+  kind: 'killFront';
+  id: string;
+  axis: 'x' | 'y';
+  start: number;
+  speed: number;
+  activate?: TriggerSpec;
+}
+
+export type ZoneSpec = GravityZone | WindGustSchedule | RadiationEmitter | BrittleRegion | KillFront;
 
 // --------------------------------------------------------------- objectives
 
@@ -359,6 +421,15 @@ export interface LevelSpec {
   camera?: CameraHints;
   /** Parallax/tile seed. Default: hash of id. */
   seed?: Seed;
+  /** Harpoon guns on the pod (harpoon modes). Default 1. */
+  harpoonGuns?: 1 | 2;
+  /**
+   * Per-level physics tuning passthrough. Keys are defined and documented
+   * by the physics slice's tuning module (e.g. 'lander.thrust'); unknown
+   * keys are ignored by the engine and flagged by the validator only if
+   * the tuning module registers its key list.
+   */
+  physicsOverrides?: Readonly<Record<string, number>>;
   /** Debug levels are hidden from level select. */
   debug?: boolean;
 }
