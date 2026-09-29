@@ -45,7 +45,7 @@ export type Speaker = 'wren' | 'io' | 'commander' | 'team' | 'keeper' | 'narrato
 
 /** How a shot ends. */
 export type ShotAdvance =
-  /** Auto-advance after this many seconds (any key skips ahead). */
+  /** Auto-advance after this many seconds (a press reveals the remaining text; a press once text is revealed advances immediately). */
   | { kind: 'duration'; seconds: number }
   /** Wait for a key/tap after the text has finished typing. */
   | { kind: 'key' };

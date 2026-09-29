@@ -27,6 +27,16 @@ describe('FixedStepClock', () => {
     expect(c.advance(0)).toBe(0); // excess was dropped, not carried over
   });
 
+  it('cancelSteps un-counts steps that were not run', () => {
+    const c = new FixedStepClock();
+    expect(c.advance(10 * FIXED_DT)).toBe(10);
+    c.cancelSteps(7);
+    expect(c.steps).toBe(3);
+    expect(c.simTime).toBeCloseTo(3 * FIXED_DT, 12);
+    c.cancelSteps(99);
+    expect(c.steps).toBe(0);
+  });
+
   it('ignores negative / non-finite time', () => {
     const c = new FixedStepClock();
     expect(c.advance(-1)).toBe(0);
@@ -103,6 +113,34 @@ describe('FrameLoop', () => {
     expect(alphas).toHaveLength(2);
     raf.frame(1000 / 30 + 1000); // 1 s gap -> capped to 15 steps
     expect(steps.length).toBe(2 + 15);
+  });
+
+  it('stops the remaining steps of a batched frame when a step pauses the loop', () => {
+    const raf = new FakeRaf();
+    const steps: number[] = [];
+    const loop: FrameLoop = new FrameLoop(
+      {
+        step: (i) => {
+          steps.push(i);
+          if (i === 0) loop.setPaused(true);
+        },
+        render: () => {},
+      },
+      raf,
+    );
+    loop.start();
+    raf.frame(0);
+    raf.frame(1000); // lagged frame: 15 steps batched
+    expect(steps).toEqual([0]);
+    // Only executed steps count: no phantom sim time from the 14 skipped steps.
+    expect(loop.clock.steps).toBe(1);
+    expect(loop.clock.simTime).toBeCloseTo(FIXED_DT, 12);
+    loop.setPaused(false);
+    raf.frame(2000); // first frame after resume: dt = 0
+    raf.frame(2000 + 1000 / 60 + 0.01);
+    expect(steps).toEqual([0, 0]);
+    expect(loop.clock.steps).toBe(steps.length);
+    expect(loop.clock.simTime).toBeCloseTo(steps.length * FIXED_DT, 12);
   });
 
   it('pauses on visibility loss / blur, composes causes, and reports changes', () => {

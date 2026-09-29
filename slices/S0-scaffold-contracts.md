@@ -33,8 +33,11 @@ Runs alone on main. Everything later mocks against what S0 freezes.
      fuelPickup, exitDock.
    - `CutsceneScript`: id, shots: [{ still: StillId, textLines, speaker?, advance }]
      where `advance: ShotAdvance = { kind: 'duration'; seconds } | { kind: 'key' }`
-     (auto-advance after `seconds`, any key skips ahead; or wait for key/tap
-     once the text has finished typing). See src/contracts/cutscene.ts.
+     (auto-advance after `seconds` once the text has typed out; or wait for
+     key/tap once the text has finished typing). On every shot a press is
+     two-step: a press while text is typing reveals the full text; a press
+     once it is fully revealed advances to the next shot immediately (for
+     duration shots, before `seconds` elapse). See src/contracts/cutscene.ts.
    - `ArtApi`: what render needs from art — `getSprite(name, frame?)`,
      `getTile(theme, tileKind, variantSeed)`, `getBackdropLayers(theme)`,
      `getStill(stillId)` returning canvases/textures; plus the palette

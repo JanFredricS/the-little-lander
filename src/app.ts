@@ -1,13 +1,13 @@
 /**
  * Game shell: owns the Pixi host, the fixed-step frame loop, input sources,
  * the screen state machine (src/shell/state.ts) and the active level
- * session. Screens other than `playing` are S0 placeholders (one line of
- * text, key/tap to continue) until the UI (S4) and story (S3) slices land.
+ * session. Menu screens are text placeholders until the UI slice (S4)
+ * lands; story flow (cutscenes, unlocks, save) comes from src/story (S3).
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
-import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
+import type { ArtApi, CutsceneId, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
 import { createStubArt } from './art/stubArt';
 import { LevelSession } from './game/session';
 import { getLevel, playableLevelIds } from './levels/registry';
@@ -17,6 +17,10 @@ import { LevelView } from './render/levelView';
 import { FrameLoop, type PauseCause } from './shell/clock';
 import { InputMapper, KeyboardSource, PointerSource, VirtualControlsSource } from './shell/input';
 import { INITIAL_STATE, isResume, transition } from './shell/state';
+import { playCutscene, type CutscenePlayerHandle } from './story/cutscenePlayer';
+import { continuePlan, continueTarget, isUnlocked, modeSwitchCutscene, selectLevelAction } from './story/flow';
+import { SaveStore } from './story/save';
+import { getCutscene } from './story/scripts';
 
 export interface AppOptions {
   art?: ArtApi;
@@ -24,6 +28,8 @@ export interface AppOptions {
   onEvent?: (e: GameEvent) => void;
   /** Screen-state changes (audio mood / ducking, analytics). */
   onScreen?: (s: ScreenState) => void;
+  /** Progress store (default: localStorage-backed). */
+  save?: SaveStore;
 }
 
 export class App {
@@ -34,6 +40,13 @@ export class App {
   private pixi!: PixiHost;
   private loop!: FrameLoop;
   private readonly art: ArtApi;
+  readonly save: SaveStore;
+  /** Full-screen cutscene overlay (screen `cutscene`, or a mid-level one). */
+  private cutscene: CutscenePlayerHandle | null = null;
+  /** True while a mid-level (mode switch) cutscene pauses the level. */
+  private inlineCutscene = false;
+  /** Extra scripts to play inside the next `cutscene` screen (after the one it names). */
+  private cutsceneChain: CutsceneId[] = [];
   private session: LevelSession | null = null;
   private view: LevelView | null = null;
   private readonly overlay = new Container();
@@ -50,6 +63,7 @@ export class App {
     private readonly options: AppOptions = {},
   ) {
     this.art = options.art ?? createStubArt();
+    this.save = options.save ?? new SaveStore();
   }
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
@@ -101,6 +115,7 @@ export class App {
   destroy(): void {
     this.loop.stop();
     this.unbind.forEach((u) => u());
+    this.stopCutscene();
     this.input.dispose();
     this.endSession();
     this.pixi.destroy();
@@ -109,28 +124,43 @@ export class App {
   // ------------------------------------------------------------ screens
 
   private enter(prev: ScreenState, action: ScreenAction, next: ScreenState): void {
+    this.stopCutscene();
+    const chain = this.cutsceneChain;
+    this.cutsceneChain = [];
     switch (next.id) {
       case 'boot':
         return this.showOverlay('Loading…');
-      case 'title':
+      case 'title': {
         this.endSession();
-        return this.showOverlay('THE LITTLE LANDER\n\nEnter / tap to start');
+        const cont = continueTarget(this.save.state, getLevel);
+        const line = cont ? `Enter / tap: continue — ${getLevel(cont)?.title ?? cont}\nL: level select` : 'Enter / tap to start';
+        return this.showOverlay(`THE LITTLE LANDER\n\n${line}`);
+      }
       case 'levelSelect': {
         this.endSession();
-        const lines = this.levelIds().map((id, i) => `${i + 1}  ${getLevel(id)?.title ?? id}`);
+        const save = this.save.state;
+        const lines = this.levelIds().map((id, i) => {
+          const best = save.best[id];
+          const tag = !isUnlocked(save, id) ? '  [locked]' : best ? `  best ${best.timeSec.toFixed(1)}s · ${best.orbs} orbs` : '';
+          return `${i + 1}  ${getLevel(id)?.title ?? id}${tag}`;
+        });
         if (!lines.length) lines.push('(no levels yet — try ?level=testpad)');
         return this.showOverlay(`SELECT LEVEL\n\n${lines.join('\n')}\n\nnumber / Enter / tap · Esc back`);
       }
       case 'cutscene':
         this.endSession();
-        return this.showOverlay(`[cutscene: ${next.cutsceneId}]\n\nany key / tap`);
+        this.hideOverlay();
+        return this.playCutsceneChain([next.cutsceneId, ...chain]);
       case 'paused':
         this.loop.setPaused(true);
         return this.showOverlay('PAUSED\n\nEsc / tap resume · R retry · Q quit');
       case 'results': {
         const o = next.outcome;
-        const line = o.kind === 'complete' ? `COMPLETE  ${o.timeSec.toFixed(1)}s  score ${o.score}` : `CRASHED (${o.cause})`;
-        return this.showOverlay(`${line}\n\nEnter / tap retry · Esc levels`);
+        if (action.type === 'levelEnded') this.save.recordResult(next.levelId, o);
+        if (o.kind === 'complete') {
+          return this.showOverlay(`COMPLETE  ${o.timeSec.toFixed(1)}s  score ${o.score}\n\nEnter / tap continue · R retry · Esc levels`);
+        }
+        return this.showOverlay(`CRASHED (${o.cause})\n\nEnter / tap retry · Esc levels`);
       }
       case 'playing':
         if (isResume(prev, action, next) && this.session) {
@@ -161,6 +191,15 @@ export class App {
     }
     this.session = session;
     if (this.options.onEvent) session.on(this.options.onEvent);
+    const midCutscene = modeSwitchCutscene(levelId, spec);
+    if (midCutscene) {
+      let played = false;
+      session.on((e) => {
+        if (e.type !== 'vesselModeChanged' || played) return;
+        played = true;
+        this.playInlineCutscene(midCutscene, session);
+      });
+    }
     this.view = new LevelView(session, this.art);
     this.pixi.app.stage.addChildAt(this.view.root, 0);
     session.start();
@@ -171,6 +210,7 @@ export class App {
 
   private endSession(): void {
     this.levelToken++;
+    if (this.inlineCutscene) this.stopCutscene();
     this.view?.destroy();
     this.view = null;
     this.session?.destroy();
@@ -212,7 +252,68 @@ export class App {
 
   private onPauseChange(paused: boolean, cause: PauseCause): void {
     this.input.clear();
-    if (paused && cause !== 'manual' && this.state.id === 'playing') this.dispatch({ type: 'pause' });
+    if (paused && cause !== 'manual' && this.state.id === 'playing' && !this.inlineCutscene) this.dispatch({ type: 'pause' });
+  }
+
+  // ------------------------------------------------------------ cutscenes
+
+  private playCutscene(id: CutsceneId, then: () => void): void {
+    this.stopCutscene();
+    this.cutscene = playCutscene(this.host, getCutscene(id), {
+      art: this.art,
+      onDone: (skipped) => {
+        this.cutscene = null;
+        this.save.markCutsceneSeen(id);
+        this.options.onEvent?.({ type: 'cutsceneDone', cutsceneId: id, skipped });
+        then();
+      },
+    });
+  }
+
+  /** Play scripts back to back inside one `cutscene` screen, then leave it. */
+  private playCutsceneChain(ids: CutsceneId[]): void {
+    const [id, ...rest] = ids;
+    if (!id) return this.dispatch({ type: 'cutsceneDone' });
+    this.playCutscene(id, () => this.playCutsceneChain(rest));
+  }
+
+  private stopCutscene(): void {
+    this.cutscene?.destroy();
+    this.cutscene = null;
+    this.inlineCutscene = false;
+  }
+
+  /** Mid-level cutscene (LevelSpec.modeSwitch): the level pauses underneath, then resumes. */
+  private playInlineCutscene(id: CutsceneId, session: LevelSession): void {
+    this.loop.setPaused(true);
+    this.playCutscene(id, () => {
+      this.inlineCutscene = false;
+      if (this.session !== session || this.state.id !== 'playing') return;
+      this.clearInputOnNextStep = true;
+      this.loop.setPaused(false);
+    });
+    this.inlineCutscene = true;
+  }
+
+  private selectLevel(id: LevelId): void {
+    if (isUnlocked(this.save.state, id)) this.dispatch(selectLevelAction(id, getLevel));
+  }
+
+  /** Title: continue the story where the save left off, else level select. */
+  private titleConfirm(): void {
+    const cont = continueTarget(this.save.state, getLevel);
+    this.dispatch({ type: 'start' });
+    if (cont) this.selectLevel(cont);
+  }
+
+  private resultsConfirm(): void {
+    if (this.state.id !== 'results') return;
+    if (this.state.outcome.kind === 'complete') {
+      const plan = continuePlan(this.state.levelId, getLevel);
+      this.cutsceneChain = plan.cutscenes.slice(1);
+      this.dispatch(plan.action);
+    }
+    else this.dispatch({ type: 'retry' });
   }
 
   // ------------------------------------------------------------ menus
@@ -223,26 +324,25 @@ export class App {
     const confirm = k === 'Enter' || k === 'Space' || k === 'NumpadEnter';
     switch (this.state.id) {
       case 'title':
-        if (confirm) this.dispatch({ type: 'start' });
+        if (confirm) this.titleConfirm();
+        else if (k === 'KeyL') this.dispatch({ type: 'start' });
         break;
       case 'levelSelect': {
         const ids = this.levelIds();
         const n = /^Digit([1-9])$/.exec(k);
         const pick = n ? ids[Number(n[1]) - 1] : confirm ? ids[0] : undefined;
-        if (pick) this.dispatch({ type: 'selectLevel', levelId: pick });
+        if (pick) this.selectLevel(pick);
         else if (k === 'Escape') this.dispatch({ type: 'back' });
         break;
       }
-      case 'cutscene':
-        this.dispatch({ type: 'cutsceneDone' });
-        break;
       case 'paused':
         if (k === 'Escape' || k === 'KeyP' || confirm) this.dispatch({ type: 'resume' });
         else if (k === 'KeyR') this.dispatch({ type: 'retry' });
         else if (k === 'KeyQ') this.dispatch({ type: 'quit' });
         break;
       case 'results':
-        if (confirm || k === 'KeyR') this.dispatch({ type: 'retry' });
+        if (confirm) this.resultsConfirm();
+        else if (k === 'KeyR') this.dispatch({ type: 'retry' });
         else if (k === 'Escape') this.dispatch({ type: 'back' });
         break;
       default:
@@ -254,18 +354,16 @@ export class App {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     switch (this.state.id) {
       case 'title':
-        return this.dispatch({ type: 'start' });
+        return this.titleConfirm();
       case 'levelSelect': {
         const first = this.levelIds()[0];
-        if (first) this.dispatch({ type: 'selectLevel', levelId: first });
+        if (first) this.selectLevel(first);
         return;
       }
-      case 'cutscene':
-        return this.dispatch({ type: 'cutsceneDone' });
       case 'paused':
         return this.dispatch({ type: 'resume' });
       case 'results':
-        return this.dispatch({ type: 'retry' });
+        return this.resultsConfirm();
       default:
         return;
     }
