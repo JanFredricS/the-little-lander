@@ -31,7 +31,10 @@ Runs alone on main. Everything later mocks against what S0 freezes.
    - `EntitySpec` kinds: staticProp, debrisSpawner, gooSpawner, orb,
      beaconSite, movingIsland, vine, blastDoor, creature, bossSpawn,
      fuelPickup, exitDock.
-   - `CutsceneScript`: id, shots: [{ still: StillId, textLines, durationOrAdvanceOnKey }].
+   - `CutsceneScript`: id, shots: [{ still: StillId, textLines, speaker?, advance }]
+     where `advance: ShotAdvance = { kind: 'duration'; seconds } | { kind: 'key' }`
+     (auto-advance after `seconds`, any key skips ahead; or wait for key/tap
+     once the text has finished typing). See src/contracts/cutscene.ts.
    - `ArtApi`: what render needs from art — `getSprite(name, frame?)`,
      `getTile(theme, tileKind, variantSeed)`, `getBackdropLayers(theme)`,
      `getStill(stillId)` returning canvases/textures; plus the palette
