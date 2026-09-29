@@ -13,6 +13,7 @@ import { Pix } from './core/pix';
 import { PALETTES } from './palettes';
 import { TERRAIN_MATERIALS, THEME_MATERIALS, generateTile } from './tiles';
 import { generateBackdrop } from './backdrops';
+import { generateStill, STILL_IDS } from './stills';
 
 export interface CatalogRender {
   frames: Pix[];
@@ -34,6 +35,17 @@ export interface CatalogItem {
 
 export function artCatalog(): CatalogItem[] {
   const items: CatalogItem[] = [];
+  for (const id of STILL_IDS) {
+    items.push({
+      id: `stills/${id}`,
+      section: 'Cutscene stills',
+      label: id,
+      render: () => {
+        const s = generateStill(id);
+        return { frames: [s.pix], palette: s.palette };
+      },
+    });
+  }
   for (const [name, entry] of Object.entries(spriteRegistry())) {
     const section = name.startsWith('vessel.') ? 'Vessels' : `Sprites · ${entry.home}`;
     items.push({
