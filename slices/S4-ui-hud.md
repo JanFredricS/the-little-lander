@@ -22,7 +22,16 @@ until S8 merges them).
    game-over (crash cause line, retry). Keyboard + mouse navigable.
 3. **Controls help**: per-mode control card shown on level start
    (dismiss on first input) and from pause.
-4. **Tests**: HUD state reducers from event streams, menu navigation
+4. **Touch controls** (mobile is first-class): on-screen control layer
+   shown when touch is detected (and toggleable from pause), feeding the
+   S0 input-source contract — per mode: csm = rotate left/right + thrust
+   buttons; lander = left-engine + right-engine buttons (thumb zones,
+   bottom corners); harpoon = drag-to-aim + fire/release button + reel
+   in/out; harpoonThrust = harpoon controls + thrust button. Buttons
+   ≥48 px physical, semi-transparent, multi-touch (both engines at
+   once), pixel-styled. Portrait orientation: letterbox + "rotate your
+   device" hint overlay. Menus fully tappable.
+5. **Tests**: HUD state reducers from event streams, menu navigation
    logic, lock/unlock display logic.
 
 ## Non-goals

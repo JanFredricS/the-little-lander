@@ -12,8 +12,10 @@ Runs alone on main, after S1–S7. Scope:
 5. Feel pass: screen shake, thruster particles, hit flashes, camera
    look-ahead, landing dust — small, consistent.
 6. Difficulty curve check across all 8 maps; fuel economy tuning.
-7. Mobile/small-window sanity: integer scaling behavior, touch is
-   out-of-scope but window resize must not break.
+7. Mobile verification on the deployed Pages site: touch controls work
+   in every mode, no scroll/zoom gestures leak, integer scaling correct
+   in both orientations, playable performance on a mid-range phone
+   (verify at phone viewport via browser emulation at minimum).
 8. README player-facing polish (controls table, screenshots from the
    gallery), itch-style landing page copy on index.html title screen.
 9. CI green, Pages deploy verified live.

@@ -21,6 +21,14 @@ Repo: `JanFredricS/the-little-lander` (public).
   interpolation, simulation-time clock, pause on `visibilitychange`.
 - **Map length:** real side-scroller lengths — 8,000–24,000 px of playfield
   per map (3–6 min traversal), scrolling camera with parallax backgrounds.
+- **Mobile + desktop are both first-class targets** on GitHub Pages:
+  keyboard/mouse on PC, touch controls on phones/tablets (on-screen
+  buttons per flight mode, drag-to-aim harpoon), responsive integer
+  scaling of the 640×360 virtual view in both orientations (landscape
+  preferred, portrait letterboxed with a rotate hint), viewport meta +
+  gesture/zoom/scroll suppression, and touch targets ≥ 48 px. Input is
+  device-agnostic at the contract level: everything funnels into
+  `InputFrame`.
 - **Delivery process:** Opus sub-agents implement slices (concurrent where
   possible, isolated worktrees), fresh-context Codex `sol-medium` audits,
   max 2 fix cycles, then one fresh-context Opus fixer cycle, then residuals
