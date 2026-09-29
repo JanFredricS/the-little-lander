@@ -6,7 +6,7 @@
  */
 
 import { Container, Graphics, Text } from 'pixi.js';
-import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
+import { VESSEL_MODES, VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
 import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
 import { createStubArt } from './art/stubArt';
 import { LevelSession } from './game/session';
@@ -242,6 +242,15 @@ export class App {
         if (confirm || k === 'KeyR') this.dispatch({ type: 'retry' });
         else if (k === 'Escape') this.dispatch({ type: 'back' });
         break;
+      case 'playing': {
+        // Debug levels (physlab, testpad): 1-4 pick a vessel mode, M cycles.
+        const s = this.session;
+        if (!s?.spec.debug) break;
+        const n = /^Digit([1-4])$/.exec(k);
+        const next = n ? VESSEL_MODES[Number(n[1]) - 1] : k === 'KeyM' ? VESSEL_MODES[(VESSEL_MODES.indexOf(s.state.mode) + 1) % VESSEL_MODES.length] : undefined;
+        if (next) s.requestModeSwitch(next);
+        break;
+      }
       default:
         break;
     }
