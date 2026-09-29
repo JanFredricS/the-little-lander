@@ -8,7 +8,8 @@
  * Input (desktop + mobile):
  *  - any key / click / tap: reveal text, then advance (CutscenePlayback.press)
  *  - hold Esc, or hold a finger / mouse button, for SKIP_HOLD_SEC: skip all
- *    (a pointer press only counts as "advance" when released before that)
+ *    (Esc and pointer presses count as a normal press on release when
+ *    released before that)
  */
 
 import { STILL_HEIGHT, STILL_WIDTH } from '../contracts';
@@ -101,7 +102,11 @@ export function playCutscene(host: HTMLElement, script: CutsceneScript, opts: Cu
     else if (!e.repeat) playback.press();
   };
   const onKeyUp = (e: KeyboardEvent) => {
-    if (e.code === 'Escape') escHeld = false;
+    if (e.code !== 'Escape' || !escHeld) return;
+    escHeld = false;
+    // A hold that reached SKIP_HOLD_SEC already ended playback (press is a
+    // no-op then); a shorter tap is an ordinary reveal/advance press.
+    playback.press();
   };
   const onPointerDown = (e: PointerEvent) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
