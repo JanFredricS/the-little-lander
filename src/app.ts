@@ -8,7 +8,8 @@
 import { Container, Graphics, Text } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from './contracts';
 import type { ArtApi, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState } from './contracts';
-import { createArt } from './art/art';
+import { createArt, hasPreload } from './art/art';
+import { STILL_IDS } from './art/stills';
 import { LevelSession } from './game/session';
 import { getLevel, playableLevelIds } from './levels/registry';
 import { loadPhysics } from './physics/engine';
@@ -120,6 +121,7 @@ export class App {
       }
       case 'cutscene':
         this.endSession();
+        this.warmCutsceneStills();
         return this.showOverlay(`[cutscene: ${next.cutsceneId}]\n\nany key / tap`);
       case 'paused':
         this.loop.setPaused(true);
@@ -151,6 +153,10 @@ export class App {
       return;
     }
     this.showOverlay('Loading…');
+    this.stillWarm?.abort();
+    // pre-generate the theme's art during the loading screen, not mid-flight
+    if (hasPreload(this.art)) await this.art.warmup(spec.themeId);
+    if (token !== this.levelToken) return;
     const session = await LevelSession.create(spec);
     if (token !== this.levelToken || this.state.id !== 'playing') {
       session.destroy();
@@ -164,6 +170,20 @@ export class App {
     this.hideOverlay();
     this.clearInputOnNextStep = true;
     this.loop.setPaused(false);
+  }
+
+  private stillWarm: AbortController | null = null;
+
+  /**
+   * Pre-generate cutscene stills in time slices while a cutscene screen is
+   * up (aborted when a level starts). Until the story slice exposes each
+   * cutscene's shot list, this warms every still.
+   */
+  private warmCutsceneStills(): void {
+    if (!hasPreload(this.art)) return;
+    this.stillWarm?.abort();
+    this.stillWarm = new AbortController();
+    void this.art.warmupStills(STILL_IDS, { signal: this.stillWarm.signal });
   }
 
   private endSession(): void {

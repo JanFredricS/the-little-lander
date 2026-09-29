@@ -99,7 +99,8 @@ describe('palettes', () => {
       for (const r of RAMPS) {
         const ramp = p.ramps[r];
         expect(ramp, `${theme}.${r}`).toBeDefined();
-        expect(ramp.length).toBeGreaterThan(0);
+        expect(ramp.length, `${theme}.${r} has 3-4 shades`).toBeGreaterThanOrEqual(3);
+        expect(ramp.length, `${theme}.${r} has 3-4 shades`).toBeLessThanOrEqual(4);
         for (const i of ramp) {
           expect(i).toBeGreaterThan(0);
           expect(i).toBeLessThan(p.colors.length);
@@ -110,12 +111,22 @@ describe('palettes', () => {
     }
   });
 
-  it('sprites only use indices of their palette', () => {
+  it('sprite pixels belong to (theme palette ∪ shared craft palette ∪ transparent)', () => {
+    const craft = new Set(CRAFT.colors.slice(1));
     for (const [name, entry] of Object.entries(spriteRegistry())) {
+      // themed sprites render in every theme; fixed ones only in their home theme
       const themes = entry.themed ? THEME_IDS : [entry.home];
       for (const t of themes) {
+        const allowed = new Set([...PALETTES[t].colors.slice(1), ...craft]);
         const d = entry.gen(t);
-        for (const f of d.frames) expect(maxIndex(f), `${name}@${t}`).toBeLessThan(d.palette.colors.length);
+        // themed props must use their theme palette itself, never the craft palette
+        if (entry.themed) expect(d.palette.colors, `${name}@${t} uses the theme palette`).toEqual(PALETTES[t].colors);
+        for (const f of d.frames) {
+          expect(maxIndex(f), `${name}@${t}`).toBeLessThan(d.palette.colors.length);
+          const bad = new Set<number>();
+          for (const i of f.data) if (i !== 0 && !allowed.has(d.palette.colors[i]!)) bad.add(d.palette.colors[i]!);
+          expect([...bad].map((c) => c.toString(16)), `${name}@${t} off-palette colours`).toEqual([]);
+        }
       }
     }
   });
@@ -259,6 +270,26 @@ describe('ArtApi', () => {
     const csm = art.getSprite('vessel.csm');
     expect([csm.width, csm.height]).toEqual([VESSEL_SIZES['vessel.csm'].w, VESSEL_SIZES['vessel.csm'].h]);
     expect(csm.pivot.x).toBeGreaterThan(0);
+  });
+
+  it('warmup pre-generates a theme so level-time lookups create no canvases', async () => {
+    const { factory, made } = fakeCanvasFactory();
+    const art = createArt({ canvasFactory: factory });
+    await art.warmup('caves');
+    const before = made.length;
+    expect(before).toBeGreaterThan(0);
+    art.getSprite('vessel.lander', 0);
+    art.getSprite('obj.goo', 0, 'caves');
+    art.getTile('caves', 'rock:top', 2);
+    art.getBackdropLayers('caves');
+    expect(made.length).toBe(before);
+    await art.warmupStills(['asterFromOrbit']);
+    const n = made.length;
+    art.getStill('asterFromOrbit');
+    expect(made.length).toBe(n);
+    const ac = new AbortController();
+    ac.abort();
+    await expect(art.warmup('boss', { signal: ac.signal })).resolves.toBeUndefined();
   });
 
   it('writes palette colours into the canvas (index 0 transparent)', () => {

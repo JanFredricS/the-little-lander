@@ -17,7 +17,7 @@ import { PALETTES, PLACEHOLDER } from './palettes';
 import { spriteRegistry } from './sprites/registry';
 import type { SpriteDef } from './sprites/types';
 import { generateStill, STILL_IDS } from './stills';
-import { generateTile, TERRAIN_MATERIALS, TILE_ROLES } from './tiles';
+import { generateTile, TERRAIN_MATERIALS, THEME_MATERIALS, TILE_ROLES } from './tiles';
 
 /** Magenta/black 4px checker with a dark border. */
 export function placeholderPix(w = 16, h = 16): Pix {
@@ -45,7 +45,48 @@ export interface CreateArtOptions {
   canvasFactory?: CanvasFactory;
 }
 
-export function createArt(opts: CreateArtOptions = {}): ArtApi {
+export interface WarmupOptions {
+  /** Stop early (e.g. the player left the loading screen). */
+  signal?: AbortSignal;
+  /** Tile variant seeds to pre-build per theme material (default 0..3). */
+  tileVariants?: number;
+  /** Yield to the event loop after this many ms of work (default 8). */
+  sliceMs?: number;
+}
+
+/**
+ * Preload API (beyond the frozen ArtApi contract): generation is lazy and
+ * memoised, so first use of a sprite/tile/still costs a main-thread hitch.
+ * Call these at level / cutscene load so gameplay never pays for it.
+ */
+export interface ArtPreload {
+  /** Everything a level of `theme` can draw: craft sprites, the theme's props/creatures, tiles, backdrops. */
+  warmup(theme: ThemeId, opts?: WarmupOptions): Promise<void>;
+  /** Cutscene stills. */
+  warmupStills(ids: readonly StillId[], opts?: WarmupOptions): Promise<void>;
+}
+
+export type Art = ArtApi & ArtPreload;
+
+/** True when `art` is the real implementation (stubs have no preload). */
+export function hasPreload(art: ArtApi): art is Art {
+  return typeof (art as Partial<ArtPreload>).warmup === 'function';
+}
+
+async function runSliced(jobs: (() => void)[], opts: WarmupOptions = {}): Promise<void> {
+  const slice = opts.sliceMs ?? 8;
+  let t0 = performance.now();
+  for (const job of jobs) {
+    if (opts.signal?.aborted) return;
+    job();
+    if (performance.now() - t0 > slice) {
+      await new Promise<void>((r) => setTimeout(r, 0));
+      t0 = performance.now();
+    }
+  }
+}
+
+export function createArt(opts: CreateArtOptions = {}): Art {
   const factory = opts.canvasFactory ?? defaultCanvasFactory;
   const defs = new Map<string, SpriteDef>();
   const frames = new Map<string, SpriteFrame>();
@@ -65,7 +106,7 @@ export function createArt(opts: CreateArtOptions = {}): ArtApi {
     return { key, def };
   };
 
-  return {
+  const api: ArtApi = {
     palettes: PALETTES,
 
     getSprite(name: SpriteName, frame = 0, theme?: ThemeId): SpriteFrame {
@@ -130,4 +171,33 @@ export function createArt(opts: CreateArtOptions = {}): ArtApi {
       return c;
     },
   };
+
+  return {
+    ...api,
+    async warmup(theme, o = {}) {
+      const jobs: (() => void)[] = [];
+      const reg = spriteRegistry();
+      for (const [name, entry] of Object.entries(reg)) {
+        const relevant = entry.themed ? entry.home === theme || name.startsWith('obj.') : !entry.themed && (entry.home === theme || isCraft(name));
+        if (!relevant) continue;
+        jobs.push(() => {
+          const n = api.getSpriteFrameCount(name as SpriteName);
+          for (let f = 0; f < n; f++) api.getSprite(name as SpriteName, f, theme);
+        });
+      }
+      const variants = o.tileVariants ?? 4;
+      for (const m of THEME_MATERIALS[theme] ?? [])
+        for (const r of TILE_ROLES) for (let v = 0; v < variants; v++) jobs.push(() => api.getTile(theme, `${m}:${r}` as TileKind, v));
+      jobs.push(() => api.getBackdropLayers(theme));
+      await runSliced(jobs, o);
+    },
+    async warmupStills(ids, o = {}) {
+      await runSliced(ids.map((id) => () => api.getStill(id)), o);
+    },
+  };
+}
+
+/** Theme-independent craft sprites (vessels, flames/fx, gameplay objects). */
+function isCraft(name: string): boolean {
+  return name.startsWith('vessel.') || name.startsWith('fx.') || name.startsWith('obj.');
 }

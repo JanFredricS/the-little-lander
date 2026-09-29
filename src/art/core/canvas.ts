@@ -33,15 +33,18 @@ export function toRGBA(pix: Pix, palette: ArtPalette, opaqueBackground?: number)
 
 export type CanvasFactory = (w: number, h: number) => PixelCanvas;
 
-/** DOM canvas when a document exists (Pixi-friendly), else OffscreenCanvas. */
+/**
+ * OffscreenCanvas when available (no DOM nodes, cheaper, usable from
+ * workers; Pixi accepts it as a texture source), else a DOM canvas.
+ */
 export const defaultCanvasFactory: CanvasFactory = (w, h) => {
+  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
   if (typeof document !== 'undefined') {
     const c = document.createElement('canvas');
     c.width = w;
     c.height = h;
     return c;
   }
-  if (typeof OffscreenCanvas !== 'undefined') return new OffscreenCanvas(w, h);
   throw new Error('No canvas implementation available (use the Pix-level generators in Node)');
 };
 
