@@ -1,5 +1,7 @@
 # S2 — Procedural pixel-art generation
 
+> Palette-union, CSM 24×48 and warmup-API deviations from the original brief are orchestrator-approved (2026-09-30).
+
 Builds only against `src/contracts/` (`ArtApi`, palettes, ThemeId,
 StillId). Lives in `src/art/` (+ `src/render/` helpers it owns) + tests.
 Style targets: research/inspiration/README.md and the images there —
