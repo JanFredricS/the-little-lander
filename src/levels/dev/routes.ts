@@ -25,7 +25,8 @@ export const hangarRunRoute: RouteNode[] = [
   { x: 4300, y: 560, speed: 100 },
   { x: 4840, y: 620, speed: 90, tol: 30 },
   { x: 5100, y: 620, speed: 120 },
-  { x: 5400, y: 600, speed: 120 },
+  // feel pass (lighter gravity): hold the line low under door 2 (closes from the top), the old line sagged into it
+  { x: 5400, y: 640, speed: 120 },
   { x: 5700, y: 500, speed: 120, tol: 25 },
   { x: 6120, y: 500, speed: 90, tol: 30 },
   { x: 6120, y: 1150, speed: 110, tol: 30 },

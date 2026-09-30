@@ -48,17 +48,28 @@ const TOUCH_LANDER_SWAPPED: readonly string[] = [
   'UPSIDE DOWN? TOP THRUSTERS FLIP YOU',
 ];
 
+/** S9 (+ keyboard): lander keys with engines swapped (the default) - the left key fires the right engine. */
+const KEYS_LANDER_SWAPPED: readonly string[] = [
+  'A / ← / J   RIGHT ENGINE (TILT LEFT)',
+  'D / → / L   LEFT ENGINE (TILT RIGHT)',
+  'W / ↑ / K / SPACE   BOTH',
+  'Q / U   TOP RIGHT    E / O   TOP LEFT',
+  'ONE ENGINE TILTS YOU - PULSE TO STEER',
+  'UPSIDE DOWN? TOP THRUSTERS FLIP YOU',
+];
+
 /** Cache key for a rendered help card: content AND the theme border it was drawn with. */
 export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false): string {
   return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}`;
 }
 
-/** `start` = the level-start card (the level waits for the first input). `swap` = touch engine buttons swapped (S9). */
+/** `start` = the level-start card (the level waits for the first input). `swap` = engine buttons/keys swapped (S9). */
 export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false): HelpCard {
   const touchLines = touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode];
+  const keyLines = swap && mode === 'lander' ? KEYS_LANDER_SWAPPED : KEYS[mode];
   return {
     title: TITLE[mode],
-    lines: [...(touch ? touchLines : KEYS[mode]), touch ? 'II  PAUSE' : 'ESC / P   PAUSE'],
+    lines: [...(touch ? touchLines : keyLines), touch ? 'II  PAUSE    ↻  RESTART' : 'ESC / P   PAUSE    BKSP   RESTART'],
     hint: start ? (touch ? 'TOUCH ANY CONTROL TO START' : 'PRESS ANY CONTROL TO START') : touch ? 'TAP TO CLOSE' : 'ANY KEY TO CLOSE',
   };
 }

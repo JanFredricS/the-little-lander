@@ -37,7 +37,7 @@ export type ScreenAction =
   | { type: 'cutsceneDone' }
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'retry' } // paused/results -> playing (same level)
+  | { type: 'retry' } // playing/paused/results -> playing (same level, fresh session)
   | { type: 'quit' } // paused -> levelSelect
   | { type: 'levelEnded'; outcome: LevelOutcome }
   | { type: 'continue'; next: LevelId | null; cutsceneAfter?: CutsceneId }; // results -> [cutscene] -> next level / levelSelect

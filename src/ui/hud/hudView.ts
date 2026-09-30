@@ -36,12 +36,13 @@ export class HudView {
   private readonly helpHint = new PixelText('', { color: UI.dim });
   private helpKey = '';
   border: number = UI.ink;
+  /** Virtual px the fuel/hull panel shifts right to clear the touch RESTART button (0 without touch controls). */
+  leftInset = 0;
+  /** Left edge (virtual px) of the top-right mode badge after the last render (the FPS readout sits left of it). */
+  badgeLeft: number = VIEW_WIDTH;
 
   constructor() {
     for (let i = 0; i < MAX_OBJECTIVE_LINES; i++) this.objTexts.push(new PixelText('', { color: UI.ink, shadow: UI.outline }));
-    this.fuelLabel.position.set(9, 8);
-    this.hullLabel.position.set(9, 20);
-    this.extra.position.set(9, 34);
     this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.bossLabel);
     this.help.addChild(this.helpG, this.helpTitle, this.helpBody, this.helpHint);
     this.help.visible = false;
@@ -82,18 +83,22 @@ export class HudView {
     const blink = Math.floor(nowMs / 250) % 2 === 0;
     const g = this.g.clear();
 
-    // --- fuel / hull panel (top-left)
+    // --- fuel / hull panel (top-left; right of the touch RESTART button when shown)
     const extras: string[] = [];
     if (s.attachedGoo > 0) extras.push(`GOO ×${s.attachedGoo}`);
     if (s.orbTarget > 0 || s.orbs > 0) extras.push(`ORBS ${s.orbs}${s.orbTarget > 0 ? `/${s.orbTarget}` : ''}`);
     this.extra.setText(extras.join('  '), { color: s.attachedGoo > 0 ? UI.goo : UI.accent });
-    panel(g, 3, 3, 116, extras.length ? 43 : 30, this.border, 0.7);
+    const lx = Math.max(0, Math.round(this.leftInset));
+    this.fuelLabel.position.set(lx + 9, 8);
+    this.hullLabel.position.set(lx + 9, 20);
+    this.extra.position.set(lx + 9, 34);
+    panel(g, lx + 3, 3, 116, extras.length ? 43 : 30, this.border, 0.7);
     const low = fuelLow(s);
     const fuelColor = low ? (blink ? UI.danger : UI.light) : UI.fuel;
-    bar(g, 37, 9, 76, 6, s.fuel, fuelColor);
+    bar(g, lx + 37, 9, 76, 6, s.fuel, fuelColor);
     if (low && blink) this.fuelLabel.setText('FUEL', { color: UI.danger });
     else this.fuelLabel.setText('FUEL', { color: UI.ink });
-    bar(g, 37, 21, 76, 6, s.hull, s.hull < HULL_LOW ? UI.danger : UI.hull);
+    bar(g, lx + 37, 21, 76, 6, s.hull, s.hull < HULL_LOW ? UI.danger : UI.hull);
 
     // --- mode badge + objectives (top-right)
     this.modeText.setText(MODE_LABEL[s.mode]);
@@ -102,6 +107,7 @@ export class HudView {
     g.rect(bx - 1, 3, bw + 2, 14).fill(UI.outline);
     g.rect(bx, 4, bw, 12).fill(UI.accent);
     this.modeText.position.set(bx + 5, 7);
+    this.badgeLeft = bx - 1;
     const lines = objectiveLines(s).slice(0, MAX_OBJECTIVE_LINES);
     this.objTexts.forEach((t, i) => {
       const l = lines[i];

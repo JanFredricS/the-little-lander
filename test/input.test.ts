@@ -52,6 +52,39 @@ describe('InputMapper + KeyboardSource', () => {
     expect(mapper.sample(ctx('harpoon')).fire).toBe(false);
   });
 
+  it('Backspace restarts the level in every mode (one-tick edge)', () => {
+    const { mapper, kb } = setup();
+    for (const mode of ['csm', 'lander', 'harpoon', 'harpoonThrust'] as const) {
+      kb.keyDown('Backspace');
+      const f = mapper.sample(ctx(mode));
+      expect(f.restart, mode).toBe(true);
+      expect(f.pause).toBe(false);
+      expect(mapper.sample(ctx(mode)).restart).toBe(false); // held: no new edge
+      kb.keyUp('Backspace');
+    }
+  });
+
+  it('swapped engines (Settings.swapEngineButtons) apply to the lander keys only', () => {
+    const { mapper, kb } = setup();
+    kb.setSwapEngines(true);
+    kb.keyDown('ArrowLeft');
+    kb.keyDown('KeyQ');
+    const l = mapper.sample(ctx('lander'));
+    expect(l.engineRight).toBe(true);
+    expect(l.engineLeft).toBe(false);
+    expect(l.topRight).toBe(true);
+    expect(l.topLeft).toBe(false);
+    expect(mapper.sample(ctx('csm')).rotateCCW).toBe(true); // CSM rotation is not swapped
+    kb.keyUp('ArrowLeft');
+    kb.keyUp('KeyQ');
+    kb.keyDown('KeyW');
+    expect(mapper.sample(ctx('lander')).thrust).toBe(true); // both-engines key is symmetric
+    kb.keyUp('KeyW');
+    kb.setSwapEngines(false);
+    kb.keyDown('ArrowLeft');
+    expect(mapper.sample(ctx('lander')).engineLeft).toBe(true);
+  });
+
   it('resolves keys per vessel mode', () => {
     const { mapper, kb } = setup();
     kb.keyDown('ArrowLeft');

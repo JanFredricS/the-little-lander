@@ -147,7 +147,8 @@ describe('screen models drive the state machine', () => {
     s = press(s, 'testpad', c);
     expect(s).toEqual({ id: 'playing', levelId: 'testpad' });
     s = transition(s, { type: 'pause' });
-    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'swap', 'quit']);
+    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'swap', 'fps', 'quit']);
+    expect(itemAction(s, 'fps', c)).toEqual({ ui: 'toggleFps' });
     expect(itemAction(s, 'controls', c)).toEqual({ ui: 'controls' });
     expect(itemAction(s, 'touch', c)).toEqual({ ui: 'toggleTouch' });
     expect(itemAction(s, 'swap', c)).toEqual({ ui: 'toggleSwap' });
@@ -220,6 +221,12 @@ describe('screen models drive the state machine', () => {
     expect(label()).toBe('SWAP ENGINE BUTTONS: ON');
     expect(label(true)).toBe('SWAP ENGINE BUTTONS: ON');
     expect(label(false)).toBe('SWAP ENGINE BUTTONS: OFF');
+  });
+
+  it('pause menu FPS COUNTER item reflects the setting (default OFF)', () => {
+    const label = (on?: boolean) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx(on === undefined ? {} : { showFps: on })).items.find((i) => i.id === 'fps')!.label;
+    expect(label()).toBe('FPS COUNTER: OFF');
+    expect(label(true)).toBe('FPS COUNTER: ON');
   });
 
   it('pause menu reflects the touch-controls preference', () => {

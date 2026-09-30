@@ -8,6 +8,7 @@
 import type { InputFrame, Vec2 } from '../../src/contracts';
 import type { LevelSession } from '../../src/game/session';
 import { castSolid } from '../../src/physics/tags';
+import { levelReferenceGravity } from '../../src/physics/tuning';
 import { mToPx, vMToPx, vPxToM } from '../../src/physics/units';
 import { HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS } from '../../src/levels/hollow';
 import { frame, type Pilot } from './s7Harness';
@@ -210,7 +211,7 @@ export function steer(s: LevelSession, f: InputFrame, vd: Vec2, maxTilt = 0.8, g
   const u = err * 4 - st.angularVel * 1.2;
   f.rotateCW = u > 0.15;
   f.rotateCCW = u < -0.15;
-  const thrustAcc = s.tuning.harpoonThrust.thrust * Math.max(1.6, Math.hypot(s.spec.gravity.x, s.spec.gravity.y));
+  const thrustAcc = s.tuning.harpoonThrust.thrust * levelReferenceGravity(s.spec, s.tuning);
   const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
   const along = req.x * upNow.x + req.y * upNow.y;
   // on the ground a pod cannot pivot: lift off straight first
@@ -543,8 +544,10 @@ export interface DashPilotOptions {
  */
 export function landerDashPilot(o: DashPilotOptions): Pilot {
   const vclimb = o.vclimb ?? 110;
-  const xGain = o.xGain ?? 0.7;
-  const vxMax = o.vxMax ?? 100;
+  // Feel pass (gravity.scale 0.65): softer cross-track gains (were 0.7 / 100). Under the lighter
+  // gravity the old ones over-corrected on the S-bends at a 125 px/s climb and hit the wall.
+  const xGain = o.xGain ?? 0.5;
+  const vxMax = o.vxMax ?? 70;
   const maxTilt = o.maxTilt ?? 0.6;
   const kp = o.kp ?? 2;
   const kd = o.kd ?? 1;
@@ -567,11 +570,12 @@ export function landerDashPilot(o: DashPilotOptions): Pilot {
     const look = st.pos.y - Math.max(40, -st.vel.y * 0.6);
     const tx = xAt(look);
     const vd = { x: Math.max(-vxMax, Math.min(vxMax, (tx - st.pos.x) * xGain)), y: -vclimb };
-    const g = s.spec.gravity; // m/s²
+    // felt gravity (GRAVITY_TUNING.scale applied); engines are T/W against the felt reference gravity
+    const g = s.vessel.hooks.gravityAt?.(st.pos) ?? s.spec.gravity; // m/s²
     const gain = 1.8;
     const req = { x: ((vd.x - st.vel.x) * gain) / 30 - g.x, y: ((vd.y - st.vel.y) * gain) / 30 - g.y };
     const tilt = Math.max(-maxTilt, Math.min(maxTilt, Math.atan2(req.x, -req.y)));
-    const both = 2 * s.tuning.lander.thrust * Math.max(1.6, Math.hypot(g.x, g.y));
+    const both = 2 * s.tuning.lander.thrust * levelReferenceGravity(s.spec, s.tuning);
     const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
     const along = Math.max(0, req.x * upNow.x + req.y * upNow.y);
     const duty = Math.min(1, along / both);

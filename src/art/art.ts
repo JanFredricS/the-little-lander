@@ -149,15 +149,20 @@ export function createArt(opts: CreateArtOptions = {}): Art {
       let b = backdrops.get(theme);
       if (!b) {
         const pal = PALETTES[theme] ?? PALETTES.hangar;
-        b = generateBackdrop(PALETTES[theme] ? theme : 'hangar').map((l) => ({
-          canvas: pixToCanvas(l.pix, pal, factory),
-          width: l.pix.w,
-          height: l.pix.h,
-          parallax: l.parallax,
-          offsetY: l.offsetY,
-          repeatX: l.repeatX,
-          repeatY: l.repeatY,
-        }));
+        b = generateBackdrop(PALETTES[theme] ? theme : 'hangar').map((l) => {
+          // perf (fill rate on phones): a strip that does not repeat vertically is cropped to its
+          // non-transparent rows, so the GPU does not blend hundreds of empty rows every frame
+          const c = l.repeatY ? { pix: l.pix, top: 0 } : cropRows(l.pix);
+          return {
+            canvas: pixToCanvas(c.pix, pal, factory),
+            width: c.pix.w,
+            height: c.pix.h,
+            parallax: l.parallax,
+            offsetY: l.offsetY + c.top,
+            repeatX: l.repeatX,
+            repeatY: l.repeatY,
+          };
+        });
         backdrops.set(theme, b);
       }
       return b;
@@ -205,4 +210,26 @@ export function createArt(opts: CreateArtOptions = {}): Art {
 /** Theme-independent craft sprites (vessels, flames/fx, gameplay objects). */
 function isCraft(name: string): boolean {
   return name.startsWith('vessel.') || name.startsWith('fx.') || name.startsWith('obj.');
+}
+
+/**
+ * `pix` without its fully transparent top / bottom rows (+ how many rows were
+ * cut from the top). Returned as-is when there is little to gain.
+ */
+export function cropRows(pix: Pix): { pix: Pix; top: number } {
+  const { w, h, data } = pix;
+  const rowEmpty = (y: number): boolean => {
+    for (let i = y * w, e = i + w; i < e; i++) if (data[i]) return false;
+    return true;
+  };
+  let y0 = 0;
+  while (y0 < h && rowEmpty(y0)) y0++;
+  if (y0 === h) return { pix, top: 0 }; // fully transparent: leave it alone
+  let y1 = h - 1;
+  while (y1 > y0 && rowEmpty(y1)) y1--;
+  const rows = y1 - y0 + 1;
+  if (h - rows < 8) return { pix, top: 0 };
+  const out = new Pix(w, rows);
+  out.data.set(data.subarray(y0 * w, (y1 + 1) * w));
+  return { pix: out, top: y0 };
 }

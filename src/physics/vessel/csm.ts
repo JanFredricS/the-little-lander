@@ -1,7 +1,7 @@
 /**
  * CSM mode: lander + command/service module stack. One big main engine along
  * the body axis (thrust input) and torque rotation (rotateCW / rotateCCW).
- * Thrust-to-weight ~1.8: holding thrust runs away, so the skill is pulsing.
+ * Thrust-to-weight ~2.4: holding thrust runs away, so the skill is pulsing.
  */
 
 import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../contracts';

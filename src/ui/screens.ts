@@ -16,6 +16,8 @@ export interface ScreenContext {
   touchPref: TouchPref;
   /** S9: touch engine buttons swapped (Settings.swapEngineButtons; default true). */
   swapEngines?: boolean;
+  /** FPS counter shown (Settings.showFps; default false). */
+  showFps?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -49,7 +51,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -65,6 +67,10 @@ function levelTitle(ctx: ScreenContext, id: LevelId): string {
 
 function touchLabel(p: TouchPref): string {
   return `TOUCH CONTROLS: ${p.toUpperCase()}`;
+}
+
+export function fpsLabel(on: boolean): string {
+  return `FPS COUNTER: ${on ? 'ON' : 'OFF'}`;
 }
 
 export function swapLabel(swap: boolean): string {
@@ -137,9 +143,10 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
+          { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },
           { id: 'quit', label: 'QUIT TO LEVELS', enabled: true },
         ],
-        footer: 'ESC RESUME',
+        footer: 'ESC RESUME · BKSP RESTART',
       };
     case 'results': {
       const o = state.outcome;
@@ -158,7 +165,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           heading: 'LEVEL COMPLETE',
           info: [levelTitle(ctx, state.levelId), `TIME  ${formatTime(o.timeSec)}`, `ORBS  ${o.orbs}`, `HULL  ${hull}`, `SCORE ${o.score}`],
           items,
-          footer: 'ENTER SELECT · ESC LEVELS',
+          footer: 'ENTER SELECT · BKSP RETRY · ESC LEVELS',
         };
       }
       return {
@@ -171,7 +178,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'retry', label: 'RETRY', enabled: true },
           { id: 'levels', label: 'LEVELS', enabled: true },
         ],
-        footer: 'ENTER RETRY · ESC LEVELS',
+        footer: 'ENTER / BKSP RETRY · ESC LEVELS',
       };
     }
   }
@@ -197,6 +204,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'controls') return { ui: 'controls' };
       if (id === 'touch') return { ui: 'toggleTouch' };
       if (id === 'swap') return { ui: 'toggleSwap' };
+      if (id === 'fps') return { ui: 'toggleFps' };
       return { ui: 'none' };
     case 'results': {
       if (id === 'retry') return { type: 'retry' };

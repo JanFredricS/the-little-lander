@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: topLeft / topRight controls). Input: the per-tick InputFrame (pure, device-agnostic data)
+ * FROZEN (S0; S9 amendment: topLeft / topRight controls; restart amendment: restart control). Input: the per-tick InputFrame (pure, device-agnostic data)
  * and the InputSource plug-in interface that keyboard, mouse/pointer and
  * on-screen touch controls all implement. The game is first-class on BOTH
  * desktop and mobile browsers: every control must be reachable by touch.
@@ -13,7 +13,7 @@
  *    least one tick after any press, even a press+release shorter than a
  *    tick. (Pulsed burns are the core CSM skill: a tap must always burn one
  *    tick.)
- *  - EDGE fields (fire, release, pause) are true on exactly ONE tick per press.
+ *  - EDGE fields (fire, release, pause, restart) are true on exactly ONE tick per press.
  *  - When the loop runs several catch-up steps in one frame, only the first
  *    step sees edges; held state repeats.
  *  - On pause / blur / visibility loss every source is cleared.
@@ -74,6 +74,8 @@ export interface InputFrame {
   reelOut: boolean;
   /** EDGE. Toggle pause (handled by the shell, not by controllers). */
   pause: boolean;
+  /** EDGE. Restart the current level (handled by the shell, not by controllers). */
+  restart: boolean;
 }
 
 /** Semantic digital controls, 1:1 with InputFrame's boolean fields. */
@@ -89,10 +91,11 @@ export type ControlId =
   | 'release'
   | 'reelIn'
   | 'reelOut'
-  | 'pause';
+  | 'pause'
+  | 'restart';
 
 /** Controls whose InputFrame field is an EDGE (one tick per press). The rest are HELD. */
-export type EdgeControlId = 'fire' | 'release' | 'pause';
+export type EdgeControlId = 'fire' | 'release' | 'pause' | 'restart';
 
 export type ControlFlags = Partial<Record<ControlId, boolean>>;
 

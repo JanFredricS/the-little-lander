@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { STILL_HEIGHT, STILL_WIDTH, THEME_IDS, TILE_SIZE } from '../src/contracts';
 import type { CoreSpriteName, PixelCanvas, RampName, StillId, TileKind } from '../src/contracts';
-import { createArt, placeholderPix, resolveSprite, TILE_VARIANTS } from '../src/art/art';
+import { createArt, cropRows, placeholderPix, resolveSprite, TILE_VARIANTS } from '../src/art/art';
+import { Pix as PixBuf } from '../src/art/core/pix';
 import { generateBackdrop } from '../src/art/backdrops';
 import type { Pix } from '../src/art/core/pix';
 import { mulberry32, seedOf } from '../src/art/core/rng';
@@ -312,5 +313,47 @@ describe('ArtApi', () => {
     const art = createArt({ canvasFactory: factory });
     const t = Object.entries(spriteRegistry()).find(([, e]) => e.themed)!;
     expect(art.getSprite(t[0] as `prop.${string}`, 0, 'caves')).not.toBe(art.getSprite(t[0] as `prop.${string}`, 0, 'hangar'));
+  });
+});
+
+describe('backdrop perf invariants', () => {
+  it('layer 0 of every theme is an opaque, screen-fixed, full-view sky (LevelView skips the solid bg under it)', () => {
+    for (const t of THEME_IDS) {
+      const sky = generateBackdrop(t)[0]!;
+      expect(sky.parallax, t).toBe(0);
+      expect(sky.offsetY, t).toBe(0);
+      expect(sky.pix.w, t).toBeGreaterThanOrEqual(640);
+      expect(sky.pix.h, t).toBeGreaterThanOrEqual(360);
+      expect(sky.pix.data.every((v) => v !== 0), t).toBe(true);
+    }
+  });
+
+  it('cropRows drops empty top/bottom rows and reports the top offset', () => {
+    const p = new PixBuf(4, 40);
+    p.set(1, 12, 3).set(2, 30, 5);
+    const c = cropRows(p);
+    expect(c.top).toBe(12);
+    expect(c.pix.h).toBe(19);
+    expect(c.pix.get(1, 0)).toBe(3);
+    expect(c.pix.get(2, 18)).toBe(5);
+    // little to gain / nothing opaque: unchanged
+    const q = new PixBuf(4, 8).set(0, 2, 1);
+    expect(cropRows(q).pix).toBe(q);
+    const e = new PixBuf(4, 40);
+    expect(cropRows(e)).toEqual({ pix: e, top: 0 });
+  });
+
+  it('non-vertically-repeating layers are served cropped with a matching offsetY', () => {
+    const art = createArt({ canvasFactory: fakeCanvasFactory().factory });
+    const layers = art.getBackdropLayers('islands');
+    const src = generateBackdrop('islands');
+    layers.forEach((l, i) => {
+      const s = src[i]!;
+      if (s.repeatY) return;
+      const c = cropRows(s.pix);
+      expect(l.height).toBe(c.pix.h);
+      expect(l.offsetY).toBe(s.offsetY + c.top);
+    });
+    expect(layers.some((l) => l.height < 360)).toBe(true); // islands' mist band etc. really shrink
   });
 });

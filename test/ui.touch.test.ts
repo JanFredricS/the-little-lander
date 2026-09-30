@@ -57,12 +57,43 @@ describe('touch layout', () => {
     }
   });
 
+  it('system buttons: RESTART top-left, PAUSE top-centre, same size, both tap + flagged system', () => {
+    for (const mode of VESSEL_MODES) {
+      for (const [w, h] of SIZES) {
+        const l = touchLayout(mode, w, h);
+        const restart = l.buttons.find((b) => b.control === 'restart')!;
+        const pause = l.buttons.find((b) => b.control === 'pause')!;
+        expect(restart.kind).toBe('tap');
+        expect(restart.system && pause.system).toBe(true);
+        expect(restart.rect.x).toBeLessThan(40);
+        expect(restart.rect.y).toBeLessThan(40);
+        expect(restart.rect.w).toBe(pause.rect.w);
+        expect(restart.rect.y).toBe(pause.rect.y);
+        expect(l.buttons.filter((b) => b.system).map((b) => b.control).sort()).toEqual(['pause', 'restart']);
+      }
+    }
+  });
+
+  it('tapping RESTART feeds one restart edge through the mapper', () => {
+    const src = new VirtualControlsSource();
+    const mapper = new InputMapper();
+    mapper.add(src);
+    const model = new TouchModel(src);
+    model.setLayout(touchLayout('csm', 844, 390));
+    const p = centre(touchLayout('csm', 844, 390).buttons.find((b) => b.control === 'restart')!.rect);
+    const c: InputSampleContext = { mode: 'csm', vesselWorldPos: null, clientToWorld: (x, y) => ({ x, y }) };
+    expect(model.down(1, p.x, p.y)).toBe(true);
+    model.up(1);
+    expect(mapper.sample(c).restart).toBe(true);
+    expect(mapper.sample(c).restart).toBe(false);
+  });
+
   it('per-mode control sets', () => {
     const ids = (m: (typeof VESSEL_MODES)[number]) => touchLayout(m, 844, 390).buttons.map((b) => b.control).sort();
-    expect(ids('csm')).toEqual(['pause', 'rotateCCW', 'rotateCW', 'thrust']);
-    expect(ids('lander')).toEqual(['engineLeft', 'engineRight', 'pause', 'topLeft', 'topRight']);
-    expect(ids('harpoon')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release']);
-    expect(ids('harpoonThrust')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release', 'rotateCCW', 'rotateCW', 'thrust']);
+    expect(ids('csm')).toEqual(['pause', 'restart', 'rotateCCW', 'rotateCW', 'thrust']);
+    expect(ids('lander')).toEqual(['engineLeft', 'engineRight', 'pause', 'restart', 'topLeft', 'topRight']);
+    expect(ids('harpoon')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release', 'restart']);
+    expect(ids('harpoonThrust')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release', 'restart', 'rotateCCW', 'rotateCW', 'thrust']);
     expect(touchLayout('lander', 844, 390).aimZone).toBeNull();
     expect(touchLayout('harpoon', 844, 390).aimZone).not.toBeNull();
   });
@@ -134,7 +165,7 @@ describe('S9 swapped engine buttons (touch)', () => {
       [false, 'engineLeft', 'engineRight', 'topLeft'],
     ] as const) {
       const l = touchLayout('lander', 844, 390, { swapEngines: swap });
-      const bl = l.buttons.filter((b) => b.control !== 'pause').sort((a, b) => a.rect.x - b.rect.x || b.rect.y - a.rect.y);
+      const bl = l.buttons.filter((b) => !b.system).sort((a, b) => a.rect.x - b.rect.x || b.rect.y - a.rect.y);
       const bottomLeft = centre(bl[0]!.rect);
       const topLeftBtn = centre(bl[1]!.rect);
       const bottomRight = centre(l.buttons.find((b) => b.control === right)!.rect);

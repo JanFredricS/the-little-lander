@@ -4,6 +4,7 @@
  *
  * Keyboard: ↑/W/← prev · ↓/S/→ next · Enter/Space/NumpadEnter activate ·
  * Escape/Backspace back · Digit1..9 jump-and-activate (level select).
+ * (In a level - pause / results - GameUi.shortcut claims Backspace first: RESTART.)
  * Mouse: hover focuses, click activates. Touch: tap activates, vertical drag
  * scrolls long lists.
  */

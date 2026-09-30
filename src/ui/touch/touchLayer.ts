@@ -4,7 +4,9 @@
  * touchLayout(), never virtual px, so targets stay ≥ 48 CSS px at any scale.
  * Pointer bookkeeping is TouchModel; this file only wires DOM events and
  * draws the pixel-styled buttons (semi-transparent, chunky 3px border,
- * stepped corners, bitmap-font labels).
+ * stepped corners, bitmap-font labels). System buttons (pause / restart)
+ * are near-opaque with an amber border + dark inner ring so they stay
+ * readable over both a dark sky and bright terrain.
  */
 
 import type { VesselMode } from '../../contracts';
@@ -21,6 +23,9 @@ const CSS = `
   clip-path:polygon(0 6px,6px 6px,6px 0,calc(100% - 6px) 0,calc(100% - 6px) 6px,100% 6px,100% calc(100% - 6px),calc(100% - 6px) calc(100% - 6px),calc(100% - 6px) 100%,6px 100%,6px calc(100% - 6px),0 calc(100% - 6px));
   box-shadow:inset -3px -3px 0 rgba(0,0,0,.35),inset 3px 3px 0 rgba(255,255,255,.08)}
 .tll-btn.down{background:rgba(240,176,48,.45);border-color:rgba(255,240,192,.9);box-shadow:inset 3px 3px 0 rgba(0,0,0,.35)}
+.tll-btn.tll-sys{background:rgba(11,13,20,.86);border-color:#f0b030;box-shadow:inset 0 0 0 2px #05060a,inset -3px -3px 0 2px rgba(0,0,0,.45),inset 3px 3px 0 2px rgba(255,240,192,.12)}
+.tll-btn.tll-sys canvas{opacity:1}
+.tll-btn.tll-sys.down{background:rgba(240,176,48,.9);border-color:#fff0c0;box-shadow:inset 0 0 0 2px #05060a,inset 3px 3px 0 2px rgba(0,0,0,.35)}
 .tll-btn canvas,.tll-aim canvas{image-rendering:pixelated;image-rendering:crisp-edges;pointer-events:none;opacity:.9}
 .tll-aim{border:2px dashed rgba(216,220,232,.18);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px}
 .tll-stick{position:absolute;pointer-events:none;border:3px solid rgba(240,176,48,.7);box-sizing:border-box}
@@ -142,7 +147,7 @@ export class TouchLayer {
     }
     for (const b of this.layout.buttons) {
       const d = document.createElement('div');
-      d.className = 'tll-btn';
+      d.className = b.system ? 'tll-btn tll-sys' : 'tll-btn';
       d.dataset.control = b.control;
       d.setAttribute('role', 'button');
       d.setAttribute('aria-label', b.control);
@@ -205,25 +210,35 @@ export class TouchLayer {
     e.preventDefault();
   };
 
+  /**
+   * Reflect the model in the DOM. Runs on every pointer event (up to 120 Hz per
+   * finger on iPhones), so it only WRITES what changed: an unchanged write still
+   * dirties style/layout, and the next event's getBoundingClientRect would then
+   * force a synchronous layout.
+   */
   private syncPressed(): void {
     const held = this.model.heldButtons();
-    for (const [id, el] of this.btnEls) el.classList.toggle('down', held.has(id));
+    for (const [id, el] of this.btnEls) {
+      const down = held.has(id);
+      if (el.classList.contains('down') !== down) el.classList.toggle('down', down);
+    }
     const drag = this.model.aimDrag();
     if (this.stick && this.knob) {
-      const show = !!drag;
-      this.stick.style.display = show ? 'block' : 'none';
-      this.knob.style.display = show ? 'block' : 'none';
+      const display = drag ? 'block' : 'none';
+      setStyle(this.stick, 'display', display);
+      setStyle(this.knob, 'display', display);
       if (drag) {
         const R = 36;
-        this.stick.style.left = `${drag.sx - R}px`;
-        this.stick.style.top = `${drag.sy - R}px`;
-        this.stick.style.width = this.stick.style.height = `${R * 2}px`;
+        setStyle(this.stick, 'left', `${drag.sx - R}px`);
+        setStyle(this.stick, 'top', `${drag.sy - R}px`);
+        setStyle(this.stick, 'width', `${R * 2}px`);
+        setStyle(this.stick, 'height', `${R * 2}px`);
         const dx = drag.x - drag.sx;
         const dy = drag.y - drag.sy;
         const len = Math.hypot(dx, dy);
         const k = len > R ? R / len : 1;
-        this.knob.style.left = `${drag.sx + dx * k}px`;
-        this.knob.style.top = `${drag.sy + dy * k}px`;
+        setStyle(this.knob, 'left', `${drag.sx + dx * k}px`);
+        setStyle(this.knob, 'top', `${drag.sy + dy * k}px`);
       }
     }
   }
@@ -243,4 +258,9 @@ export function detectTouch(win: Window = window): boolean {
   } catch {
     return false;
   }
+}
+
+/** Write an inline style property only when it changes. */
+function setStyle(el: HTMLElement, prop: 'display' | 'left' | 'top' | 'width' | 'height', value: string): void {
+  if (el.style[prop] !== value) el.style[prop] = value;
 }

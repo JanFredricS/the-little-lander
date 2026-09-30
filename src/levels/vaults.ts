@@ -247,5 +247,9 @@ export const vaults: LevelSpec = {
     'harpoon.crashSpeed': 240,
     // S1 default (150) snaps a rope on any slack->taut catch above ~75 px/s (one-step force spike)
     'harpoon.ropeBreakAccel': 600,
+    // feel pass opt-out: pure rope swinging, no thrusters, so the lighter
+    // gravity (gravity.scale 0.65, a thruster-feel change) would only make
+    // every swing slower and floatier; the Vaults keep their designed pull
+    'gravity.scale': 1,
   },
 };

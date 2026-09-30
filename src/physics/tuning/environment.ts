@@ -65,6 +65,18 @@ export const BEACON_TUNING = {
 };
 
 export const GRAVITY_TUNING = {
+  /**
+   * Feel pass: every level / ramp / zone gravity the world applies is the
+   * designed LevelSpec value (m/s²) × scale, so falls build speed slower and
+   * the player has longer to react. Engine `thrust` multiples are T/W
+   * against this FELT gravity (levelReferenceGravity), and were raised in
+   * the same pass (csm 1.8 -> 2.4, lander 0.8 -> 0.9 per engine and top
+   * thrusters 0.6 -> 0.7, harpoonThrust 1.5 -> 2.3) so short pulses with
+   * longer coasts redirect.
+   * Wind gusts scale with it too (they were balanced against gravity/thrust).
+   * 1 = the designed pull (pre-feel-pass gravity).
+   */
+  scale: 0.65,
   /** Min change of the vessel's effective gravity (m/s²) that emits gravityChanged. */
   eventThreshold: 0.3,
 };

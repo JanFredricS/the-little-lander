@@ -26,6 +26,9 @@
  *    tilted sideways accel to ~70 % of S8's: speed builds slower and is
  *    easier to arrest. Autopilot: 108 s / 57 % fuel -> 112 s / 82 % fuel.
  *    (0.72 thrust was too weak to climb the lift shaft comfortably.)
+ *    Feel pass: the world applies gravity × gravity.scale (0.65) and thrust
+ *    is T/W against that felt gravity; lander.thrust 0.75 -> 0.85 (default
+ *    0.9), so one engine still cannot hover. Autopilot: ~120 s / 92 % fuel.
  *  - lander.burnSeconds 110 (default 30): hovering costs ~0.6 %/s, so a
  *    careful 3-minute run ends with fuel to spare; two fuel canisters on top.
  *  - lander.crashSpeed 200 / damageSpeed 95 (defaults 150 / 75): scrapes and
@@ -207,7 +210,7 @@ export const hangarRun: LevelSpec = {
   objectives: [{ kind: 'reachExit', id: 'dock', exitId: 'exit' }],
   camera: { bias: 'horizontal', lookAhead: 80 },
   physicsOverrides: {
-    'lander.thrust': 0.75,
+    'lander.thrust': 0.85,
     'lander.burnSeconds': 110,
     'lander.crashSpeed': 200,
     'lander.damageSpeed': 95,

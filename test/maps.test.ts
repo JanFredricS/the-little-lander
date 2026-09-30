@@ -87,9 +87,11 @@ describe('maps 1-4: specs', () => {
 
   it('map 1 stays gentle (S9): low spin-grav and softer lander thrust, so speed builds slowly', () => {
     const s = spec('hangarRun');
-    const g = Math.hypot(s.gravity.x, s.gravity.y) / 9.8;
-    expect(g).toBeGreaterThanOrEqual(0.28);
-    expect(g).toBeLessThanOrEqual(0.32);
+    const design = Math.hypot(s.gravity.x, s.gravity.y) / 9.8;
+    expect(design).toBeGreaterThanOrEqual(0.28);
+    expect(design).toBeLessThanOrEqual(0.32);
+    // the world applies the felt gravity (feel pass: design × gravity.scale); thrust is T/W against it
+    const g = design * resolveTuning(s.physicsOverrides).gravity.scale;
     const t = resolveTuning(s.physicsOverrides).lander;
     expect(t.thrust).toBeLessThan(resolveTuning().lander.thrust);
     // both engines must still climb with a real margin (lift shaft), one engine must not hover alone
@@ -162,7 +164,7 @@ describe('maps 1-4: objectives are reachable', () => {
     expect(siteRidesIsland(specSite as never, isl)).toBe(true);
     const session = await LevelSession.create(s);
     const site = session.env.beacons.sites.find((x) => x.entity.id === 'site4')!;
-    const idle = { thrust: false, engineLeft: false, engineRight: false, topLeft: false, topRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false };
+    const idle = { thrust: false, engineLeft: false, engineRight: false, topLeft: false, topRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false, restart: false };
     const extremes: Vec2[] = [];
     for (let k = 0; k < Math.round((isl.periodSec / 2) * 60); k++) {
       // hover in place (bang-bang on vertical speed) so the session outlives half a period

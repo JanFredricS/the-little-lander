@@ -32,7 +32,7 @@ import { createLevelSystems, type LevelSystems } from '../levels/systems';
 import { FlightEnvironment } from '../physics/env/environment';
 import { LevelRuntime } from '../levels/runtime';
 import { TriggerLatch } from '../physics/env/triggers';
-import { resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
+import { feltGravity, resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
 import { createVessel, type FlightVessel } from '../physics/vessel';
 import { Camera } from '../shell/camera';
 
@@ -47,7 +47,8 @@ export class LevelSession {
   private readonly listeners: GameEventSink[] = [];
 
   static async create(spec: LevelSpec): Promise<LevelSession> {
-    const physics = await PhysicsWorld.create({ gravity: spec.gravity, hitSpeedThreshold: 0.5 });
+    // felt gravity (GRAVITY_TUNING.scale); GravityField keeps it current from the first step on
+    const physics = await PhysicsWorld.create({ gravity: feltGravity(spec.gravity, resolveTuning(spec.physicsOverrides).gravity.scale), hitSpeedThreshold: 0.5 });
     return new LevelSession(spec, physics);
   }
 

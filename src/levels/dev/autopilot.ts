@@ -18,6 +18,7 @@ import { emptyFrame } from '../../shell/input';
 import type { InputFrame, Vec2 } from '../../contracts';
 import type { LevelSession } from '../../game/session';
 import { mToPx, pxToM } from '../../physics/units';
+import { levelReferenceGravity } from '../../physics/tuning';
 import { brakeBoostMultiplier } from '../../physics/vessel/brakeAssist';
 
 export interface RouteNode {
@@ -114,7 +115,8 @@ export class Autopilot {
     const body = vessel.body;
     const dryMass = s.physics.getMass(body);
     const massRatio = dryMass / Math.max(1e-6, vessel.totalMass());
-    const refG = mToPx(Math.max(1.6, Math.hypot(s.spec.gravity.x, s.spec.gravity.y)));
+    // engines are T/W multiples of the level's felt reference gravity (same helper the vessels use)
+    const refG = mToPx(levelReferenceGravity(s.spec, t));
 
     // ---- desired velocity / acceleration
     const cruise = node.speed ?? 140;

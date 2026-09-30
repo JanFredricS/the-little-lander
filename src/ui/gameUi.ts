@@ -12,10 +12,13 @@
  */
 
 import { Container } from 'pixi.js';
+import { VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
 import { frameHasInput } from './controlsHelp';
+import { FpsMeter, fpsText } from './fpsMeter';
+import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
 import { readSaveView, type SaveView } from './levelSelect';
@@ -47,6 +50,10 @@ export interface GameUiOptions {
   swapEngineButtons?: boolean;
   /** Persist a changed swap setting. */
   onSwapEngineButtonsChange?(swap: boolean): void;
+  /** Initial FPS-counter setting (SaveState.settings.showFps; default false). */
+  showFps?: boolean;
+  /** Persist a changed FPS-counter setting. */
+  onShowFpsChange?(on: boolean): void;
   /** Story flow hooks for the title CONTINUE / results NEXT items (S3). */
   story?(): StoryContext;
   /** Title CONTINUE activated: the App resumes the story (cutscene + level). */
@@ -76,6 +83,11 @@ export class GameUi {
   private touchDetected: boolean;
   private touchPref: TouchPref;
   private swapEngines: boolean;
+  private showFps: boolean;
+  private readonly fpsMeter = new FpsMeter();
+  private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
+  /** Cached HUD left inset (virtual px) + when it was measured: measuring reads DOM layout, so not every frame. */
+  private insetCache = { at: -Infinity, value: 0 };
   private lastHull: number | null = null;
   private press: { id: number; x: number; y: number; index: number; dragged: boolean; scrollAnchor: number } | null = null;
   private readonly unbind: (() => void)[] = [];
@@ -84,12 +96,14 @@ export class GameUi {
 
   constructor(private readonly o: GameUiOptions) {
     this.screenView = new ScreenView(o.art);
-    this.layer.addChild(this.hudView.root, this.screenView.root);
+    this.layer.addChild(this.hudView.root, this.screenView.root, this.fpsLabel);
     o.pixi.app.stage.addChild(this.layer);
     this.hudView.root.visible = false;
     this.touchDetected = detectTouch();
     this.touchPref = o.touchPref ?? 'auto';
     this.swapEngines = o.swapEngineButtons ?? true;
+    this.showFps = o.showFps ?? false;
+    this.fpsLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
     this.rotate = new RotateHint(o.host, () => this.touchDetected);
@@ -179,6 +193,7 @@ export class GameUi {
       showDebug: !!this.o.showDebugLevels,
       touchPref: this.touchPref,
       swapEngines: this.swapEngines,
+      showFps: this.showFps,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -208,6 +223,7 @@ export class GameUi {
     this.screenView.root.visible = !!this.model && !(this.state.id === 'paused' && this.pauseHelp);
     const showTouch = playing && touchVisible(this.touchPref, this.touchDetected);
     this.touch.show(showTouch ? this.hud.mode : null);
+    this.insetCache.at = -Infinity; // touch layout may have changed: re-measure the HUD inset
     // Tint first: the help card below is drawn (and cached) with the current theme border.
     const tint = themeTint(this.o.art, this.spec?.themeId ?? null);
     this.hudView.border = tint;
@@ -271,9 +287,34 @@ export class GameUi {
     this.syncLayers();
   }
 
+  /** FPS counter visible (pause-menu toggle). */
+  get fpsVisible(): boolean {
+    return this.showFps;
+  }
+
+  /**
+   * One animation frame's timing for the FPS counter: rAF time + CPU ms of the
+   * frame's work (the App measures steps + render). Cheap when the counter is off.
+   */
+  noteFrameTiming(nowMs: number, workMs: number): void {
+    if (!this.showFps) return;
+    this.fpsMeter.frame(nowMs, workMs);
+    this.fpsLabel.setText(fpsText(this.fpsMeter.reading)); // no-op unless a new reading was published
+  }
+
   render(nowMs: number): void {
     this.screenView.cssPerVirtual = this.cssPerVirtual();
-    if (this.hudView.root.visible) this.hudView.render(this.hud, nowMs);
+    if (this.hudView.root.visible) {
+      // DOM layout reads are cached (4 Hz): per-frame getBoundingClientRect can force a synchronous layout on iOS
+      if (nowMs - this.insetCache.at > 250 || nowMs < this.insetCache.at) this.insetCache = { at: nowMs, value: this.restartInset() };
+      this.hudView.leftInset = this.insetCache.value;
+      this.hudView.render(this.hud, nowMs);
+    }
+    if (this.showFps) {
+      // top-right corner; left of the mode badge while the HUD is up
+      const right = this.hudView.root.visible ? this.hudView.badgeLeft - 4 : VIEW_WIDTH - 4;
+      this.fpsLabel.position.set(Math.round(right - this.fpsLabel.width), 5);
+    }
     if (this.screenView.root.visible && this.model) {
       this.screenView.render(this.menu, nowMs);
       const scrolled = scrollToFocus(this.menu, this.screenView.visibleRows());
@@ -281,6 +322,20 @@ export class GameUi {
         this.menu = scrolled; // redraw now so what is hit-testable is what is on screen
         this.screenView.render(this.menu, nowMs);
       }
+    }
+  }
+
+  /** Virtual px the HUD fuel panel must shift right to clear the touch RESTART button (top-left), 0 when hidden. */
+  private restartInset(): number {
+    const b = this.touch.isVisible ? this.touch.getLayout()?.buttons.find((x) => x.control === 'restart') : undefined;
+    if (!b) return 0;
+    try {
+      const host = this.o.host.getBoundingClientRect();
+      const v = this.o.pixi.clientToView(host.left + b.rect.x + b.rect.w, host.top + b.rect.y + b.rect.h);
+      if (v.y <= 0 || v.x <= 0) return 0; // the button sits in the letterbox, clear of the view
+      return Math.max(0, Math.min(200, Math.ceil(v.x) + 2));
+    } catch {
+      return 0;
     }
   }
 
@@ -334,6 +389,14 @@ export class GameUi {
       this.o.onSwapEngineButtonsChange?.(this.swapEngines);
       this.refreshModel(false);
       this.syncLayers();
+    } else if (a.ui === 'toggleFps') {
+      this.showFps = !this.showFps;
+      this.fpsLabel.visible = this.showFps;
+      // no stale reading (or a first window spanning the time it was off) when it comes back
+      this.fpsMeter.reset();
+      this.fpsLabel.setText(this.showFps ? fpsText(null) : '');
+      this.o.onShowFpsChange?.(this.showFps);
+      this.refreshModel(false);
     }
   }
 
@@ -367,11 +430,15 @@ export class GameUi {
     this.apply(menuCommand(this.menu, cmd));
   }
 
-  /** Letter shortcuts: pause P resume · R retry · Q quit; results R retry. */
+  /**
+   * Letter shortcuts: pause P resume · R retry · Q quit; results R retry.
+   * Backspace = RESTART everywhere in a level (flight, pause, results) - the
+   * same key as in flight (src/shell/input.ts), so it is not menu "back" here.
+   */
   private shortcut(code: string): boolean {
     const id = this.state.id;
     if (id === 'paused' && code === 'KeyP') this.o.dispatch({ type: 'resume' });
-    else if ((id === 'paused' || id === 'results') && code === 'KeyR') this.o.dispatch({ type: 'retry' });
+    else if ((id === 'paused' || id === 'results') && (code === 'KeyR' || code === 'Backspace')) this.o.dispatch({ type: 'retry' });
     else if (id === 'paused' && code === 'KeyQ') this.o.dispatch({ type: 'quit' });
     else return false;
     return true;

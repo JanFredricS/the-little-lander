@@ -143,6 +143,7 @@ vi.mock('../src/ui/gameUi', async () => {
       noteFrame() {}
       tick() {}
       render() {}
+      noteFrameTiming() {}
       destroy() {}
     },
   };
@@ -187,10 +188,12 @@ vi.mock('../src/shell/input', async (importOriginal) => {
       const f = h.pilot(h.session, h.tick++);
       return {
         down: { thrust: f.thrust, engineLeft: f.engineLeft, engineRight: f.engineRight, rotateCW: f.rotateCW, rotateCCW: f.rotateCCW, reelIn: f.reelIn, reelOut: f.reelOut },
-        pressed: { fire: f.fire, release: f.release, pause: f.pause },
+        pressed: { fire: f.fire, release: f.release, pause: f.pause, restart: f.restart },
         aim: f.aim.x !== 0 || f.aim.y !== 0 ? { dir: f.aim, target: f.aimTarget } : null,
       };
     }
+    /** The pilots emit physical engines: the swapped-keys setting does not apply to them. */
+    setSwapEngines(_swap: boolean) {}
     clear() {}
     dispose() {}
   }
@@ -350,7 +353,9 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
 
   it('a crash keeps the wreck on screen for CRASH_RESULTS_DELAY_SEC before GAME OVER', { timeout: 120_000 }, async () => {
     const { CRASH_RESULTS_DELAY_SEC } = await import('../src/app');
-    // full thrust into the hangar ceiling: a guaranteed hard hit
+    // full thrust into the hangar ceiling: a guaranteed hard hit (the crash threshold is lowered
+    // here so the test does not hang on map 1's climb tuning — the feel pass arrives at ~195 px/s)
+    h.patch = (spec) => (spec.id === 'hangarRun' ? { ...spec, physicsOverrides: { ...spec.physicsOverrides, 'lander.crashSpeed': 120 } } : spec);
     h.pilotOverride = () => () => ({ ...emptyFrame(), thrust: true });
     const r = await playStory((run) => run.app.state.id === 'results');
     const s = r.app.state;
@@ -359,6 +364,22 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     // the level stays on `playing` (wreck + explosion visible) for the whole hold, then results
     expect(r.resultsStep - r.crashStep).toBe(Math.round(CRASH_RESULTS_DELAY_SEC / FIXED_DT));
     expect(r.screens.filter((x) => x.startsWith('results:'))).toEqual(['results:hangarRun']);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
+  it('RESTART during the crash hold starts the level again at once (no GAME OVER first)', { timeout: 120_000 }, async () => {
+    h.patch = (spec) => (spec.id === 'hangarRun' ? { ...spec, physicsOverrides: { ...spec.physicsOverrides, 'lander.crashSpeed': 120 } } : spec);
+    let restartAt = -1;
+    h.pilotOverride = () => (s) => {
+      if (!s.outcome) return { ...emptyFrame(), thrust: true };
+      if (restartAt < 0) restartAt = h.steps;
+      return { ...emptyFrame(), restart: true };
+    };
+    const r = await playStory(() => h.levelsStarted.filter((id) => id === 'hangarRun').length >= 2);
+    expect(restartAt).toBeGreaterThanOrEqual(0);
+    expect(r.screens.some((x) => x.startsWith('results:'))).toBe(false);
+    expect(r.app.state).toMatchObject({ id: 'playing', levelId: 'hangarRun' });
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
   });

@@ -16,8 +16,12 @@ export const CSM_TUNING = {
   density: 4,
   friction: 0.7,
   restitution: 0.05,
-  /** Main thrust as a multiple of the dry stack's weight at reference gravity (1 = hover). ~1.8 → pulsing is mandatory. */
-  thrust: 1.8,
+  /**
+   * Main thrust as a multiple of the dry stack's weight at reference gravity (1 = hover).
+   * Feel pass: 1.8 -> 2.4 (with gravity.scale 0.65): hover duty ~42 % (was 56 %),
+   * so short taps with longer coasts hold / redirect the stack; still pulse-only.
+   */
+  thrust: 2.4,
   /** Angular acceleration from rotate input (rad/s², dry stack). */
   rotateAccel: 7,
   angularDamping: 3,

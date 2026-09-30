@@ -59,14 +59,20 @@ export class LevelView {
     feel: FeelOptions = {},
   ) {
     const spec = session.spec;
+    const layers = art.getBackdropLayers(spec.themeId);
     const bg = new Graphics().rect(0, 0, VIEW_WIDTH, VIEW_HEIGHT).fill(art.palettes[spec.themeId].background);
+    // perf: the screen-fixed sky (layer 0, opaque by construction - see test/art.test.ts) covers the
+    // whole view, so the solid background under it would be a full-screen fill nobody sees
+    bg.visible = !(layers[0] && coversView(layers[0]));
     this.root.addChild(bg);
-    for (const layer of art.getBackdropLayers(spec.themeId)) {
+    for (const layer of layers) {
       const texture = Texture.from(layer.canvas as HTMLCanvasElement);
-      const view =
-        layer.repeatX || layer.repeatY
-          ? new TilingSprite({ texture, width: layer.repeatX ? VIEW_WIDTH : layer.width, height: layer.repeatY ? VIEW_HEIGHT : layer.height })
-          : new Sprite(texture);
+      // A screen-fixed layer never scrolls: a plain Sprite draws the same pixels as a TilingSprite
+      // but batches with the other sprites (no tiling shader / batch break).
+      const tiling = (layer.repeatX || layer.repeatY) && !(layer.parallax === 0 && coversView(layer));
+      const view = tiling
+        ? new TilingSprite({ texture, width: layer.repeatX ? VIEW_WIDTH : layer.width, height: layer.repeatY ? VIEW_HEIGHT : layer.height })
+        : new Sprite(texture);
       this.backdrop.push({ layer, view });
       this.root.addChild(view);
     }
@@ -212,6 +218,11 @@ export class LevelView {
     }
     return c;
   }
+}
+
+/** A layer whose texture spans the whole virtual view at parallax 0 (the sky). */
+function coversView(l: BackdropLayer): boolean {
+  return l.parallax === 0 && l.offsetY <= 0 && l.width >= VIEW_WIDTH && l.offsetY + l.height >= VIEW_HEIGHT;
 }
 
 /** ?telemetry in the page URL (browser only). */

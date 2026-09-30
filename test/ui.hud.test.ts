@@ -207,7 +207,10 @@ describe('controls help', () => {
     expect(helpCard('lander', false).lines.join(' ')).toMatch(/E \/ O\s+TOP RIGHT/);
     expect(helpCard('lander', true).lines.join(' ')).toMatch(/TOP L/);
     expect(helpCard('lander', true, true, true).lines.join(' ')).toMatch(/LEFT BUTTON FIRES THE RIGHT ENGINE/);
-    expect(helpCard('lander', false, true, true)).toEqual(helpCard('lander', false, true, false)); // keyboard unaffected
+    // feel pass: the swap applies to the keyboard lander keys too
+    expect(helpCard('lander', false, true, true).lines.join(' ')).toMatch(/A \/ ← \/ J\s+RIGHT ENGINE/);
+    expect(helpCard('lander', false, true, true).lines.join(' ')).toMatch(/Q \/ U\s+TOP RIGHT/);
+    expect(helpCard('csm', false, true, true)).toEqual(helpCard('csm', false, true, false)); // other modes unaffected
     expect(helpCardKey('lander', true, true, 0, true)).not.toBe(helpCardKey('lander', true, true, 0, false));
   });
 

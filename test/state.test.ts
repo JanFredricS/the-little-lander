@@ -31,6 +31,14 @@ describe('screen state machine', () => {
     expect(transition(paused, { type: 'quit' })).toEqual({ id: 'levelSelect' });
   });
 
+  it('restart while playing: retry -> a fresh playing state (never a resume)', () => {
+    const playing: ScreenState = { id: 'playing', levelId: 'testpad' };
+    const restarted = transition(playing, { type: 'retry' });
+    expect(restarted).toEqual(playing);
+    expect(restarted).not.toBe(playing); // App.dispatch ignores same-object transitions
+    expect(isResume(playing, { type: 'retry' }, restarted)).toBe(false);
+  });
+
   it('results: retry, back, continue (with optional cutscene)', () => {
     const results: ScreenState = { id: 'results', levelId: 'hangarRun', outcome: { kind: 'complete', timeSec: 60, orbs: 0, score: 1 } };
     expect(transition(results, { type: 'retry' })).toEqual({ id: 'playing', levelId: 'hangarRun' });

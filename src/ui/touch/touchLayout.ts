@@ -12,7 +12,8 @@
  *                  versa, so the lander tilts toward the button you press.
  *   harpoon        aim drag zone left · FIRE / REL / ▲ IN / ▼ OUT bottom-right
  *   harpoonThrust  harpoon + THRUST (right) + ◀ ▶ rotate (bottom-left)
- *   all modes      II pause, top centre
+ *   all modes      II pause, top centre · ↻ restart level, top-left
+ *                  ("system" buttons: opaque, high-contrast, see touchLayer.ts)
  */
 
 import type { ControlId, Rect, VesselMode } from '../../contracts';
@@ -24,9 +25,11 @@ export interface TouchButton {
   id: string;
   control: ControlId;
   label: string;
-  /** hold: down while touched (sliding across hold buttons moves the press). tap: edge controls (fire/release/pause). */
+  /** hold: down while touched (sliding across hold buttons moves the press). tap: edge controls (fire/release/pause/restart). */
   kind: TouchButtonKind;
   rect: Rect;
+  /** Shell buttons (pause / restart): drawn opaque with a bright border so they read on any background. */
+  system?: boolean;
 }
 
 export interface TouchLayout {
@@ -60,7 +63,10 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
   const { size: s, margin: m, gap: g } = layoutMetrics(w, h);
   const big = Math.round(s * 1.25);
   const pauseSize = Math.max(MIN_TOUCH_CSS, Math.round(s * 0.7));
-  const buttons: TouchButton[] = [{ id: 'pause', control: 'pause', label: 'II', kind: 'tap', rect: r((w - pauseSize) / 2, m, pauseSize, pauseSize) }];
+  const buttons: TouchButton[] = [
+    { id: 'pause', control: 'pause', label: 'II', kind: 'tap', system: true, rect: r((w - pauseSize) / 2, m, pauseSize, pauseSize) },
+    { id: 'restart', control: 'restart', label: '↻', kind: 'tap', system: true, rect: r(m, m, pauseSize, pauseSize) },
+  ];
   let aimZone: Rect | null = null;
 
   const bottom = h - m;

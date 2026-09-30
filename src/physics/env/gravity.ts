@@ -7,11 +7,14 @@
  * m · gravityScale · (zoneGravity − base) each step, so its net gravity is the
  * zone's (REPLACED, per the GravityZone contract). Bodies with gravityScale 0
  * (free goo) stay weightless.
+ *
+ * Every gravity here (level, ramp, zones) is the designed LevelSpec value ×
+ * GRAVITY_TUNING.scale (the feel pass: lighter pull, unscaled engines).
  */
 
 import type { BodyHandle, GameEventSink, GravityZone, LevelSpec, PhysicsApi, Vec2 } from '../../contracts';
 import { polygonContains, rectContains } from '../geom';
-import type { PhysicsTuning } from '../tuning';
+import { feltGravity, type PhysicsTuning } from '../tuning';
 import { mToPx } from '../units';
 
 export class GravityField {
@@ -26,17 +29,23 @@ export class GravityField {
     private readonly events: GameEventSink,
   ) {
     this.zones = spec.zones.filter((z): z is GravityZone => z.kind === 'gravityZone');
-    this.reported = { ...spec.gravity };
+    this.reported = feltGravity(spec.gravity, tuning.scale);
   }
 
-  /** Level gravity at a vessel position (ramp applied) + ramp progress 0..1. */
+  /** A zone's felt gravity (m/s²). */
+  zoneGravity(z: GravityZone): Vec2 {
+    return feltGravity(z.gravity, this.tuning.scale);
+  }
+
+  /** Felt level gravity at a vessel position (ramp applied) + ramp progress 0..1. */
   baseAt(vesselPos: Vec2): { g: Vec2; progress?: number } {
     const r = this.spec.gravityRamp;
-    if (!r) return { g: { ...this.spec.gravity } };
+    const k = this.tuning.scale;
+    if (!r) return { g: feltGravity(this.spec.gravity, k) };
     const p = r.axis === 'x' ? vesselPos.x : vesselPos.y;
     const t = Math.min(1, Math.max(0, (p - r.from) / (r.to - r.from)));
     return {
-      g: { x: r.gravityFrom.x + (r.gravityTo.x - r.gravityFrom.x) * t, y: r.gravityFrom.y + (r.gravityTo.y - r.gravityFrom.y) * t },
+      g: feltGravity({ x: r.gravityFrom.x + (r.gravityTo.x - r.gravityFrom.x) * t, y: r.gravityFrom.y + (r.gravityTo.y - r.gravityFrom.y) * t }, k),
       progress: t,
     };
   }
@@ -47,7 +56,8 @@ export class GravityField {
 
   /** Effective gravity (m/s²) at world px `p` given the vessel position driving the ramp. */
   effectiveAt(p: Vec2, vesselPos: Vec2): Vec2 {
-    return this.zoneAt(p)?.gravity ?? this.baseAt(vesselPos).g;
+    const z = this.zoneAt(p);
+    return z ? this.zoneGravity(z) : this.baseAt(vesselPos).g;
   }
 
   /** Per step, before physics.step(): world gravity + zone corrections + gravityChanged events. */
@@ -65,12 +75,13 @@ export class GravityField {
         const z = this.zoneAt({ x: mToPx(t.x), y: mToPx(t.y) });
         if (!z) continue;
         const m = this.physics.getMass(b) * scale;
-        this.physics.applyForce(b, { x: m * (z.gravity.x - base.g.x), y: m * (z.gravity.y - base.g.y) });
+        const zg = this.zoneGravity(z);
+        this.physics.applyForce(b, { x: m * (zg.x - base.g.x), y: m * (zg.y - base.g.y) });
       }
     }
 
     const zone = this.zoneAt(vesselPos);
-    const g = zone?.gravity ?? base.g;
+    const g = zone ? this.zoneGravity(zone) : base.g;
     const moved = Math.hypot(g.x - this.reported.x, g.y - this.reported.y) >= this.tuning.eventThreshold;
     if (moved || zone?.id !== this.reportedZone) {
       this.reported = { ...g };

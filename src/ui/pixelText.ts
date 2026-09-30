@@ -5,6 +5,8 @@ import { rasterText, type RasterOptions } from './font';
 
 export class PixelText extends Sprite {
   private key = '';
+  private text: string | null = null;
+  private optsKey = '';
 
   constructor(text = '', private opts: RasterOptions = {}) {
     super(Texture.EMPTY);
@@ -12,8 +14,15 @@ export class PixelText extends Sprite {
   }
 
   setText(text: string, opts?: RasterOptions): this {
-    if (opts) this.opts = { ...this.opts, ...opts };
-    const key = `${text}\u0000${JSON.stringify(this.opts)}`;
+    // Hot path (HUD calls this every frame): same text, no new options -> nothing to do, no allocation.
+    const newOpts = opts !== undefined && !sameOpts(this.opts, opts);
+    if (!newOpts && text === this.text) return this;
+    if (newOpts || !this.optsKey) {
+      if (newOpts) this.opts = { ...this.opts, ...opts };
+      this.optsKey = JSON.stringify(this.opts);
+    }
+    this.text = text;
+    const key = `${text}\u0000${this.optsKey}`;
     if (key === this.key) return this;
     this.key = key;
     const old = this.texture;
@@ -27,4 +36,10 @@ export class PixelText extends Sprite {
     super.destroy(options);
     if (t && t !== Texture.EMPTY && !t.destroyed) t.destroy(true);
   }
+}
+
+/** Would merging `next` into `cur` change nothing? (flat option values only) */
+function sameOpts(cur: RasterOptions, next: RasterOptions): boolean {
+  for (const k in next) if ((next as Record<string, unknown>)[k] !== (cur as Record<string, unknown>)[k]) return false;
+  return true;
 }

@@ -186,14 +186,18 @@ describe('csm', () => {
     ok.destroy();
   });
 
-  it('holding thrust runs away (thrust-to-weight ~1.8)', async () => {
+  it('holding thrust runs away (feel pass: thrust-to-weight 2.4)', async () => {
     const { run, g } = await rig('csm');
+    const T = resolveTuning().csm.thrust;
+    expect(T).toBeCloseTo(2.4, 5);
     const s = run(120, input({ thrust: true }));
-    // net up ≈ 0.8 g for 2 s
-    expect(-s.vel.y).toBeGreaterThan(mToPx(0.8 * g * 2) * 0.9);
+    // net up ≈ (T - 1) g = 1.4 g for 2 s (no brake assist: the burn is along the motion)
+    const expected = mToPx((T - 1) * g * 2);
+    expect(-s.vel.y).toBeGreaterThan(expected * 0.9);
+    expect(-s.vel.y).toBeLessThan(expected * 1.05);
   });
 
-  it('a hover by pulsing needs a duty cycle near 1/1.8', async () => {
+  it('a hover by pulsing needs a duty cycle near 1/thrust (feel pass: 1/2.4)', async () => {
     const { tick, vessel } = await rig('csm');
     const target = 0;
     let on = 0;
@@ -207,8 +211,10 @@ describe('csm', () => {
       if (i > 120) maxErr = Math.max(maxErr, Math.abs(s.pos.y - target));
     }
     const duty = on / N;
-    expect(duty).toBeGreaterThan(1 / 1.8 - 0.07);
-    expect(duty).toBeLessThan(1 / 1.8 + 0.07);
+    const T = resolveTuning().csm.thrust;
+    expect(T).toBeGreaterThanOrEqual(2.2); // strong enough that short pulses with long coasts hold a hover
+    expect(duty).toBeGreaterThan(1 / T - 0.07);
+    expect(duty).toBeLessThan(1 / T + 0.07);
     expect(maxErr).toBeLessThan(20);
   });
 
@@ -520,12 +526,39 @@ describe('environment: gravity', () => {
     const zone: ZoneSpec = { kind: 'gravityZone', id: 'up', rect: { x: 0, y: 0, w: 1000, h: 1800 }, gravity: { x: 0, y: -3.2 } };
     const { s, events, run } = await session(lab({ vesselMode: 'harpoon', spawn: { x: 500, y: 1000 }, zones: [zone] }));
     const st = run(30);
-    expect(st.vel.y).toBeLessThan(-mToPx(3.2 * 0.5) * 0.9);
-    expect(ofType(events, 'gravityChanged')[0]?.gravity.y).toBeCloseTo(-3.2, 5);
+    // felt gravity = designed × GRAVITY_TUNING.scale (zones included)
+    const k = resolveTuning().gravity.scale;
+    expect(st.vel.y).toBeLessThan(-mToPx(3.2 * k * 0.5) * 0.9);
+    expect(ofType(events, 'gravityChanged')[0]?.gravity.y).toBeCloseTo(-3.2 * k, 5);
     // outside the zone gravity is normal
     const out = await session(lab({ vesselMode: 'harpoon', spawn: { x: 1500, y: 1000 }, zones: [zone] }));
     expect(out.run(30).vel.y).toBeGreaterThan(0);
-    expect(s.physics.getGravity().y).toBeCloseTo(3.2, 5);
+    expect(s.physics.getGravity().y).toBeCloseTo(3.2 * k, 5);
+  });
+
+  it('feel pass: the world applies designed gravity × gravity.scale; engine T/W is against that felt gravity', async () => {
+    const k = resolveTuning().gravity.scale;
+    expect(k).toBeGreaterThanOrEqual(0.6);
+    expect(k).toBeLessThanOrEqual(0.7);
+    const a = await session(lab({ vesselMode: 'harpoon', spawn: { x: 500, y: 400 } }));
+    expect(a.s.physics.getGravity().y).toBeCloseTo(3.2 * k, 5);
+    const vy = a.run(30).vel.y; // 0.5 s free fall
+    expect(vy).toBeCloseTo(mToPx(3.2 * k * 0.5), -1);
+    // per-level override restores the designed pull
+    const b = await session(lab({ vesselMode: 'harpoon', spawn: { x: 500, y: 400 }, physicsOverrides: { 'gravity.scale': 1 } }));
+    b.run(1);
+    expect(b.s.physics.getGravity().y).toBeCloseTo(3.2, 5);
+    // an engine: 1 s of full CSM burn from a standstill nets (T - 1) × FELT gravity upward
+    const T = resolveTuning().csm.thrust;
+    const burn = async (scale: number) => {
+      const c = await session(lab({ vesselMode: 'csm', spawn: { x: 500, y: 600 }, physicsOverrides: { 'gravity.scale': scale } }));
+      return -c.run(60, input({ thrust: true })).vel.y;
+    };
+    const felt = await burn(k);
+    expect(felt).toBeGreaterThan(mToPx((T - 1) * 3.2 * k) * 0.9);
+    expect(felt).toBeLessThan(mToPx((T - 1) * 3.2 * k) * 1.05);
+    // with the designed pull the same engine is proportionally stronger (thrust follows the level's gravity)
+    expect((await burn(1)) / felt).toBeCloseTo(1 / k, 1);
   });
 
   it('a polygon zone only acts inside the polygon', async () => {
@@ -574,7 +607,8 @@ describe('environment: wind', () => {
     expect(times[0]![1]).toBeCloseTo(0.5, 1);
     expect(times[1]![1]).toBeCloseTo(1, 1);
     expect(times[2]![1]).toBeCloseTo(2, 1);
-    expect(vxAtEnd).toBeCloseTo(mToPx(4 * 1), -1); // 4 m/s² for 1 s
+    // 4 m/s² for 1 s, felt × gravity.scale (feel pass: gusts scale with gravity)
+    expect(vxAtEnd).toBeCloseTo(mToPx(4 * resolveTuning().gravity.scale * 1), -1);
   });
 
   it('repeating schedules wrap', () => {

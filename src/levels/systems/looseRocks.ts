@@ -6,8 +6,8 @@
  * rock breaks loose: the held body is destroyed — which also drops the rope
  * joint, so the harpoon rig reports ropeBroken('overload'), i.e. "the rock
  * came away" — and a free-falling rock body replaces it. Reeling in on a
- * taut rope counts as a winch pull of winchPull x the vessel's weight (see
- * winchingOn): "harpoon a rock, reel in hard, it comes away".
+ * taut rope counts as a winch pull of winchPull x the vessel's design weight
+ * (level design gravity, like the engines; see winchingOn): "harpoon a rock, reel in hard, it comes away".
  *
  * Falling rocks are solid (tag 'fallingRock'): they hurt the vessel like any
  * heavy body, and the Keeper system consumes them as boss hits. Harpoons
@@ -16,6 +16,7 @@
  */
 
 import type { BodyHandle, JointHandle, LooseRockEntity, Vec2 } from '../../contracts';
+import { referenceGravity } from '../../physics/tuning';
 import { mToPx, pxToM, vMToPx } from '../../physics/units';
 import type { VesselHooks } from '../../physics/vessel';
 import type { LevelSystem, LevelSystemHost } from './types';
@@ -151,8 +152,8 @@ export class LooseRockSystem implements LevelSystem {
       const mount = (h.vessel as { mountWorld?: () => Vec2 }).mountWorld?.() ?? h.state.pos;
       const dist = Math.hypot(gun.head.x - mount.x, gun.head.y - mount.y);
       if (dist < gun.length - 3) return; // slack
-      const gv = h.vessel.hooks.gravityAt?.(h.state.pos) ?? h.physics.getGravity();
-      out = { rock, force: this.o.winchPull * h.physics.getMass(h.vessel.body) * Math.hypot(gv.x, gv.y) };
+      // the winch is a motor: sized like the engines, against the level's DESIGN gravity (not the felt, scaled one)
+      out = { rock, force: this.o.winchPull * h.physics.getMass(h.vessel.body) * referenceGravity(h.spec.gravity) };
     });
     return out;
   }

@@ -44,6 +44,15 @@ describe('save state', () => {
     expect(new SaveStore(storage).state.settings.swapEngineButtons).toBe(true);
   });
 
+  it('showFps defaults OFF, old saves without it read OFF, and it persists', () => {
+    expect(DEFAULT_SETTINGS.showFps).toBe(false);
+    expect(parseSave({ settings: { swapEngineButtons: false } })!.settings.showFps).toBe(false);
+    expect(parseSave({ settings: { showFps: 1 } })!.settings.showFps).toBe(false);
+    const storage = new MemStorage();
+    new SaveStore(storage).setSettings({ showFps: true });
+    expect(new SaveStore(storage).state.settings.showFps).toBe(true);
+  });
+
   it('defaults: Map 1 unlocked, nothing seen, default settings', () => {
     const s = defaultSave();
     expect(s).toEqual({ version: SAVE_VERSION, unlocked: ['hangarRun'], best: {}, seenCutscenes: [], settings: DEFAULT_SETTINGS });

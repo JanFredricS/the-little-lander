@@ -56,7 +56,7 @@ export class FlightEnvironment {
   readonly brittle: readonly BrittleRegion[];
   readonly unhandledEntities: readonly EntitySpec[];
   readonly unhandledZones: readonly ZoneSpec[];
-  /** Wind acceleration (m/s²) acting on the vessel this step. */
+  /** Wind acceleration (m/s²) acting on the vessel this step (designed gust × gravity.scale, like gravity). */
   windAccel: Vec2 = { x: 0, y: 0 };
   private vessel: FlightVessel | null = null;
   private readonly dynamicProps: BodyHandle[];
@@ -118,7 +118,10 @@ export class FlightEnvironment {
     const bodies: BodyHandle[] = [...v.parts, ...this.debris.bodies(), ...this.dynamicProps];
     this.gravity.update(s.pos, bodies);
     if (s.crashed) return;
-    this.windAccel = this.wind.update(this.physics.simTime, s.pos);
+    // feel pass: gusts were designed against the unscaled gravity/thrust, so they scale with gravity
+    const w = this.wind.update(this.physics.simTime, s.pos);
+    const k = this.tuning.gravity.scale;
+    this.windAccel = { x: w.x * k, y: w.y * k };
     if (this.windAccel.x !== 0 || this.windAccel.y !== 0) {
       for (const part of v.parts) {
         if (!this.physics.hasBody(part)) continue;

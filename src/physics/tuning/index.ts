@@ -83,6 +83,8 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   // S10 brake assist: max multiplier (1 = off, capped so a retro-burn stays a skill) and full-boost speed (px/s)
   brakeBoost: { min: 1, max: 3 },
   brakeBoostRef: POSITIVE,
+  // gravity feel scale (applied to level / ramp / zone gravity; engines unscaled)
+  scale: { above: 0, max: 2 },
   // hull / landing
   crashSpeed: POSITIVE,
   landSpeed: POSITIVE,
@@ -165,7 +167,7 @@ export function resolveTuning(overrides?: Readonly<Record<string, number>>): Phy
 /** Floor for the reference gravity (m/s²) so zero-g levels still have usable engines. */
 export const MIN_REFERENCE_GRAVITY = 1.6;
 
-/** Reference gravity magnitude (m/s²) that thrust-to-weight ratios are measured against. */
+/** Reference gravity magnitude (m/s²) that thrust-to-weight ratios are measured against (pass the FELT gravity, see levelReferenceGravity). */
 export function referenceGravity(g: Vec2): number {
   return Math.max(MIN_REFERENCE_GRAVITY, Math.hypot(g.x, g.y));
 }
@@ -179,8 +181,23 @@ export interface VesselOptions {
   harpoonGuns: 1 | 2;
 }
 
+/** Gravity (m/s²) the world actually applies for a designed LevelSpec gravity vector. */
+export function feltGravity(g: Vec2, scale: number): Vec2 {
+  return { x: g.x * scale, y: g.y * scale };
+}
+
+/**
+ * A level's reference gravity (m/s²): |LevelSpec.gravity| × gravity.scale
+ * (the felt level gravity), floored at MIN_REFERENCE_GRAVITY. Every engine
+ * multiple (`thrust`, `topThrust`) is a thrust-to-weight ratio against this,
+ * so the numbers in the vessel tuning files are the T/W the player feels.
+ */
+export function levelReferenceGravity(spec: Pick<LevelSpec, 'gravity'>, tuning: Pick<PhysicsTuning, 'gravity'>): number {
+  return referenceGravity(feltGravity(spec.gravity, tuning.gravity.scale));
+}
+
 export function vesselOptionsFor(spec: LevelSpec, tuning = resolveTuning(spec.physicsOverrides)): VesselOptions {
-  return { tuning, refGravity: referenceGravity(spec.gravity), harpoonGuns: spec.harpoonGuns ?? 1 };
+  return { tuning, refGravity: levelReferenceGravity(spec, tuning), harpoonGuns: spec.harpoonGuns ?? 1 };
 }
 
 // Every registered tuning field needs an explicit range.

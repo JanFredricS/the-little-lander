@@ -4,10 +4,14 @@
  * src/contracts/input.ts.
  *
  * Default keyboard bindings (by KeyboardEvent.code, per VesselMode):
- *   all modes      pause: Escape, P
+ *   all modes      pause: Escape, P · restart level: Backspace
  *   csm            thrust: W / ArrowUp / Space · rotateCCW: A / ArrowLeft · rotateCW: D / ArrowRight
  *   lander         engineLeft: A / ArrowLeft / J · engineRight: D / ArrowRight / L · thrust (= both): W / ArrowUp / K / Space
  *                  topLeft: Q / U · topRight: E / O (S9 top thrusters)
+ *                  Settings.swapEngineButtons (default ON) applies here too
+ *                  (KeyboardSource.setSwapEngines): the left keys fire the
+ *                  RIGHT engine / top thruster and vice versa, so ← / A tilts
+ *                  and moves the lander left — same scheme as the touch buttons.
  *   harpoon        aim: arrow keys (8-way) · fire: Space · release: X / ShiftLeft · reelIn: W / R · reelOut: S / F
  *   harpoonThrust  aim: arrow keys · fire: Space · release: X / ShiftLeft · thrust: W · rotateCCW: A · rotateCW: D · reelIn: R · reelOut: F
  * Pointer (mouse): hover aims (vessel -> pointer), left button = fire, right button = release.
@@ -40,9 +44,10 @@ export const CONTROL_IDS: readonly ControlId[] = [
   'reelIn',
   'reelOut',
   'pause',
+  'restart',
 ];
 
-const EDGE_CONTROLS: ReadonlySet<ControlId> = new Set<EdgeControlId>(['fire', 'release', 'pause']);
+const EDGE_CONTROLS: ReadonlySet<ControlId> = new Set<EdgeControlId>(['fire', 'release', 'pause', 'restart']);
 
 export function isEdgeControl(c: ControlId): c is EdgeControlId {
   return EDGE_CONTROLS.has(c);
@@ -51,7 +56,8 @@ export function isEdgeControl(c: ControlId): c is EdgeControlId {
 /** code -> controls, per mode. */
 export type KeyBindings = Readonly<Record<string, readonly ControlId[]>>;
 
-const PAUSE: KeyBindings = { Escape: ['pause'], KeyP: ['pause'] };
+/** Shell controls shared by every mode (R is taken by reelIn in the harpoon modes, so restart is Backspace). */
+const PAUSE: KeyBindings = { Escape: ['pause'], KeyP: ['pause'], Backspace: ['restart'] };
 
 export const DEFAULT_BINDINGS: Readonly<Record<VesselMode, KeyBindings>> = {
   csm: {
@@ -123,6 +129,7 @@ export function emptyFrame(): InputFrame {
     reelIn: false,
     reelOut: false,
     pause: false,
+    restart: false,
   };
 }
 
@@ -219,10 +226,28 @@ export interface KeyEventTarget {
   removeEventListener(type: 'keydown' | 'keyup', fn: (e: KeyboardEvent) => void): void;
 }
 
+/** Lander control pairs exchanged by the swapped-engines setting. */
+const SWAP_PAIRS: readonly (readonly [ControlId, ControlId])[] = [
+  ['engineLeft', 'engineRight'],
+  ['topLeft', 'topRight'],
+];
+
+function swapFlags(f: ControlFlags): void {
+  for (const [a, b] of SWAP_PAIRS) {
+    const fa = f[a];
+    const fb = f[b];
+    delete f[a];
+    delete f[b];
+    if (fb) f[a] = fb;
+    if (fa) f[b] = fa;
+  }
+}
+
 export class KeyboardSource implements InputSource {
   readonly id = 'keyboard';
   private readonly keys = new LatchedKeys<string>();
   private readonly allCodes: ReadonlySet<string>;
+  private swapEngines = false;
 
   constructor(
     private readonly target: KeyEventTarget | null,
@@ -233,6 +258,14 @@ export class KeyboardSource implements InputSource {
     this.allCodes = codes;
     target?.addEventListener('keydown', this.onDown);
     target?.addEventListener('keyup', this.onUp);
+  }
+
+  /**
+   * S9 swapped engines (Settings.swapEngineButtons) on the keyboard: in lander
+   * mode the left keys fire the right engine / top thruster and vice versa.
+   */
+  setSwapEngines(swap: boolean): void {
+    this.swapEngines = swap;
   }
 
   /** Feed a key directly (tests, replays). */
@@ -251,6 +284,10 @@ export class KeyboardSource implements InputSource {
     const outPressed: ControlFlags = {};
     for (const code of down) for (const c of map[code] ?? []) outDown[c] = true;
     for (const code of pressed) for (const c of map[code] ?? []) outPressed[c] = true;
+    if (this.swapEngines && ctx.mode === 'lander') {
+      swapFlags(outDown);
+      swapFlags(outPressed);
+    }
     let aim: AimSample | null = null;
     if (ARROW_AIM_MODES.has(ctx.mode)) {
       const held = (c: string) => down.has(c) || pressed.has(c);

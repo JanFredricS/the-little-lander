@@ -114,6 +114,8 @@ export class FlightView {
   /** Sprite-space layer (origin = sprite pivot), shifted onto the collision geometry. */
   private readonly vesselArt = new Container();
   private readonly hull = new Sprite(Texture.EMPTY);
+  /** Readability halo: a 1px light ring just outside the hull's dark outline (see vesselHalo). */
+  private readonly halo = new Sprite(Texture.EMPTY);
   private readonly flames = new Container();
   private flameSprites: { anchor: EngineAnchor; sprite: Sprite }[] = [];
   private readonly heads = new Container();
@@ -158,7 +160,7 @@ export class FlightView {
     this.bodies = new SpritePool(bodyLayer, this.tex);
     this.wind = new SpritePool(windLayer, this.tex);
     this.under.addChild(this.zones, this.zoneFx);
-    this.vesselArt.addChild(this.flames, this.hull);
+    this.vesselArt.addChild(this.halo, this.flames, this.hull);
     this.vessel.addChild(this.vesselArt);
     this.over.addChild(markerLayer, bodyLayer, this.overFx, this.heads, this.vessel, this.fx, windLayer);
   }
@@ -498,6 +500,11 @@ export class FlightView {
     const hf = this.art.getSprite(name, frame, this.theme);
     this.hull.texture = Texture.from(hf.canvas as HTMLCanvasElement);
     this.hull.anchor.set(hf.pivot.x / hf.width, hf.pivot.y / hf.height);
+    const halo = vesselHalo(hf);
+    if (this.halo.texture !== Texture.EMPTY) this.halo.texture.destroy(true);
+    this.halo.texture = halo ? Texture.from(halo) : Texture.EMPTY;
+    this.halo.anchor.set((hf.pivot.x + 1) / (hf.width + 2), (hf.pivot.y + 1) / (hf.height + 2));
+    this.halo.visible = !!halo;
     // native size, ground line on the collision bottom (hull / feet)
     this.vesselArt.position.set(0, vesselArtOffsetY(name, geo.h, frame));
     for (const f of this.flameSprites) f.sprite.destroy();
@@ -553,4 +560,49 @@ export class FlightView {
       }
     }
   }
+}
+
+/** Halo ring colour: pale cream, the UI's `light` (reads on dark sky; the sprite's own dark outline reads on bright terrain). */
+const HALO_RGBA = [255, 240, 192, 235] as const;
+
+/**
+ * Vessel readability halo (canvas, frame + 1px margin): every transparent
+ * pixel touching an opaque one (4-neighbourhood) becomes a light pixel, so
+ * the craft gets dark outline + light ring — a silhouette that holds against
+ * both the dark skies and the bright terrain. null when there is no DOM
+ * canvas (headless tests with stubbed art).
+ */
+export function vesselHalo(frame: SpriteFrame): HTMLCanvasElement | null {
+  const src = frame.canvas as HTMLCanvasElement;
+  if (typeof document === 'undefined' || !src || typeof (src as { getContext?: unknown }).getContext !== 'function') return null;
+  const w = frame.width;
+  const h = frame.height;
+  const sctx = src.getContext('2d');
+  if (!sctx || w <= 0 || h <= 0) return null;
+  const a = sctx.getImageData(0, 0, w, h).data;
+  const W = w + 2;
+  const H = h + 2;
+  const out = document.createElement('canvas');
+  out.width = W;
+  out.height = H;
+  const octx = out.getContext('2d');
+  if (!octx) return null;
+  const img = octx.createImageData(W, H);
+  const d = img.data;
+  const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && a[(y * w + x) * 4 + 3]! > 24;
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const sx = x - 1;
+      const sy = y - 1;
+      if (solid(sx, sy)) continue;
+      if (!(solid(sx - 1, sy) || solid(sx + 1, sy) || solid(sx, sy - 1) || solid(sx, sy + 1))) continue;
+      const i = (y * W + x) * 4;
+      d[i] = HALO_RGBA[0];
+      d[i + 1] = HALO_RGBA[1];
+      d[i + 2] = HALO_RGBA[2];
+      d[i + 3] = HALO_RGBA[3];
+    }
+  }
+  octx.putImageData(img, 0, 0);
+  return out;
 }

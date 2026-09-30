@@ -14,8 +14,8 @@ export const HARPOON_THRUST_TUNING = {
   width: 16,
   height: 22,
   mountHeight: 8,
-  /** Main thrust × dry weight at reference gravity. Gentler than the CSM. */
-  thrust: 1.5,
+  /** Main thrust × dry weight at reference gravity. Gentler than the CSM. Feel pass: 1.5 -> 2.3 (hover duty 43 %, was 67 %; ~ the old absolute push under the lighter gravity). */
+  thrust: 2.3,
   rotateAccel: 6,
   angularDamping: 3,
   /** Seconds of continuous burn per full tank. */

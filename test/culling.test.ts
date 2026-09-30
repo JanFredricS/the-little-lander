@@ -127,7 +127,7 @@ describe('render culling', () => {
         }),
       );
       for (let i = 0; i < 30; i++) {
-        s.step({ thrust: false, engineLeft: false, engineRight: false, topLeft: false, topRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false });
+        s.step({ thrust: false, engineLeft: false, engineRight: false, topLeft: false, topRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false, restart: false });
         fv.render(1, i * 16.7, null); // no culling: every site / emitter / zone is live
       }
       for (const sp of spies) sp.mockRestore();

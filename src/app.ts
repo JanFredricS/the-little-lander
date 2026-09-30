@@ -39,7 +39,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'save'>;
 }
 
 /**
@@ -84,6 +84,8 @@ export class App {
   private clearInputOnNextStep = false;
   /** Fixed steps left before the ended session's results show (null = not ended yet). */
   private endHoldSteps: number | null = null;
+  /** performance.now() at the first fixed step of the current animation frame (FPS counter CPU time). */
+  private frameT0: number | null = null;
   private readonly unbind: (() => void)[] = [];
 
   constructor(
@@ -98,15 +100,22 @@ export class App {
     this.pixi = await createPixiHost(this.host);
     this.pixi.app.ticker.stop(); // we render from our own loop
 
+    // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
+    const { onSwapEngineButtonsChange, onShowFpsChange, ...uiOpts } = Object.fromEntries(
+      Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
+    ) as NonNullable<AppOptions['ui']>;
+    const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
+
     // Input: keyboard FIRST so its listeners run before the menu handler below.
-    this.input.add(new KeyboardSource(window));
+    const keyboard = new KeyboardSource(window);
+    // S9 swapped engines apply to the keyboard too (not only the touch buttons): same initial value as the UI's
+    keyboard.setSwapEngines(swapEngines);
+    this.input.add(keyboard);
     this.input.add(this.virtual);
     this.input.add(new PointerSource(this.pixi.canvas));
     window.addEventListener('keydown', this.onDebugKey);
     this.unbind.push(() => window.removeEventListener('keydown', this.onDebugKey));
 
-    // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
-    const uiOpts = Object.fromEntries(Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined));
     this.ui = new GameUi({
       host: this.host,
       pixi: this.pixi,
@@ -117,15 +126,25 @@ export class App {
       save: () => this.save.state,
       touchPref: this.save.state.settings.touchControls,
       onTouchPrefChange: (p) => this.save.setSettings({ touchControls: p }),
-      swapEngineButtons: this.save.state.settings.swapEngineButtons,
-      onSwapEngineButtonsChange: (swap) => this.save.setSettings({ swapEngineButtons: swap }),
+      showFps: this.save.state.settings.showFps,
       story: () => this.storyContext(),
       onContinueStory: () => this.titleContinue(),
       ...uiOpts,
+      swapEngineButtons: swapEngines,
+      // A caller's callback replaces the default persistence (like onTouchPrefChange) but never the keyboard sync.
+      onSwapEngineButtonsChange: (swap) => {
+        keyboard.setSwapEngines(swap);
+        if (onSwapEngineButtonsChange) onSwapEngineButtonsChange(swap);
+        else this.save.setSettings({ swapEngineButtons: swap });
+      },
+      onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
     });
 
     this.loop = new FrameLoop({
-      step: () => this.step(),
+      step: (i) => {
+        if (i === 0) this.frameT0 = performance.now();
+        this.step();
+      },
       render: (alpha) => this.render(alpha),
       onPauseChange: (paused, cause) => this.onPauseChange(paused, cause),
     });
@@ -235,7 +254,6 @@ export class App {
   private step(): void {
     const s = this.session;
     if (!s || this.state.id !== 'playing') return;
-    if (s.outcome) return this.holdThenEnd(s); // the wreck plays out; no more input
     if (this.clearInputOnNextStep) {
       this.input.clear();
       this.clearInputOnNextStep = false;
@@ -246,8 +264,20 @@ export class App {
       clientToWorld: (cx, cy) => s.camera.viewToWorld(s.camera.position, this.pixi.clientToView(cx, cy)),
     };
     const frame = this.input.sample(ctx);
+    if (s.outcome) {
+      // The wreck plays out (no flight input), but RESTART (Backspace / touch ↻) still works right away.
+      if (frame.restart) {
+        this.dispatch({ type: 'retry' });
+        return;
+      }
+      return this.holdThenEnd(s);
+    }
     if (frame.pause) {
       this.dispatch({ type: 'pause' });
+      return;
+    }
+    if (frame.restart) {
+      this.dispatch({ type: 'retry' }); // playing -> playing: a fresh session of the same level
       return;
     }
     this.ui.noteFrame(frame);
@@ -271,9 +301,13 @@ export class App {
 
   private render(alpha: number): void {
     const now = performance.now();
+    const t0 = this.frameT0 ?? now;
+    this.frameT0 = null;
     this.view?.render(alpha, now, this.loop.paused);
     this.ui.render(now);
     this.pixi.app.render();
+    // FPS counter (pause menu): rAF cadence + this frame's CPU work (fixed steps + render + Pixi submit)
+    this.ui.noteFrameTiming(now, performance.now() - t0);
   }
 
   private onPauseChange(paused: boolean, cause: PauseCause): void {

@@ -33,6 +33,7 @@ export const DEFAULT_SETTINGS: Settings = {
   touchControls: 'auto',
   debugOverlay: false,
   swapEngineButtons: true,
+  showFps: false,
 };
 
 export function defaultSave(): SaveState {
@@ -70,6 +71,7 @@ function parseSettings(v: unknown): Settings {
     touchControls: tc === 'auto' || tc === 'on' || tc === 'off' ? tc : d.touchControls,
     debugOverlay: typeof v.debugOverlay === 'boolean' ? v.debugOverlay : d.debugOverlay,
     swapEngineButtons: typeof v.swapEngineButtons === 'boolean' ? v.swapEngineButtons : d.swapEngineButtons,
+    showFps: typeof v.showFps === 'boolean' ? v.showFps : d.showFps,
   };
 }
 
