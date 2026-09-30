@@ -7,6 +7,7 @@ import { STORY_LEVELS } from '../contracts';
 import type { LevelId, LevelSpec } from '../contracts';
 import { hollow } from './hollow';
 import { keeper } from './keeper';
+import { madDash } from './madDash';
 import { physlab } from './physlab';
 import { testpad } from './testpad';
 import { vaults } from './vaults';
@@ -17,6 +18,7 @@ export const LEVELS: Partial<Record<LevelId, LevelSpec>> = {
   vaults,
   hollow,
   keeper,
+  madDash,
 };
 
 export function getLevel(id: LevelId): LevelSpec | undefined {

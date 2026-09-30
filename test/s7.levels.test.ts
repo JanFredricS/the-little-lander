@@ -13,6 +13,19 @@ import { LevelSession } from '../src/game/session';
 import { KEEPER_ARENA, KEEPER_ROCK_X, keeper } from '../src/levels/keeper';
 import { KEEPER_TUNING } from '../src/levels/boss/keeperTuning';
 import { LEVEL_SYSTEM_OPTIONS } from '../src/levels/systems';
+import { s7DoorCentre, s7DoorGap } from '../src/levels/systems/s7Doors';
+import { aheadOfFront } from '../src/levels/systems/killFront';
+import {
+  MADDASH_GATES,
+  MADDASH_INTENDED_SPEED,
+  MADDASH_LEDGES,
+  MADDASH_LEFT,
+  MADDASH_RIGHT,
+  MADDASH_ROUTE,
+  MADDASH_STREAMS,
+  MADDASH_TOWERS,
+  madDash,
+} from '../src/levels/madDash';
 import { castSolid } from '../src/physics/tags';
 import { resolveTuning } from '../src/physics/tuning';
 import { vPxToM } from '../src/physics/units';
@@ -25,7 +38,7 @@ function sample(points: readonly Vec2[], step = 10): Vec2[] {
 }
 
 describe('S7 levels are registered and valid', () => {
-  it.each(['vaults', 'hollow', 'keeper'] as const)('%s', (id) => {
+  it.each(['vaults', 'hollow', 'keeper', 'madDash'] as const)('%s', (id) => {
     const spec = LEVELS[id];
     expect(spec).toBeDefined();
     expect(validateLevel(spec!)).toEqual([]);
@@ -204,5 +217,128 @@ describe('map 7 — The Keeper', () => {
     const xs = cans.map((c) => c.x).sort((a, b) => a - b);
     for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeLessThan(800);
     s.destroy();
+  });
+});
+
+describe('map 8 — The Mad Dash', () => {
+  const LANDER_HALF = resolveTuning(madDash.physicsOverrides).lander.legSpan / 2; // 15 px
+  /** Wall x at y (the wall profiles are sampled top -> bottom). */
+  const wallAt = (wall: readonly Vec2[], y: number) => {
+    for (let i = 1; i < wall.length; i++) {
+      const a = wall[i - 1]!;
+      const b = wall[i]!;
+      if (y <= b.y) return a.x + ((b.x - a.x) * (y - a.y)) / (b.y - a.y);
+    }
+    return wall[wall.length - 1]!.x;
+  };
+  /** The route resampled every 10 px of climb, bottom -> top. */
+  const line = (() => {
+    const out: Vec2[] = [];
+    for (let i = 1; i < MADDASH_ROUTE.length; i++) {
+      const a = MADDASH_ROUTE[i - 1]!;
+      const b = MADDASH_ROUTE[i]!;
+      for (let k = 0; k < 10; k++) out.push({ x: a.x + ((b.x - a.x) * k) / 10, y: a.y + ((b.y - a.y) * k) / 10 });
+    }
+    out.push(MADDASH_ROUTE[MADDASH_ROUTE.length - 1]!);
+    return out;
+  })();
+  const front = madDash.zones.find((z) => z.kind === 'killFront')!;
+  if (front.kind !== 'killFront') throw new Error('no front');
+  const maxLag = LEVEL_SYSTEM_OPTIONS.madDash!.killFront!.maxLag!;
+
+  it('is ~10,000 px of climb from the base hall to the hole in the crust, exit above the last wall', () => {
+    const exit = madDash.entities.find((e) => e.kind === 'exitDock')!;
+    expect(madDash.spawn.y - exit.y).toBeGreaterThan(9500);
+    expect(MADDASH_ROUTE[0]!.y).toBeGreaterThan(madDash.spawn.y - 40);
+    const top = MADDASH_ROUTE[MADDASH_ROUTE.length - 1]!;
+    expect(exit.kind === 'exitDock' && top.y < exit.y && top.y > exit.y - exit.h && Math.abs(top.x - exit.x) < exit.w / 2).toBe(true);
+    expect(madDash.objectives).toEqual([{ kind: 'reachExit', id: 'escape', exitId: exit.id }]);
+  });
+
+  it('the intended line keeps clear of walls, towers and crumbling ledges', () => {
+    for (const p of line) {
+      if (p.y < MADDASH_LEFT[0]!.y) continue; // in the sky
+      expect(p.x - wallAt(MADDASH_LEFT, p.y), `left wall at y ${p.y}`).toBeGreaterThan(LANDER_HALF + 25);
+      expect(wallAt(MADDASH_RIGHT, p.y) - p.x, `right wall at y ${p.y}`).toBeGreaterThan(LANDER_HALF + 25);
+      for (const t of MADDASH_TOWERS) {
+        const inY = p.y > t.y - 40 && p.y < t.y + t.h + 40;
+        if (inY) expect(Math.abs(p.x - t.x), `${t.id} at y ${p.y}`).toBeGreaterThan(t.w / 2 + LANDER_HALF + 40);
+      }
+      for (const l of MADDASH_LEDGES) {
+        if (Math.abs(p.y - l.y) < 40) expect(Math.abs(p.x - l.x), `${l.id} at y ${p.y}`).toBeGreaterThan(l.w / 2 + LANDER_HALF + 30);
+      }
+    }
+  });
+
+  it('debris streams fall beside the line, never on it', () => {
+    for (const st of MADDASH_STREAMS) {
+      for (const p of line) if (p.y > st.y && p.y < st.y + 800) expect(Math.abs(p.x - st.x), `${st.id} at y ${p.y}`).toBeGreaterThan(st.w / 2 + LANDER_HALF + 30);
+    }
+  });
+
+  /** Fly the line at `speed` (px/s along the line) after a lift-off delay; returns the smallest lead over the front (px). */
+  const leadAt = (speed: number, liftOff = 1.5) => {
+    let t = 0;
+    let pos = front.start;
+    let active = false;
+    let worst = Infinity;
+    const at = front.activate?.kind === 'time' ? front.activate.atSec : 0;
+    const step = (p: Vec2, dt: number) => {
+      t += dt;
+      if (!active && t >= at) active = true;
+      if (!active) return;
+      pos += front.speed * dt;
+      const ahead = aheadOfFront(front, pos, p);
+      if (ahead > maxLag) pos += Math.sign(front.speed) * (ahead - maxLag);
+      worst = Math.min(worst, aheadOfFront(front, pos, p));
+    };
+    for (let k = 0; k < liftOff * 60; k++) step(madDash.spawn, 1 / 60);
+    for (let i = 1; i < line.length; i++) {
+      const d = Math.hypot(line[i]!.x - line[i - 1]!.x, line[i]!.y - line[i - 1]!.y);
+      step(line[i]!, d / speed);
+    }
+    return worst;
+  };
+
+  it('a survivable line: flown at the intended speed the collapse front stays >= 150 px behind', () => {
+    expect(leadAt(MADDASH_INTENDED_SPEED)).toBeGreaterThanOrEqual(150);
+  });
+
+  it('it forces speed: the line flown barely faster than the front itself is caught', () => {
+    expect(leadAt(Math.abs(front.speed) * 1.02)).toBeLessThan(0);
+  });
+
+  it('closing gates: at the intended speed each gap is still >= lander + 60 px wide when you reach it, and the line runs through it', () => {
+    for (const g of MADDASH_GATES) {
+      const e = madDash.entities.find((x) => x.id === g.id)!;
+      if (e.kind !== 'blastDoor' || e.close.kind !== 'enterRegion') throw new Error(g.id);
+      // triggered entering the region from below; reach the door's underside
+      const climb = e.close.rect.y + e.close.rect.h - (e.y + e.h / 2 + 9);
+      for (const speed of [MADDASH_INTENDED_SPEED, Math.abs(front.speed)]) {
+        const c = Math.min(1, climb / speed / e.closeDurationSec);
+        const gap = s7DoorGap(e, c);
+        if (speed === MADDASH_INTENDED_SPEED) expect(gap, g.id).toBeGreaterThanOrEqual(2 * LANDER_HALF + 60);
+        else expect(gap, `${g.id} at the front's speed`).toBeGreaterThanOrEqual(2 * LANDER_HALF + 20);
+        const door = s7DoorCentre(e, c);
+        const edge = g.from === 'left' ? door.x + e.w / 2 : door.x - e.w / 2;
+        const x = line.reduce((best, p) => (Math.abs(p.y - e.y) < Math.abs(best.y - e.y) ? p : best)).x;
+        expect(g.from === 'left' ? x - edge : edge - x, `${g.id}: the line is on the open side`).toBeGreaterThan(LANDER_HALF + 10);
+      }
+      // the door seals the shaft completely when shut (no roughness there)
+      expect(wallAt(MADDASH_LEFT, e.y)).toBeGreaterThanOrEqual(e.x - e.w / 2 - 1);
+      expect(wallAt(MADDASH_RIGHT, e.y)).toBeLessThanOrEqual(e.x + e.w / 2 + 1);
+    }
+  });
+
+  it('fuel: the climb at the intended speed needs well under a tank', () => {
+    const t = resolveTuning(madDash.physicsOverrides).lander;
+    const length = line.slice(1).reduce((sum, p, i) => sum + Math.hypot(p.x - line[i]!.x, p.y - line[i]!.y), 0);
+    const hoverDuty = 1 / (2 * t.thrust);
+    const burn = (length / MADDASH_INTENDED_SPEED) * hoverDuty;
+    expect(burn / t.burnSeconds).toBeLessThan(0.8);
+  });
+
+  it('the closing gates run on the S7 door driver (opt-in) until S6 lands', () => {
+    expect(LEVEL_SYSTEM_OPTIONS.madDash?.s7Doors).toBe(true);
   });
 });

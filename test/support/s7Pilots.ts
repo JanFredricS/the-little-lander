@@ -513,3 +513,82 @@ export function keeperPilot(log: KeeperPilotLog = { attempts: 0, drops: 0 }, o: 
     return f;
   };
 }
+
+// ------------------------------------------------------------------ lander (map 8)
+
+export interface DashPilotOptions {
+  /** The intended line, bottom -> top (y decreasing). */
+  route: readonly Vec2[];
+  /** Climb speed (px/s). */
+  vclimb?: number;
+  /** Cross-track gain (1/s) and max sideways speed (px/s). */
+  xGain?: number;
+  vxMax?: number;
+  /** Max tilt from upright (rad). */
+  maxTilt?: number;
+  /** Attitude PD gains (tilt error, spin damping). */
+  kp?: number;
+  kd?: number;
+  /** Optional debug log. */
+  log?: { tilt: number; duty: number }[];
+}
+
+/**
+ * Lander autopilot (engineLeft / engineRight only, like the keyboard): holds
+ * a climb speed up the route with a cross-track correction. The required
+ * acceleration sets a tilt target (±maxTilt) and a burn level; a PD loop on
+ * the tilt splits the burn between the engines (left engine = clockwise),
+ * and each engine is pulse-width modulated (sigma-delta) — a player taps.
+ */
+export function landerDashPilot(o: DashPilotOptions): Pilot {
+  const vclimb = o.vclimb ?? 110;
+  const xGain = o.xGain ?? 0.7;
+  const vxMax = o.vxMax ?? 100;
+  const maxTilt = o.maxTilt ?? 0.6;
+  const kp = o.kp ?? 2;
+  const kd = o.kd ?? 1;
+  let accL = 0;
+  let accR = 0;
+  const xAt = (y: number): number => {
+    const r = o.route;
+    if (y >= r[0]!.y) return r[0]!.x;
+    for (let i = 1; i < r.length; i++) {
+      const a = r[i - 1]!;
+      const b = r[i]!;
+      if (y >= b.y) return a.x + ((b.x - a.x) * (a.y - y)) / (a.y - b.y);
+    }
+    return r[r.length - 1]!.x;
+  };
+  return (s) => {
+    const f = frame();
+    const st = s.state;
+    // aim at the line a little ahead (above), where we will be in ~0.5 s
+    const look = st.pos.y - Math.max(40, -st.vel.y * 0.6);
+    const tx = xAt(look);
+    const vd = { x: Math.max(-vxMax, Math.min(vxMax, (tx - st.pos.x) * xGain)), y: -vclimb };
+    const g = s.spec.gravity; // m/s²
+    const gain = 1.8;
+    const req = { x: ((vd.x - st.vel.x) * gain) / 30 - g.x, y: ((vd.y - st.vel.y) * gain) / 30 - g.y };
+    const tilt = Math.max(-maxTilt, Math.min(maxTilt, Math.atan2(req.x, -req.y)));
+    const both = 2 * s.tuning.lander.thrust * Math.max(1.6, Math.hypot(g.x, g.y));
+    const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
+    const along = Math.max(0, req.x * upNow.x + req.y * upNow.y);
+    const duty = Math.min(1, along / both);
+    const err = wrap(tilt - st.angle);
+    const u = Math.max(-0.6, Math.min(0.6, err * kp - st.angularVel * kd));
+    const dl = Math.max(0, Math.min(1, duty + u));
+    const dr = Math.max(0, Math.min(1, duty - u));
+    accL += dl;
+    accR += dr;
+    if (accL >= 1) {
+      accL -= 1;
+      f.engineLeft = true;
+    }
+    if (accR >= 1) {
+      accR -= 1;
+      f.engineRight = true;
+    }
+    o.log?.push({ tilt, duty });
+    return f;
+  };
+}
