@@ -51,6 +51,9 @@
  *     - damage eased ~25% (sweep 0.12, bump 0.04, grab 0.02/s, crush 0.22),
  *       gravity 5 -> 4 (more time to flip after a tendril burn), fuel moved
  *       off the floor (a 1,100 px climb each way).
+ *   S8 difficulty pass: burnSeconds 90 -> 110. The reference pilots bottomed
+ *   out at 22% fuel with the canisters not respawning, the tightest margin
+ *   of the campaign; a slower human fight could strand the pod mid-arena.
  */
 
 import { rectPoints, surfaceY } from './kit';
@@ -121,7 +124,7 @@ export const keeper: LevelSpec = {
   objectives: [{ kind: 'surviveBoss', id: 'keeper', bossEntityId: 'keeper' }],
   camera: { lookAhead: 40 },
   physicsOverrides: {
-    'harpoonThrust.burnSeconds': 90,
+    'harpoonThrust.burnSeconds': 110,
     'harpoonThrust.ropeBreakAccel': 600,
     'harpoonThrust.damageSpeed': 110,
     'harpoonThrust.crashSpeed': 230,
