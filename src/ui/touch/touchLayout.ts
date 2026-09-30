@@ -5,7 +5,11 @@
  * Every target is ≥ MIN_TOUCH_CSS (48 CSS px) in both dimensions.
  *
  *   csm            ◀ ▶ bottom-left (rotate) · THRUST bottom-right
- *   lander         L ENGINE bottom-left · R ENGINE bottom-right (thumb zones)
+ *   lander         L ENGINE bottom-left · R ENGINE bottom-right (thumb zones),
+ *                  TOP L / TOP R (S9 top thrusters, ~0.7× size) above them.
+ *                  S9 swap (Settings.swapEngineButtons, the default): the
+ *                  LEFT buttons fire the RIGHT engine / top thruster and vice
+ *                  versa, so the lander tilts toward the button you press.
  *   harpoon        aim drag zone left · FIRE / REL / ▲ IN / ▼ OUT bottom-right
  *   harpoonThrust  harpoon + THRUST (right) + ◀ ▶ rotate (bottom-left)
  *   all modes      II pause, top centre
@@ -47,7 +51,12 @@ export function layoutMetrics(w: number, h: number): LayoutMetrics {
 
 const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round(x), y: Math.round(y), w: Math.round(w), h: Math.round(h) });
 
-export function touchLayout(mode: VesselMode, w: number, h: number): TouchLayout {
+export interface TouchLayoutOptions {
+  /** Lander: left-side buttons fire the right-side engines and vice versa (labels name the engine that fires). */
+  swapEngines?: boolean;
+}
+
+export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchLayoutOptions = {}): TouchLayout {
   const { size: s, margin: m, gap: g } = layoutMetrics(w, h);
   const big = Math.round(s * 1.25);
   const pauseSize = Math.max(MIN_TOUCH_CSS, Math.round(s * 0.7));
@@ -82,12 +91,24 @@ export function touchLayout(mode: VesselMode, w: number, h: number): TouchLayout
       rotateLeft();
       buttons.push({ id: 'thrust', control: 'thrust', label: 'THRUST', kind: 'hold', rect: r(right - big, bottom - big, big, big) });
       break;
-    case 'lander':
+    case 'lander': {
+      const small = Math.max(MIN_TOUCH_CSS, Math.round(big * 0.7));
+      const topY = bottom - big - g - small;
+      const sw = !!opts.swapEngines;
+      const engL = { control: 'engineLeft', label: 'L ENG' } as const;
+      const engR = { control: 'engineRight', label: 'R ENG' } as const;
+      const topL = { control: 'topLeft', label: 'TOP L' } as const;
+      const topR = { control: 'topRight', label: 'TOP R' } as const;
+      // ids follow the control (not the side), so pressed-state visuals track the engine
+      const at = (c: { control: ControlId; label: string }, rect: Rect): TouchButton => ({ id: c.control, control: c.control, label: c.label, kind: 'hold', rect });
       buttons.push(
-        { id: 'engineLeft', control: 'engineLeft', label: 'L ENG', kind: 'hold', rect: r(m, bottom - big, big, big) },
-        { id: 'engineRight', control: 'engineRight', label: 'R ENG', kind: 'hold', rect: r(right - big, bottom - big, big, big) },
+        at(sw ? engR : engL, r(m, bottom - big, big, big)),
+        at(sw ? engL : engR, r(right - big, bottom - big, big, big)),
+        at(sw ? topR : topL, r(m, topY, small, small)),
+        at(sw ? topL : topR, r(right - small, topY, small, small)),
       );
       break;
+    }
     case 'harpoon': {
       const c = harpoonCluster();
       const top = m + pauseSize + g;

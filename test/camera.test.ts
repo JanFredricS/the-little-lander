@@ -93,12 +93,49 @@ describe('computeViewScale', () => {
     expect(s.cssPerVirtual).toBeCloseTo(1);
   });
 
-  it('handles portrait: fits the width, letterboxes top and bottom', () => {
+  it('portrait (S9): fractional scale so the view spans the full width, bars top and bottom', () => {
     const s = computeViewScale(390, 844, 3); // 1170 device px wide
-    expect(s.deviceScale).toBe(1);
-    expect(s.cssWidth).toBeCloseTo(640 / 3);
+    expect(s.fractional).toBe(true);
+    expect(s.deviceScale).toBeCloseTo(1170 / 640);
+    expect(s.cssWidth).toBeCloseTo(390);
+    expect(s.offsetX).toBeCloseTo(0);
     expect(s.offsetY).toBeGreaterThan(0);
     expect(s.cssHeight + 2 * s.offsetY).toBeCloseTo(844);
+    expect(s.cssPerVirtual).toBeCloseTo(390 / 640);
+  });
+
+  it('portrait fills the width at every common phone / tablet size and DPR', () => {
+    for (const [w, h, dpr] of [
+      [375, 667, 2],
+      [390, 844, 3],
+      [430, 932, 3],
+      [360, 800, 3],
+      [412, 915, 2.625],
+      [768, 1024, 2],
+      [820, 1180, 2],
+    ] as const) {
+      const s = computeViewScale(w, h, dpr);
+      expect(s.cssWidth, `${w}x${h}@${dpr}`).toBeCloseTo(w);
+      expect(s.cssHeight).toBeLessThanOrEqual(h);
+    }
+  });
+
+  it('portrait keeps an exact integer scale when the width happens to fit one', () => {
+    const s = computeViewScale(640, 900, 1);
+    expect(s).toMatchObject({ deviceScale: 1, fractional: false, cssWidth: 640 });
+  });
+
+  it('landscape keeps integer scaling (unchanged by S9)', () => {
+    for (const [w, h, dpr] of [
+      [844, 390, 3],
+      [667, 375, 2],
+      [1920, 1080, 1],
+      [1024, 768, 2],
+    ] as const) {
+      const s = computeViewScale(w, h, dpr);
+      expect(s.fractional).toBe(false);
+      expect(Number.isInteger(s.deviceScale)).toBe(true);
+    }
   });
 
   it('falls back to a fractional scale when even 1x does not fit', () => {

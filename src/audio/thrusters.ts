@@ -56,7 +56,9 @@ export class Thrusters {
   }
 
   update(flags: EngineFlags): void {
-    this.flags = { main: flags.main, left: flags.left, right: flags.right };
+    // S9 lander top thrusters voice through the same-side loop.
+    flags = { main: flags.main, left: flags.left || flags.topLeft === true, right: flags.right || flags.topRight === true };
+    this.flags = flags;
     if (this.driver.state !== 'running') return;
     for (const id of ENGINE_IDS) {
       const on = flags[id];

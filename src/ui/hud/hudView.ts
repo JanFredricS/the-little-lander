@@ -49,17 +49,17 @@ export class HudView {
   }
 
   /** Show (mode) or hide (null) the controls help card. */
-  setHelp(mode: VesselMode | null, touch: boolean, start = true): void {
+  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false): void {
     if (mode === null) {
       this.help.visible = false;
       this.helpKey = '';
       return;
     }
-    const key = helpCardKey(mode, touch, start, this.border);
+    const key = helpCardKey(mode, touch, start, this.border, swap);
     this.help.visible = true;
     if (key === this.helpKey) return;
     this.helpKey = key;
-    const card = helpCard(mode, touch, start);
+    const card = helpCard(mode, touch, start, swap);
     this.helpTitle.setText(card.title);
     this.helpBody.setText(card.lines.join('\n'));
     this.helpHint.setText(card.hint);

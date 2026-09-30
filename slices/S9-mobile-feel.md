@@ -6,6 +6,8 @@ Post-release slice from the user's real-phone playtest. Runs alone on main.
 > contracts may gain top-thruster controls (topLeft/topRight) and a
 > swapped-thruster-buttons setting; (b) lander tuning fields for the top
 > thrusters. No other contract changes without stopping the line.
+>
+> amendment made: enginesChanged gains optional topLeft/topRight (orchestrator-approved, audit cycle 1)
 
 1. **Landscape browser toolbar** eats the screen on phones. Port the
    pineapple-run FS1 approach (read

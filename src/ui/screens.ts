@@ -14,6 +14,8 @@ export interface ScreenContext {
   save: SaveView | null;
   showDebug: boolean;
   touchPref: TouchPref;
+  /** S9: touch engine buttons swapped (Settings.swapEngineButtons; default true). */
+  swapEngines?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -47,7 +49,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -63,6 +65,10 @@ function levelTitle(ctx: ScreenContext, id: LevelId): string {
 
 function touchLabel(p: TouchPref): string {
   return `TOUCH CONTROLS: ${p.toUpperCase()}`;
+}
+
+export function swapLabel(swap: boolean): string {
+  return `SWAP ENGINE BUTTONS: ${swap ? 'ON' : 'OFF'}`;
 }
 
 /** The level `continue` goes to after `id` (only if it is registered). */
@@ -130,6 +136,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'retry', label: 'RESTART', enabled: true },
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
+          { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'quit', label: 'QUIT TO LEVELS', enabled: true },
         ],
         footer: 'ESC RESUME',
@@ -189,6 +196,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'quit') return { type: 'quit' };
       if (id === 'controls') return { ui: 'controls' };
       if (id === 'touch') return { ui: 'toggleTouch' };
+      if (id === 'swap') return { ui: 'toggleSwap' };
       return { ui: 'none' };
     case 'results': {
       if (id === 'retry') return { type: 'retry' };

@@ -4,7 +4,7 @@
  * need from a vessel beyond the contract.
  */
 
-import type { BodyHandle, CrashCause, FuelChangeReason, HullChangeReason, Vec2, VesselController, VesselSpawn } from '../../contracts';
+import type { BodyHandle, CrashCause, FuelChangeReason, HullChangeReason, Vec2, VesselController, VesselSpawn, VesselState } from '../../contracts';
 import type { Cone } from '../geom';
 
 /** Render-facing geometry (px, body-local, y-down, centred on the body origin). */
@@ -14,8 +14,11 @@ export interface VesselGeometry {
   h: number;
   /** Solid boxes (centre + size, px). */
   boxes: readonly { x: number; y: number; w: number; h: number }[];
-  /** Nozzles (px), for flame sprites: which engine flag drives each. */
-  nozzles: readonly { x: number; y: number; engine: 'main' | 'left' | 'right' }[];
+  /**
+   * Nozzles (px): which engine flag drives each. Bottom nozzles exhaust along
+   * body-down; `top` nozzles (S9 lander top thrusters) exhaust along body-up.
+   */
+  nozzles: readonly { x: number; y: number; engine: EngineName; top?: boolean }[];
   /** Rope gun mount (px) for harpoon modes. */
   mount?: Vec2;
 }
@@ -47,8 +50,30 @@ export interface FlightVessel extends VesselController {
   damage(amount: number, reason: HullChangeReason): void;
   crash(cause: CrashCause, speedPx?: number): void;
   setAttachedGoo(n: number): void;
+  /** Lit engines this tick INCLUDING the S9 top thrusters (VesselState.engines keeps the frozen main/left/right shape). */
+  engineFlags(): Readonly<EngineFlagsExt>;
   /** Exhaust cones (world px) of the engines firing this tick. */
   exhaustCones(): Cone[];
   /** Pose/velocity/fuel/hull, for re-spawning as another mode. */
   snapshot(): VesselSpawn;
+}
+
+/**
+ * Every engine a vessel may light. 'main' / 'left' / 'right' are the frozen
+ * VesselState.engines / `enginesChanged` flags. The S9 lander top thrusters
+ * ('topLeft' / 'topRight') are NOT in VesselState.engines:
+ * renderers read them from FlightVessel.engineFlags(); the enginesChanged
+ * event has them as OPTIONAL fields (S9 amendment, audit cycle 1);
+ * VesselState.engines stays exactly main/left/right. Readers go through
+ * engineOn(), so contract consumers that only know main/left/right are
+ * unaffected.
+ */
+export type EngineName = 'main' | 'left' | 'right' | 'topLeft' | 'topRight';
+
+/** VesselState.engines / enginesChanged payload including the S9 top-thruster flags. */
+export type EngineFlagsExt = VesselState['engines'] & { topLeft: boolean; topRight: boolean };
+
+/** Is `engine` lit in these flags (tolerates the frozen main/left/right-only shape: top = false)? */
+export function engineOn(flags: VesselState['engines'], engine: EngineName): boolean {
+  return (flags as Partial<Record<EngineName, boolean>>)[engine] === true;
 }

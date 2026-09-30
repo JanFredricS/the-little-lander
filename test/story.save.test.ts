@@ -30,6 +30,20 @@ const throwing: StorageLike = {
 const done = (timeSec: number, orbs: number, score: number) => ({ kind: 'complete', timeSec, orbs, score }) as const;
 
 describe('save state', () => {
+  it('S9: swapEngineButtons defaults ON, old saves without it read ON, and it persists', () => {
+    expect(DEFAULT_SETTINGS.swapEngineButtons).toBe(true);
+    const old = parseSave({ version: SAVE_VERSION, unlocked: ['hangarRun'], best: {}, seenCutscenes: [], settings: { musicVolume: 0.5, sfxVolume: 0.5, reducedMotion: false, touchControls: 'auto', debugOverlay: false } });
+    expect(old!.settings.swapEngineButtons).toBe(true);
+    expect(parseSave({ settings: { swapEngineButtons: "yes" } })!.settings.swapEngineButtons).toBe(true);
+    const mem = new Map<string, string>();
+    const storage: StorageLike = { getItem: (k) => mem.get(k) ?? null, setItem: (k, v) => void mem.set(k, v), removeItem: (k) => void mem.delete(k) };
+    const a = new SaveStore(storage);
+    a.setSettings({ swapEngineButtons: false });
+    expect(new SaveStore(storage).state.settings.swapEngineButtons).toBe(false);
+    a.setSettings({ swapEngineButtons: true });
+    expect(new SaveStore(storage).state.settings.swapEngineButtons).toBe(true);
+  });
+
   it('defaults: Map 1 unlocked, nothing seen, default settings', () => {
     const s = defaultSave();
     expect(s).toEqual({ version: SAVE_VERSION, unlocked: ['hangarRun'], best: {}, seenCutscenes: [], settings: DEFAULT_SETTINGS });

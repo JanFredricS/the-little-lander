@@ -147,9 +147,10 @@ describe('screen models drive the state machine', () => {
     s = press(s, 'testpad', c);
     expect(s).toEqual({ id: 'playing', levelId: 'testpad' });
     s = transition(s, { type: 'pause' });
-    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'quit']);
+    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'swap', 'quit']);
     expect(itemAction(s, 'controls', c)).toEqual({ ui: 'controls' });
     expect(itemAction(s, 'touch', c)).toEqual({ ui: 'toggleTouch' });
+    expect(itemAction(s, 'swap', c)).toEqual({ ui: 'toggleSwap' });
     expect(press(s, 'resume', c)).toEqual({ id: 'playing', levelId: 'testpad' });
     s = transition(press(s, 'resume', c), { type: 'levelEnded', outcome: { kind: 'complete', timeSec: 12.3, orbs: 1, score: 1400 } });
     const res = screenModel(s, { ...c, lastHull: 0.75 });
@@ -212,6 +213,13 @@ describe('screen models drive the state machine', () => {
     expect(backAction({ id: 'levelSelect' })).toEqual({ type: 'back' });
     expect(backAction({ id: 'paused', levelId: 'testpad' })).toEqual({ type: 'resume' });
     expect(backAction({ id: 'title' })).toBeNull();
+  });
+
+  it('S9: pause menu SWAP ENGINE BUTTONS item reflects the setting (default ON)', () => {
+    const label = (swap?: boolean) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx(swap === undefined ? {} : { swapEngines: swap })).items.find((i) => i.id === 'swap')!.label;
+    expect(label()).toBe('SWAP ENGINE BUTTONS: ON');
+    expect(label(true)).toBe('SWAP ENGINE BUTTONS: ON');
+    expect(label(false)).toBe('SWAP ENGINE BUTTONS: OFF');
   });
 
   it('pause menu reflects the touch-controls preference', () => {

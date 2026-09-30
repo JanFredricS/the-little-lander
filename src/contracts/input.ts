@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). Input: the per-tick InputFrame (pure, device-agnostic data)
+ * FROZEN (S0; S9 amendment: topLeft / topRight controls). Input: the per-tick InputFrame (pure, device-agnostic data)
  * and the InputSource plug-in interface that keyboard, mouse/pointer and
  * on-screen touch controls all implement. The game is first-class on BOTH
  * desktop and mobile browsers: every control must be reachable by touch.
@@ -42,6 +42,15 @@ export interface InputFrame {
   engineLeft: boolean;
   /** HELD. Right engine. */
   engineRight: boolean;
+  /**
+   * HELD. Top-left thruster (S9 amendment, lander mode): mounted on the top
+   * of the vessel, left of centre, pushing along the body's DOWN axis
+   * (opposite to the main pair), so an inverted lander can lift off and
+   * flip upright with differential pulses.
+   */
+  topLeft: boolean;
+  /** HELD. Top-right thruster (S9 amendment, lander mode). */
+  topRight: boolean;
   /** HELD. Rotate clockwise (CSM mode). */
   rotateCW: boolean;
   /** HELD. Rotate counter-clockwise (CSM mode). */
@@ -72,6 +81,8 @@ export type ControlId =
   | 'thrust'
   | 'engineLeft'
   | 'engineRight'
+  | 'topLeft'
+  | 'topRight'
   | 'rotateCW'
   | 'rotateCCW'
   | 'fire'

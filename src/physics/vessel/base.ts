@@ -30,7 +30,7 @@ import { stepContacts } from '../stepEvents';
 import { PASS_THROUGH_TAGS, TAG_DEBRIS_BURNING, TAG_GOO, TAG_VESSEL, isDebrisTag } from '../tags';
 import type { VesselOptions } from '../tuning';
 import { mToPx, pxToM, vMToPx, vPxToM } from '../units';
-import type { FlightVessel, VesselGeometry, VesselHooks } from './types';
+import type { EngineFlagsExt, FlightVessel, VesselGeometry, VesselHooks } from './types';
 
 /** The hull fields every mode tuning module provides. */
 export interface HullTuning {
@@ -75,7 +75,8 @@ export abstract class VesselBase implements FlightVessel {
   protected crashed = false;
   protected landed = false;
   protected attachedGoo = 0;
-  protected engines = { main: false, left: false, right: false };
+  /** Main/left/right (frozen contract flags) + S9 top thrusters (extra flags, see EngineName in ./types). */
+  protected engines: EngineFlagsExt = { main: false, left: false, right: false, topLeft: false, topRight: false };
   /** Dry hull mass (kg), dry moment of inertia (kg·m²), dry weight at reference gravity (N). */
   protected readonly dryMass: number;
   protected readonly inertia: number;
@@ -151,7 +152,8 @@ export abstract class VesselBase implements FlightVessel {
       landed: this.landed,
       crashed: this.crashed,
       attachedGoo: this.attachedGoo,
-      engines: { ...this.engines },
+      // exactly the frozen contract shape; the S9 top flags are read via engineFlags()
+      engines: { main: this.engines.main, left: this.engines.left, right: this.engines.right },
     };
     if (rope) s.ropeState = rope;
     return s;
@@ -164,6 +166,10 @@ export abstract class VesselBase implements FlightVessel {
   }
 
   // ------------------------------------------------ FlightVessel API
+
+  engineFlags(): Readonly<EngineFlagsExt> {
+    return this.engines;
+  }
 
   addPart(h: BodyHandle): void {
     this.parts.add(h);
@@ -229,7 +235,7 @@ export abstract class VesselBase implements FlightVessel {
       if (!this.engines[n.engine]) continue;
       // Apex on the body's centre line (so blobs stuck on the lower hull are inside the cone).
       const apex = this.physics.localToWorld(this.body, { x: pxToM(n.x), y: 0 });
-      cones.push({ apex: vMToPx(apex), dir: down, length: n.y + ex.exhaustLength, halfAngle: ex.exhaustHalfAngle });
+      cones.push({ apex: vMToPx(apex), dir: n.top ? up : down, length: Math.abs(n.y) + ex.exhaustLength, halfAngle: ex.exhaustHalfAngle });
     }
     return cones;
   }
@@ -264,11 +270,12 @@ export abstract class VesselBase implements FlightVessel {
     return !this.crashed && this.fuel > 0;
   }
 
-  protected setEngines(main: boolean, left: boolean, right: boolean): void {
+  /** Set the lit engines; `enginesChanged` fires on any change (incl. the S9 top-thruster flags). */
+  protected setEngines(main: boolean, left: boolean, right: boolean, topLeft = false, topRight = false): void {
     const e = this.engines;
-    if (e.main === main && e.left === left && e.right === right) return;
-    this.engines = { main, left, right };
-    this.events({ type: 'enginesChanged', main, left, right });
+    if (e.main === main && e.left === left && e.right === right && e.topLeft === topLeft && e.topRight === topRight) return;
+    this.engines = { main, left, right, topLeft, topRight };
+    this.events({ type: 'enginesChanged', main, left, right, topLeft, topRight });
   }
 
   /** Burn `fraction` of the tank (a 'burn' fuelChanged event every 5 %). */
@@ -285,6 +292,11 @@ export abstract class VesselBase implements FlightVessel {
   protected mainThrust(force: number): void {
     const n = this.geometry.nozzles.find((z) => z.engine === 'main');
     this.thrustAt(force, n ? { x: n.x, y: n.y } : { x: 0, y: 0 });
+  }
+
+  /** Force (N) along the body's TAIL direction (body-down), applied at a body-local px point (S9 top thrusters). */
+  protected thrustDownAt(force: number, localPx: Vec2): void {
+    this.thrustAt(-force, localPx);
   }
 
   /** Force (N) along the body's nose direction, applied at a body-local px point (torque from the offset). */

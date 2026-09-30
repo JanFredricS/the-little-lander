@@ -28,6 +28,7 @@ import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GravityZone, LevelSpec, SpriteFrame, SpriteName, ThemeId, Vec2, VesselMode } from '../contracts';
 import { getVesselAnchors, type EngineAnchor } from '../art/sprites/vessels';
+import { engineOn } from '../physics/vessel/types';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
@@ -305,8 +306,9 @@ export class FlightView {
     this.vessel.alpha = vs.crashed ? 0.4 : 1;
     this.hull.tint = this.hitFlash && !vs.crashed ? 0xff9a8a : 0xffffff;
     const flameFrame = Math.floor(nowMs / FLAME_FRAME_MS);
+    const lit = s.vessel.engineFlags(); // incl. the S9 top thrusters
     for (const { anchor, sprite } of this.flameSprites) {
-      sprite.visible = !vs.crashed && !!vs.engines[anchor.engine];
+      sprite.visible = !vs.crashed && engineOn(lit, anchor.engine);
       if (sprite.visible) sprite.texture = this.tex.get(anchor.flame as SpriteName, flameFrame).tex;
     }
 

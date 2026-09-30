@@ -32,6 +32,7 @@ export const DEFAULT_SETTINGS: Settings = {
   reducedMotion: false,
   touchControls: 'auto',
   debugOverlay: false,
+  swapEngineButtons: true,
 };
 
 export function defaultSave(): SaveState {
@@ -68,6 +69,7 @@ function parseSettings(v: unknown): Settings {
     reducedMotion: typeof v.reducedMotion === 'boolean' ? v.reducedMotion : d.reducedMotion,
     touchControls: tc === 'auto' || tc === 'on' || tc === 'off' ? tc : d.touchControls,
     debugOverlay: typeof v.debugOverlay === 'boolean' ? v.debugOverlay : d.debugOverlay,
+    swapEngineButtons: typeof v.swapEngineButtons === 'boolean' ? v.swapEngineButtons : d.swapEngineButtons,
   };
 }
 

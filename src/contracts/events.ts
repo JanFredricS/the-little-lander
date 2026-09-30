@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). Gameplay events. Emitted synchronously during a fixed step
+ * FROZEN (S0; S9 amendment: optional enginesChanged topLeft/topRight). Gameplay events. Emitted synchronously during a fixed step
  * (by vessel controllers, level objective logic, the boss, the cutscene
  * player) into a GameEventSink; consumed by HUD, audio, FX, progress/saves.
  *
@@ -38,7 +38,8 @@ export type GameEvent =
   /** Effective gravity on the vessel changed noticeably (ramp progress, zone entry/exit). progress = ramp 0..1 if a ramp exists. */
   | { type: 'gravityChanged'; gravity: Vec2; rampProgress?: number }
   /** Engine flags changed (thruster loop SFX / flames). */
-  | { type: 'enginesChanged'; main: boolean; left: boolean; right: boolean }
+  /** topLeft/topRight: S9 amendment (lander top thrusters; optional, absent = off). */
+  | { type: 'enginesChanged'; main: boolean; left: boolean; right: boolean; topLeft?: boolean; topRight?: boolean }
   /** Any vessel collision above a small speed (SFX/FX); damage is reported separately via hullChanged. */
   | { type: 'impact'; pos: Vec2; speed: number; with: string }
   | { type: 'gooAttached'; gooId: number; attached: number }

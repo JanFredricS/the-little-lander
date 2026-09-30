@@ -1,12 +1,18 @@
 /**
  * Responsive scaling of the 640×360 virtual view.
  *
- * We scale in DEVICE pixels: the largest integer k with 640k × 360k device
- * px fitting the available box gives crisp, uniform pixels at any DPR. If
- * even k = 1 does not fit (e.g. a narrow portrait phone at DPR 1), we fall
- * back to the largest fractional scale that fits so nothing is cut off.
- * The view is centred; leftover space is letterbox (portrait = bars top and
- * bottom). The available box is the safe area (#app is inset by
+ * We scale in DEVICE pixels. LANDSCAPE (and square) boxes: the largest
+ * integer k with 640k × 360k device px fitting the available box gives
+ * crisp, uniform pixels at any DPR. PORTRAIT boxes (h > w, S9): the integer
+ * scale left huge side bars on phones (390 CSS px wide at DPR 3 -> k = 1 =
+ * 213 CSS px of game), so portrait uses the largest FRACTIONAL scale that
+ * fits: the view spans the full width. At phone DPRs (2-3) a fractional
+ * device scale is off by at most one device pixel per virtual pixel, and
+ * the renderer rounds sprite positions to device px, so it stays crisp
+ * enough. If even k = 1 does not fit in landscape, we fall back to the
+ * fractional fit as well so nothing is cut off. The view is centred;
+ * leftover space is letterbox (portrait = bars top and bottom, where the
+ * touch buttons sit). The available box is the safe area (#app is inset by
  * env(safe-area-inset-*)), re-measured on resize / orientationchange /
  * visualViewport resize.
  */
@@ -33,7 +39,8 @@ export function computeViewScale(availCssW: number, availCssH: number, dpr: numb
   const h = Math.max(1, availCssH);
   const fit = Math.min((w * r) / viewW, (h * r) / viewH);
   const k = Math.floor(fit + 1e-6);
-  const fractional = k < 1;
+  const portrait = h > w;
+  const fractional = k < 1 || (portrait && fit - k > 1e-6);
   const deviceScale = fractional ? fit : k;
   const cssWidth = (viewW * deviceScale) / r;
   const cssHeight = (viewH * deviceScale) / r;

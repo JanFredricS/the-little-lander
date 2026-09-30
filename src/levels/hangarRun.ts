@@ -19,7 +19,13 @@
  *
  * Tuning notes (map 1 = forgiving; see test/maps.test.ts for the autopilot
  * playtest numbers):
- *  - gravity 0.4 g (3.92 m/s², ship spin-grav) — slow falls, time to think.
+ *  - gravity 0.3 g (2.94 m/s², ship spin-grav) — slow falls, time to think.
+ *    S9 (phone playtest: "once you gain speed it is too fast to kill"):
+ *    0.4 g -> 0.3 g and lander.thrust 0.8 -> 0.75. Thrust scales with the
+ *    level's gravity, so both-engine climb accel drops to ~62 % and the
+ *    tilted sideways accel to ~70 % of S8's: speed builds slower and is
+ *    easier to arrest. Autopilot: 108 s / 57 % fuel -> 112 s / 82 % fuel.
+ *    (0.72 thrust was too weak to climb the lift shaft comfortably.)
  *  - lander.burnSeconds 110 (default 30): hovering costs ~0.6 %/s, so a
  *    careful 3-minute run ends with fuel to spare; two fuel canisters on top.
  *  - lander.crashSpeed 200 / damageSpeed 95 (defaults 150 / 75): scrapes and
@@ -40,7 +46,7 @@ const FL = 1300; // lower deck floor
 const UD = 700; // upper deck floor
 const HULL = 300; // upper deck ceiling
 
-const G = 0.4 * 9.8;
+const G = 0.3 * 9.8;
 
 const floorPts = [
   P(0, FL),
@@ -201,6 +207,7 @@ export const hangarRun: LevelSpec = {
   objectives: [{ kind: 'reachExit', id: 'dock', exitId: 'exit' }],
   camera: { bias: 'horizontal', lookAhead: 80 },
   physicsOverrides: {
+    'lander.thrust': 0.75,
     'lander.burnSeconds': 110,
     'lander.crashSpeed': 200,
     'lander.damageSpeed': 95,
