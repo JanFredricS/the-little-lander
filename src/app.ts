@@ -18,7 +18,7 @@ import { loadPhysics } from './physics/engine';
 import { createPixiHost, type PixiHost } from './render/pixiApp';
 import { LevelView } from './render/levelView';
 import { FrameLoop, type PauseCause } from './shell/clock';
-import { InputMapper, KeyboardSource, PointerSource, VirtualControlsSource } from './shell/input';
+import { emptyFrame, InputMapper, KeyboardSource, PointerSource, VirtualControlsSource } from './shell/input';
 import { INITIAL_STATE, isResume, transition } from './shell/state';
 import { playCutscene, type CutscenePlayerHandle } from './story/cutscenePlayer';
 import { continuePlan, continueTarget, isUnlocked, modeSwitchCutscene, selectLevelAction } from './story/flow';
@@ -41,6 +41,13 @@ export interface AppOptions {
    */
   ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'save'>;
 }
+
+/**
+ * Seconds a failed level (crash, hull destroyed, ...) stays on screen before
+ * the results panel covers it, so the explosion and smoke play out.
+ * Completions go to results on the same tick.
+ */
+export const CRASH_RESULTS_DELAY_SEC = 0.9;
 
 /** Unique stills of a cutscene in shot order (current shot first). */
 export function cutsceneStills(script: CutsceneScript, fromShot = 0): StillId[] {
@@ -75,6 +82,8 @@ export class App {
   /** Cutscene still warmup (aborted by stopCutscene). */
   private stillWarm: AbortController | null = null;
   private clearInputOnNextStep = false;
+  /** Fixed steps left before the ended session's results show (null = not ended yet). */
+  private endHoldSteps: number | null = null;
   private readonly unbind: (() => void)[] = [];
 
   constructor(
@@ -209,6 +218,7 @@ export class App {
 
   private endSession(): void {
     this.levelToken++;
+    this.endHoldSteps = null;
     this.levelWarm?.abort();
     this.levelWarm = null;
     if (this.inlineCutscene) this.stopCutscene();
@@ -223,6 +233,7 @@ export class App {
   private step(): void {
     const s = this.session;
     if (!s || this.state.id !== 'playing') return;
+    if (s.outcome) return this.holdThenEnd(s); // the wreck plays out; no more input
     if (this.clearInputOnNextStep) {
       this.input.clear();
       this.clearInputOnNextStep = false;
@@ -241,7 +252,19 @@ export class App {
     if (this.ui.holdSimulation) return; // level-start controls card: wait for the first input
     s.step(frame);
     this.ui.tick(s.state, FIXED_DT);
-    if (s.outcome) this.dispatch({ type: 'levelEnded', outcome: s.outcome });
+    if (s.outcome) this.holdThenEnd(s);
+  }
+
+  /** After the session ends: count down CRASH_RESULTS_DELAY_SEC on failure (0 on completion), then results. */
+  private holdThenEnd(s: LevelSession): void {
+    const outcome = s.outcome!;
+    this.endHoldSteps ??= outcome.kind === 'complete' ? 0 : Math.round(CRASH_RESULTS_DELAY_SEC / FIXED_DT);
+    if (this.endHoldSteps-- > 0) {
+      s.step(emptyFrame()); // ended session: only the camera settles
+      return;
+    }
+    this.endHoldSteps = null;
+    this.dispatch({ type: 'levelEnded', outcome });
   }
 
   private render(alpha: number): void {

@@ -33,6 +33,8 @@ import type { LevelSession } from '../src/game/session';
 import type { GameUiOptions } from '../src/ui/gameUi';
 import type { ScreenContext } from '../src/ui/screens';
 import { SaveStore, type StorageLike } from '../src/story/save';
+import { emptyFrame } from '../src/shell/input';
+import { FIXED_DT } from '../src/contracts';
 import { MIN_COMPLETION_FUEL, pilotFor, type Pilot } from './support/storyPilots';
 
 // ------------------------------------------------------------ fakes (render / DOM seams)
@@ -53,6 +55,10 @@ const h = vi.hoisted(() => ({
   pending: null as PendingCutscene | null,
   levelsStarted: [] as LevelId[],
   pilotFor: null as null | ((id: LevelId) => Pilot),
+  /** Test override for every map's pilot (the crash test). */
+  pilotOverride: null as null | ((id: LevelId) => Pilot),
+  /** Fixed steps App has taken (fake loop ticks). */
+  steps: 0,
   /** Optional LevelSpec patch (the chained-cutscene test adds a cutsceneBefore). */
   patch: null as null | ((spec: LevelSpec) => LevelSpec),
 }));
@@ -82,7 +88,7 @@ vi.mock('../src/render/levelView', () => ({
     readonly root = {};
     constructor(readonly session: LevelSession) {
       h.session = session;
-      h.pilot = h.pilotFor!(session.spec.id);
+      h.pilot = (h.pilotOverride ?? h.pilotFor!)(session.spec.id);
       h.tick = 0;
       h.levelsStarted.push(session.spec.id);
     }
@@ -219,6 +225,9 @@ interface Run {
   /** Cutscenes as the player saw them (mid-level ones marked) and levels as they started. */
   seen: string[];
   fuel: Partial<Record<LevelId, number>>;
+  /** Fixed-step index of the first `crash` event / the first results screen (-1 = none). */
+  crashStep: number;
+  resultsStep: number;
 }
 
 /**
@@ -228,16 +237,22 @@ interface Run {
  * or level select comes back after the pick.
  */
 async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> {
-  Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null });
+  Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null, steps: 0 });
   h.uiScreens = [];
   h.levelsStarted = [];
   const save = new SaveStore(memoryStorage());
-  const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {} };
+  const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {}, crashStep: -1, resultsStep: -1 };
   r.app = new App({} as HTMLElement, {
     art: {} as ArtApi, // no preload: cutscenes start synchronously
     save,
-    onEvent: (e) => r.events.push(e),
-    onScreen: (s) => r.screens.push(s.id === 'playing' || s.id === 'results' ? `${s.id}:${s.levelId}` : s.id === 'cutscene' ? `cutscene:${s.cutsceneId}` : s.id),
+    onEvent: (e) => {
+      r.events.push(e);
+      if (e.type === 'crash' && r.crashStep < 0) r.crashStep = h.steps;
+    },
+    onScreen: (s) => {
+      if (s.id === 'results' && r.resultsStep < 0) r.resultsStep = h.steps;
+      r.screens.push(s.id === 'playing' || s.id === 'results' ? `${s.id}:${s.levelId}` : s.id === 'cutscene' ? `cutscene:${s.cutsceneId}` : s.id);
+    },
   });
   await r.app.start();
   expect(r.app.state.id).toBe('title');
@@ -266,6 +281,7 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
         if (!r.seen.includes(s.levelId)) r.seen.push(s.levelId);
         for (let i = 0; i < 600 && r.app.state.id === 'playing' && !h.loop!.paused; i++) {
           h.loop!.step();
+          h.steps++;
           if (i % 60 === 0) h.loop!.render(1);
         }
         break;
@@ -290,12 +306,14 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
   beforeEach(() => {
     errors.length = 0;
     h.patch = null;
+    h.pilotOverride = null;
     vi.spyOn(console, 'error').mockImplementation((...a) => void errors.push(a));
     vi.spyOn(console, 'warn').mockImplementation((...a) => void errors.push(a));
     vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
   });
   afterEach(() => {
     h.patch = null;
+    h.pilotOverride = null;
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -328,6 +346,21 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
 
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     app.destroy();
+  });
+
+  it('a crash keeps the wreck on screen for CRASH_RESULTS_DELAY_SEC before GAME OVER', { timeout: 120_000 }, async () => {
+    const { CRASH_RESULTS_DELAY_SEC } = await import('../src/app');
+    // full thrust into the hangar ceiling: a guaranteed hard hit
+    h.pilotOverride = () => () => ({ ...emptyFrame(), thrust: true });
+    const r = await playStory((run) => run.app.state.id === 'results');
+    const s = r.app.state;
+    expect(s.id === 'results' && s.outcome).toMatchObject({ kind: 'failed' });
+    expect(r.crashStep).toBeGreaterThanOrEqual(0);
+    // the level stays on `playing` (wreck + explosion visible) for the whole hold, then results
+    expect(r.resultsStep - r.crashStep).toBe(Math.round(CRASH_RESULTS_DELAY_SEC / FIXED_DT));
+    expect(r.screens.filter((x) => x.startsWith('results:'))).toEqual(['results:hangarRun']);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
   });
 
   it('results NEXT plays an after + before cutscene chain inside ONE cutscene screen, then the next level', { timeout: 120_000 }, async () => {
