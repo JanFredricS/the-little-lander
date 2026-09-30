@@ -1,5 +1,12 @@
 # S7 — Maps 5–8 (Vaults, Hollow, Boss, Mad Dash)
 
+> Orchestrator-ratified deviations (fix cycle 1): (a) the
+> src/physics/vessel/harpoonRig.ts changes (collideConnected, reel stall
+> probe, reel guard) are accepted as shared bug fixes — S1 flight harpoon
+> tests + physlab determinism cover the regression scope; (b) `rectPoints`
+> added to src/levels/kit.ts on orchestrator instruction (S6 is merged and
+> complete, so kit.ts ownership has passed to integration).
+
 Requires S1 + S2 merged. Lives in `src/levels/` (+ `src/levels/boss/`) +
 tests. Coordinate file naming with S6 (S6 owns map1–4 modules; shared
 level helpers belong to S6 — if you need one S6 didn't build, add it
