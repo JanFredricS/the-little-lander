@@ -53,6 +53,17 @@ describe('save state', () => {
     expect(new SaveStore(storage).state.settings.showFps).toBe(true);
   });
 
+  it('lowRes starts undecided (null until the player toggles: the App picks by device on every start), then the saved value wins', () => {
+    expect(DEFAULT_SETTINGS.lowRes).toBeNull();
+    expect(parseSave({ settings: { showFps: true } })!.settings.lowRes).toBeNull();
+    expect(parseSave({ settings: { lowRes: 'yes' } })!.settings.lowRes).toBeNull();
+    const storage = new MemStorage();
+    new SaveStore(storage).setSettings({ lowRes: false });
+    expect(new SaveStore(storage).state.settings.lowRes).toBe(false);
+    new SaveStore(storage).setSettings({ lowRes: true });
+    expect(new SaveStore(storage).state.settings.lowRes).toBe(true);
+  });
+
   it('defaults: Map 1 unlocked, nothing seen, default settings', () => {
     const s = defaultSave();
     expect(s).toEqual({ version: SAVE_VERSION, unlocked: ['hangarRun'], best: {}, seenCutscenes: [], settings: DEFAULT_SETTINGS });

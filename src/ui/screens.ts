@@ -18,6 +18,8 @@ export interface ScreenContext {
   swapEngines?: boolean;
   /** FPS counter shown (Settings.showFps; default false). */
   showFps?: boolean;
+  /** Low-res render mode (Settings.lowRes). */
+  lowRes?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -51,7 +53,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -71,6 +73,10 @@ function touchLabel(p: TouchPref): string {
 
 export function fpsLabel(on: boolean): string {
   return `FPS COUNTER: ${on ? 'ON' : 'OFF'}`;
+}
+
+export function lowResLabel(on: boolean): string {
+  return `LOW-RES MODE: ${on ? 'ON' : 'OFF'}`;
 }
 
 export function swapLabel(swap: boolean): string {
@@ -144,9 +150,10 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },
+          { id: 'lowres', label: lowResLabel(ctx.lowRes ?? false), enabled: true },
           { id: 'quit', label: 'QUIT TO LEVELS', enabled: true },
         ],
-        footer: 'ESC RESUME · BKSP RESTART',
+        footer: '↑↓←→ CHOOSE · ESC RESUME · BKSP RESTART',
       };
     case 'results': {
       const o = state.outcome;
@@ -205,6 +212,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'touch') return { ui: 'toggleTouch' };
       if (id === 'swap') return { ui: 'toggleSwap' };
       if (id === 'fps') return { ui: 'toggleFps' };
+      if (id === 'lowres') return { ui: 'toggleLowRes' };
       return { ui: 'none' };
     case 'results': {
       if (id === 'retry') return { type: 'retry' };

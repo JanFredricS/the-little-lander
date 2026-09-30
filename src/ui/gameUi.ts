@@ -22,7 +22,7 @@ import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
 import { readSaveView, type SaveView } from './levelSelect';
-import { createMenu, keyToCommand, menuCommand, menuFocus, scrollBy, scrollToFocus, type MenuResult, type MenuState } from './menu';
+import { createMenu, gridMove, type GridDir, keyToCommand, menuCommand, menuFocus, scrollBy, scrollToFocus, type MenuResult, type MenuState } from './menu';
 import { enterFullscreen } from './fullscreen';
 import { RotateHint } from './rotateHint';
 import { backAction, isUiCommand, itemAction, screenModel, type ScreenContext, type ScreenModel, type StoryContext } from './screens';
@@ -54,6 +54,12 @@ export interface GameUiOptions {
   showFps?: boolean;
   /** Persist a changed FPS-counter setting. */
   onShowFpsChange?(on: boolean): void;
+  /** Initial low-res render mode (the App resolves Settings.lowRes = null to the device default). */
+  lowRes?: boolean;
+  /** Low-res mode toggled in the pause menu (the App re-renders the canvas + persists). */
+  onLowResChange?(on: boolean): void;
+  /** The first real touch of the page (a device the startup detection took for desktop). */
+  onTouchDetected?(): void;
   /** Story flow hooks for the title CONTINUE / results NEXT items (S3). */
   story?(): StoryContext;
   /** Title CONTINUE activated: the App resumes the story (cutscene + level). */
@@ -61,6 +67,26 @@ export interface GameUiOptions {
 }
 
 const TAP_SLOP_CSS = 10;
+
+/** Arrow / WASD key -> grid direction (Tab keeps walking the flat order). */
+function gridDirFor(code: string): GridDir | null {
+  switch (code) {
+    case 'ArrowUp':
+    case 'KeyW':
+      return 'up';
+    case 'ArrowDown':
+    case 'KeyS':
+      return 'down';
+    case 'ArrowLeft':
+    case 'KeyA':
+      return 'left';
+    case 'ArrowRight':
+    case 'KeyD':
+      return 'right';
+    default:
+      return null;
+  }
+}
 
 export class GameUi {
   private readonly hudView = new HudView();
@@ -84,6 +110,7 @@ export class GameUi {
   private touchPref: TouchPref;
   private swapEngines: boolean;
   private showFps: boolean;
+  private lowRes: boolean;
   private readonly fpsMeter = new FpsMeter();
   private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
   /** Cached HUD left inset (virtual px) + when it was measured: measuring reads DOM layout, so not every frame. */
@@ -103,6 +130,7 @@ export class GameUi {
     this.touchPref = o.touchPref ?? 'auto';
     this.swapEngines = o.swapEngineButtons ?? true;
     this.showFps = o.showFps ?? false;
+    this.lowRes = o.lowRes ?? false;
     this.fpsLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
@@ -194,6 +222,7 @@ export class GameUi {
       touchPref: this.touchPref,
       swapEngines: this.swapEngines,
       showFps: this.showFps,
+      lowRes: this.lowRes,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -285,6 +314,13 @@ export class GameUi {
     this.helpMode = null;
     this.helpBlocks = false;
     this.syncLayers();
+  }
+
+  /** The App changed low-res mode itself (device default after a first touch): keep the menu label in step. */
+  setLowResState(on: boolean): void {
+    if (on === this.lowRes) return;
+    this.lowRes = on;
+    this.refreshModel(false);
   }
 
   /** FPS counter visible (pause-menu toggle). */
@@ -397,6 +433,10 @@ export class GameUi {
       this.fpsLabel.setText(this.showFps ? fpsText(null) : '');
       this.o.onShowFpsChange?.(this.showFps);
       this.refreshModel(false);
+    } else if (a.ui === 'toggleLowRes') {
+      this.lowRes = !this.lowRes;
+      this.o.onLowResChange?.(this.lowRes);
+      this.refreshModel(false);
     }
   }
 
@@ -427,6 +467,13 @@ export class GameUi {
     if (e.repeat && (cmd === 'activate' || cmd === 'back' || typeof cmd === 'object')) return;
     e.preventDefault();
     if (typeof cmd === 'object' && this.state.id !== 'levelSelect') return; // digits only pick levels
+    // two-column panel: arrows move spatially (up / down inside a column, left / right across)
+    const grid = this.screenView.grid();
+    const dir = gridDirFor(e.code);
+    if (grid.cols > 1 && dir) {
+      this.menu = menuFocus(this.menu, gridMove(this.menu.focus, this.menu.items.length, grid.perCol, dir));
+      return;
+    }
     this.apply(menuCommand(this.menu, cmd));
   }
 
@@ -449,6 +496,7 @@ export class GameUi {
       this.touchDetected = true;
       this.rotate.update();
       this.syncLayers();
+      this.o.onTouchDetected?.();
     }
   }
 

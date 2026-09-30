@@ -151,3 +151,47 @@ describe('computeViewScale', () => {
     expect(clientToView(80 + 640, 90 + 360, rect)).toEqual({ x: 320, y: 180 });
   });
 });
+
+describe('low-res render mode', () => {
+  it('caps the renderer at 1 device px per virtual px (CSS upscales); off = the full device scale', async () => {
+    const { renderResolution } = await import('../src/render/pixiApp');
+    const phone = computeViewScale(844, 390, 3); // iPhone landscape: k = 3
+    expect(renderResolution(phone.deviceScale, false)).toBe(3);
+    expect(renderResolution(phone.deviceScale, true)).toBe(1);
+    expect(renderResolution(0.8, true)).toBe(0.8); // never upscales a tiny view
+  });
+});
+
+describe('RenderResolutionState (the Pixi host resize path)', () => {
+  it('allocates the low-res buffer from the first resize and re-sizes only on real changes', async () => {
+    const { RenderResolutionState } = await import('../src/render/pixiApp');
+    const calls: number[] = [];
+    const r = new RenderResolutionState((res) => calls.push(res), true);
+    r.setLowRes(true); // no scale yet: nothing to allocate
+    expect(calls).toEqual([]);
+    r.setDeviceScale(3); // first allocation on a DPR-3 phone: already the 640×360 buffer
+    expect(calls).toEqual([1]);
+    r.setLowRes(false);
+    expect(calls).toEqual([1, 3]);
+    r.setLowRes(false);
+    expect(calls).toEqual([1, 3]);
+    r.setLowRes(true);
+    expect(calls).toEqual([1, 3, 1]);
+    r.setDeviceScale(2); // resize / rotation: the scaler's new scale is applied (still capped)
+    expect(calls).toEqual([1, 3, 1, 1]);
+    expect(r.lowRes).toBe(true);
+  });
+});
+
+describe('detectTouch', () => {
+  it('needs touch points: a coarse pointer alone does not count', async () => {
+    const { detectTouch } = await import('../src/ui/touch/touchLayer');
+    const win = (points: number, coarse: boolean, anyCoarse = coarse) =>
+      ({ navigator: { maxTouchPoints: points }, matchMedia: (q: string) => ({ matches: q.startsWith('(pointer') ? coarse : anyCoarse }) }) as unknown as Window;
+    expect(detectTouch(win(5, true))).toBe(true); // phone
+    expect(detectTouch(win(5, false, true))).toBe(true); // touch laptop / iPad with a trackpad
+    expect(detectTouch(win(0, true))).toBe(false); // coarse pointer, no touch points
+    expect(detectTouch(win(0, false))).toBe(false); // desktop
+    expect(detectTouch(win(10, false, false))).toBe(false); // touch points but only fine pointers
+  });
+});

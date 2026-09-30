@@ -79,6 +79,8 @@ vi.mock('../src/render/pixiApp', () => ({
     app: { ticker: { stop() {} }, stage: { addChildAt() {} }, render() {} },
     canvas: {},
     clientToView: () => ({ x: 0, y: 0 }),
+    lowRes: false,
+    setLowRes() {},
     destroy() {},
   }),
 }));

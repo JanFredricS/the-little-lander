@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendment: Settings.showFps). Persistent progress (localStorage key 'the-little-lander/save').
+ * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes). Persistent progress (localStorage key 'the-little-lander/save').
  * Readers must accept older/partial data: validate, then fill defaults.
  */
 
@@ -37,6 +37,14 @@ export interface Settings {
   swapEngineButtons: boolean;
   /** Small FPS / frame-time readout in the top-right corner (pause menu toggle). Default false. */
   showFps: boolean;
+  /**
+   * Low-res mode (pause menu): render the game at the virtual 640×360 and let
+   * the browser upscale it (pixelated) instead of rendering every device
+   * pixel - ~9× fewer pixels on a DPR-3 phone. null = the player never chose:
+   * the App follows the device on every start (touch ON / desktop OFF, and ON
+   * after a first real touch). Only a pause-menu toggle saves true/false.
+   */
+  lowRes: boolean | null;
 }
 
 export interface SaveState {

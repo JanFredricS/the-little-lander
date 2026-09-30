@@ -34,6 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   debugOverlay: false,
   swapEngineButtons: true,
   showFps: false,
+  lowRes: null,
 };
 
 export function defaultSave(): SaveState {
@@ -72,6 +73,7 @@ function parseSettings(v: unknown): Settings {
     debugOverlay: typeof v.debugOverlay === 'boolean' ? v.debugOverlay : d.debugOverlay,
     swapEngineButtons: typeof v.swapEngineButtons === 'boolean' ? v.swapEngineButtons : d.swapEngineButtons,
     showFps: typeof v.showFps === 'boolean' ? v.showFps : d.showFps,
+    lowRes: typeof v.lowRes === 'boolean' ? v.lowRes : d.lowRes,
   };
 }
 

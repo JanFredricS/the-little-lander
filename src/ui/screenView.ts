@@ -3,7 +3,9 @@
  * drifting lander), level list, panels (pause / results / game over /
  * cutscene placeholder), loading. Draws a ScreenModel + MenuState; exposes
  * hit-testing for mouse/touch. Rows are sized by layoutRows() so they reach
- * 48 CSS px when there is room (lists scroll otherwise).
+ * 48 CSS px when there is room (lists scroll otherwise). Panels (pause,
+ * results) are compact: more than PANEL_SINGLE_COLUMN items go in two
+ * columns (column-major), and rows shrink so every item is always on screen.
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
@@ -16,7 +18,11 @@ import type { ScreenModel } from './screens';
 import { UI } from './uiTheme';
 
 const ROW_GAP = 4;
-const MAX_ROWS = 12;
+/** Label sprites (items drawn at once): a scrolling list's window, or a whole two-column panel. */
+const MAX_ROWS = 16;
+/** Panels with more items than this use two columns (the pause menu on phones). */
+const PANEL_SINGLE_COLUMN = 5;
+const COL_GAP = 8;
 
 interface Star {
   x: number;
@@ -45,6 +51,16 @@ export interface RowsGeometry {
   count: number;
   /** First item index drawn (hit tests use what was actually drawn). */
   scroll: number;
+  /** Columns (1, or 2 for a long panel: column-major, never scrolled). */
+  cols: number;
+  /** Rows per column. */
+  perCol: number;
+  colW: number;
+}
+
+/** Column of a two-column panel grid and the row within it for item `idx`. */
+export function gridCell(idx: number, perCol: number): { col: number; row: number } {
+  return { col: Math.floor(idx / perCol), row: idx % perCol };
 }
 
 export class ScreenView {
@@ -65,6 +81,8 @@ export class ScreenView {
   /** CSS px per virtual px (from the scaler). */
   cssPerVirtual = 1;
   private toastUntil = 0;
+  /** Model already reported as too long for a grid (log once, not per frame). */
+  private warned: ScreenModel | null = null;
 
   constructor(art: ArtApi) {
     const f = art.getSprite('vessel.lander');
@@ -100,13 +118,26 @@ export class ScreenView {
   hitTest(vx: number, vy: number): number {
     const g = this.geom;
     if (!g || vx < g.x - 4 || vx > g.x + g.w + 4) return -1;
+    if (g.cols > 1) {
+      const col = Math.min(g.cols - 1, Math.max(0, Math.floor((vx - g.x + COL_GAP / 2) / (g.colW + COL_GAP))));
+      const r = rowAt(g.layout, ROW_GAP, vy, g.perCol);
+      const idx = r < 0 ? -1 : col * g.perCol + r;
+      return idx < g.count ? idx : -1;
+    }
     const i = rowAt(g.layout, ROW_GAP, vy, g.count - g.scroll);
     return i < 0 ? -1 : i + g.scroll;
   }
 
-  /** Visible row count for the current model at the current scale. */
+  /** Visible item count for the current model at the current scale. */
   visibleRows(): number {
-    return this.geom?.layout.visible ?? 1;
+    const g = this.geom;
+    if (!g) return 1;
+    return g.cols > 1 ? g.count : g.layout.visible;
+  }
+
+  /** Grid shape of the current panel (keyboard left/right jumps columns). */
+  grid(): { cols: number; perCol: number } {
+    return { cols: this.geom?.cols ?? 1, perCol: this.geom?.perCol ?? 1 };
   }
 
   render(menu: MenuState, nowMs: number): void {
@@ -144,6 +175,7 @@ export class ScreenView {
     let rowsBottom: number;
     let rowX: number;
     let rowW: number;
+    let cols = 1;
     const center = (p: PixelText, y: number) => p.position.set(Math.round(VIEW_WIDTH / 2 - p.width / 2), Math.round(y));
     this.info.setText(m.info.join('\n'));
     this.footer.setText(m.footer);
@@ -167,13 +199,20 @@ export class ScreenView {
       rowW = 480;
       rowX = (VIEW_WIDTH - rowW) / 2;
     } else if (m.kind === 'panel') {
-      const pw = 340;
+      cols = m.items.length > PANEL_SINGLE_COLUMN ? 2 : 1;
+      if (m.items.length > MAX_ROWS) {
+        // a grid never scrolls, so it would silently drop items: fall back to a scrolling column, loudly
+        if (this.warned !== m) console.error(`ScreenView: panel '${m.heading}' has ${m.items.length} items (grid max ${MAX_ROWS}); drawing a scrolling list`);
+        this.warned = m;
+        cols = 1;
+      }
+      const pw = cols > 1 ? 460 : 340;
       this.heading.setText(m.heading, { scale: 2, color: m.heading === 'GAME OVER' ? UI.danger : UI.accent });
       // stat blocks (results) read better left-aligned; short lines stay centred
       this.info.setText(m.info.join('\n'), { color: UI.ink, align: m.info.length > 2 ? 'left' : 'center' });
       const infoH = m.info.length ? this.info.height + 10 : 0;
       const probeRow = Math.max(18, Math.ceil(48 / Math.max(0.01, this.cssPerVirtual)));
-      const rowsH = m.items.length * (probeRow + ROW_GAP);
+      const rowsH = Math.ceil(m.items.length / cols) * (probeRow + ROW_GAP);
       const ph = Math.min(VIEW_HEIGHT - 16, 16 + this.heading.height + 10 + infoH + rowsH + 8);
       const py = Math.round((VIEW_HEIGHT - ph) / 2);
       const px = Math.round((VIEW_WIDTH - pw) / 2);
@@ -195,17 +234,25 @@ export class ScreenView {
 
     // rows
     const n = m.items.length;
-    const layout = layoutRows(n, { top: rowsTop, bottom: rowsBottom, cssPerVirtual: this.cssPerVirtual, minRow: m.kind === 'list' ? 20 : 18, maxRow: 48, gap: ROW_GAP });
-    this.geom = n ? { layout, x: rowX, w: rowW, count: n, scroll: menu.scroll } : null;
-    const vis = Math.min(layout.visible, MAX_ROWS);
+    const perCol = Math.ceil(n / cols);
+    const compact = m.kind === 'panel' && n <= MAX_ROWS;
+    const layout = layoutRows(perCol, { top: rowsTop, bottom: rowsBottom, cssPerVirtual: this.cssPerVirtual, minRow: m.kind === 'list' ? 20 : 12, maxRow: 48, gap: ROW_GAP, fitAll: compact });
+    const colW = cols > 1 ? Math.floor((rowW - COL_GAP * (cols - 1)) / cols) : rowW;
+    const scroll = cols > 1 ? 0 : menu.scroll;
+    this.geom = n ? { layout, x: rowX, w: rowW, count: n, scroll, cols, perCol, colW } : null;
+    const vis = Math.min(cols > 1 ? n : layout.visible, MAX_ROWS);
+    const fullW = rowW;
     for (let i = 0; i < MAX_ROWS; i++) {
-      const idx = menu.scroll + i;
+      const idx = scroll + i;
       const item = i < vis ? m.items[idx] : undefined;
       const label = this.labels[i]!;
       const detail = this.details[i]!;
       label.visible = detail.visible = !!item;
       if (!item) continue;
-      const y = layout.rowY(i);
+      const cell = cols > 1 ? gridCell(idx, perCol) : { col: 0, row: i };
+      const y = layout.rowY(cell.row);
+      rowX = (this.geom!.x) + cell.col * (colW + COL_GAP);
+      rowW = colW;
       const focused = idx === menu.focus;
       const pulse = focused ? 0.5 + 0.5 * Math.sin(t * 6) : 0;
       if (focused) {
@@ -228,6 +275,8 @@ export class ScreenView {
         detail.position.set(Math.round(rowX + rowW - 8 - detail.width), ly);
       }
     }
+    rowX = this.geom?.x ?? rowX;
+    rowW = fullW;
     // scroll indicators
     if (n > vis) {
       const cx = VIEW_WIDTH / 2;

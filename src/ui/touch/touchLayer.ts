@@ -254,7 +254,9 @@ function place(el: HTMLElement, r: { x: number; y: number; w: number; h: number 
 /** Touch capability detection (coarse pointer or touch points), plus a live "first touch seen" hook. */
 export function detectTouch(win: Window = window): boolean {
   try {
-    return !!win.matchMedia?.('(pointer: coarse)').matches || (win.navigator.maxTouchPoints ?? 0) > 0 && !!win.matchMedia?.('(any-pointer: coarse)').matches;
+    // a coarse pointer alone is not enough (some desktop setups report one): require touch points too
+    const points = win.navigator.maxTouchPoints ?? 0;
+    return points > 0 && (!!win.matchMedia?.('(pointer: coarse)').matches || !!win.matchMedia?.('(any-pointer: coarse)').matches);
   } catch {
     return false;
   }

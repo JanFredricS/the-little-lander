@@ -26,6 +26,7 @@ import { SaveStore } from './story/save';
 import { getCutscene } from './story/scripts';
 import { GameUi, type GameUiOptions } from './ui/gameUi';
 import type { StoryContext } from './ui/screens';
+import { detectTouch } from './ui/touch/touchLayer';
 
 export interface AppOptions {
   art?: ArtApi;
@@ -39,7 +40,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'save'>;
 }
 
 /**
@@ -97,14 +98,20 @@ export class App {
   }
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
-    this.pixi = await createPixiHost(this.host);
-    this.pixi.app.ticker.stop(); // we render from our own loop
-
     // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
-    const { onSwapEngineButtonsChange, onShowFpsChange, ...uiOpts } = Object.fromEntries(
+    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, ...uiOpts } = Object.fromEntries(
       Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
     ) as NonNullable<AppOptions['ui']>;
     const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
+    // Low-res render mode. Until the player toggles it (saved lowRes stays null) it follows the device:
+    // ON for touch, OFF for desktop, re-detected every start, and switched ON by the first real touch.
+    // Resolved BEFORE the Pixi host exists so the first backbuffer is already the low-res one.
+    const savedLowRes = uiOpts.lowRes ?? this.save.state.settings.lowRes;
+    let autoLowRes = savedLowRes === null;
+    const lowRes = savedLowRes ?? detectTouch();
+
+    this.pixi = await createPixiHost(this.host, { lowRes });
+    this.pixi.app.ticker.stop(); // we render from our own loop
 
     // Input: keyboard FIRST so its listeners run before the menu handler below.
     const keyboard = new KeyboardSource(window);
@@ -138,6 +145,20 @@ export class App {
         else this.save.setSettings({ swapEngineButtons: swap });
       },
       onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
+      lowRes,
+      // a device that turned out to be touch (first real touch) gets the mobile default, unless the player chose
+      onTouchDetected: () => {
+        if (!autoLowRes || this.pixi.lowRes) return;
+        this.pixi.setLowRes(true);
+        this.ui.setLowResState(true);
+      },
+      // the canvas switches at once; a caller's callback replaces the default persistence only
+      onLowResChange: (on) => {
+        autoLowRes = false; // the player's choice from now on
+        this.pixi.setLowRes(on);
+        if (onLowResChange) onLowResChange(on);
+        else this.save.setSettings({ lowRes: on });
+      },
     });
 
     this.loop = new FrameLoop({

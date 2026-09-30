@@ -4,7 +4,7 @@ import { STORY_LEVELS } from '../src/contracts';
 import { testpad } from '../src/levels/testpad';
 import { transition } from '../src/shell/state';
 import { entryDetail, formatTime, levelEntries, nextStoryLevel, readSaveView } from '../src/ui/levelSelect';
-import { createMenu, keyToCommand, layoutRows, menuCommand, rowAt, scrollBy, scrollToFocus, type MenuItem } from '../src/ui/menu';
+import { createMenu, gridMove, keyToCommand, layoutRows, menuCommand, rowAt, scrollBy, scrollToFocus, type MenuItem } from '../src/ui/menu';
 import { backAction, isUiCommand, itemAction, screenModel, type ScreenContext } from '../src/ui/screens';
 
 const items = (n: number, disabled: number[] = []): MenuItem[] =>
@@ -53,6 +53,22 @@ describe('menu navigation', () => {
     expect(scrollBy(m, -100, 4).scroll).toBe(0);
   });
 
+  it('two-column panel grid: arrows move spatially (column-major layout)', () => {
+    // pause menu: 8 items, 4 per column -> col 0 = 0..3, col 1 = 4..7
+    expect(gridMove(3, 8, 4, 'down')).toBe(0); // bottom-left wraps to top-left, not to the top-right
+    expect(gridMove(0, 8, 4, 'up')).toBe(3);
+    expect(gridMove(1, 8, 4, 'down')).toBe(2);
+    expect(gridMove(2, 8, 4, 'right')).toBe(6); // same row, other column
+    expect(gridMove(6, 8, 4, 'left')).toBe(2);
+    expect(gridMove(5, 8, 4, 'right')).toBe(1); // columns wrap
+    // odd count: 9 items, 5 per column -> the right column is one row shorter
+    expect(gridMove(4, 9, 5, 'right')).toBe(8); // clamps to the right column's last row (not a no-op)
+    expect(gridMove(8, 9, 5, 'down')).toBe(5); // wraps inside the short column
+    expect(gridMove(8, 9, 5, 'left')).toBe(3);
+    // single column: left / right do nothing
+    expect(gridMove(2, 4, 4, 'right')).toBe(2);
+  });
+
   it('row layout reaches 48 CSS px when it fits, scrolls otherwise', () => {
     // phone: 1 CSS px per virtual px -> 48 virtual rows
     const phone = layoutRows(9, { top: 40, bottom: 334, cssPerVirtual: 1, minRow: 20, maxRow: 48, gap: 4 });
@@ -73,6 +89,16 @@ describe('menu navigation', () => {
       const short = layoutRows(2, { top: 100, bottom: 300, cssPerVirtual: cpv, minRow: 18, maxRow: 48, gap: 4 });
       expect(short.rowH * cpv).toBeGreaterThanOrEqual(48);
       expect(short.visible).toBe(2);
+    }
+    // compact panels (fitAll): never scroll - rows shrink until every item fits
+    for (const cpv of [1, 0.61]) {
+      // pause panel on a phone: 8 items in 2 columns = 4 rows in ~283 virtual px (5 rows still fit: room for one more toggle)
+      for (const rows of [4, 5]) {
+        const pause = layoutRows(rows, { top: 61, bottom: 344, cssPerVirtual: cpv, minRow: 12, maxRow: 48, gap: 4, fitAll: true });
+        expect(pause.visible).toBe(rows);
+        expect(pause.rowY(rows - 1) + pause.rowH).toBeLessThanOrEqual(344);
+        if (cpv === 1) expect(pause.touchSized).toBe(true); // landscape phone keeps full 48 CSS px rows
+      }
     }
     // hit test includes half gaps
     expect(rowAt(desk, 4, desk.rowY(3) + 1, 9)).toBe(3);
@@ -147,7 +173,8 @@ describe('screen models drive the state machine', () => {
     s = press(s, 'testpad', c);
     expect(s).toEqual({ id: 'playing', levelId: 'testpad' });
     s = transition(s, { type: 'pause' });
-    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'swap', 'fps', 'quit']);
+    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'swap', 'fps', 'lowres', 'quit']);
+    expect(itemAction(s, 'lowres', c)).toEqual({ ui: 'toggleLowRes' });
     expect(itemAction(s, 'fps', c)).toEqual({ ui: 'toggleFps' });
     expect(itemAction(s, 'controls', c)).toEqual({ ui: 'controls' });
     expect(itemAction(s, 'touch', c)).toEqual({ ui: 'toggleTouch' });
@@ -221,6 +248,12 @@ describe('screen models drive the state machine', () => {
     expect(label()).toBe('SWAP ENGINE BUTTONS: ON');
     expect(label(true)).toBe('SWAP ENGINE BUTTONS: ON');
     expect(label(false)).toBe('SWAP ENGINE BUTTONS: OFF');
+  });
+
+  it('pause menu LOW-RES MODE item reflects the setting', () => {
+    const label = (on?: boolean) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx(on === undefined ? {} : { lowRes: on })).items.find((i) => i.id === 'lowres')!.label;
+    expect(label(true)).toBe('LOW-RES MODE: ON');
+    expect(label(false)).toBe('LOW-RES MODE: OFF');
   });
 
   it('pause menu FPS COUNTER item reflects the setting (default OFF)', () => {

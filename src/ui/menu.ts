@@ -119,6 +119,11 @@ export interface RowLayoutOptions {
   /** Largest row worth drawing (virtual px). */
   maxRow: number;
   gap: number;
+  /**
+   * Compact panels (pause / results): never scroll - rows shrink below the
+   * touch size (down to minRow) until all `n` fit. Lists keep scrolling.
+   */
+  fitAll?: boolean;
 }
 
 export interface RowLayout {
@@ -142,6 +147,7 @@ export function layoutRows(n: number, o: RowLayoutOptions): RowLayout {
   const want = Math.ceil(MIN_TOUCH_CSS / cpv);
   const avail = Math.max(1, o.bottom - o.top);
   let rowH = Math.max(o.minRow, want);
+  if (o.fitAll) rowH = Math.min(rowH, Math.max(o.minRow, Math.floor((avail - o.gap * (n - 1)) / Math.max(1, n))));
   rowH = Math.min(rowH, avail);
   const visible = Math.max(1, Math.min(n, Math.floor((avail + o.gap) / (rowH + o.gap))));
   // Short lists: grow rows toward the touch size when there is room.
@@ -164,4 +170,30 @@ export function rowAt(layout: RowLayout, gap: number, y: number, count: number):
     if (y >= top && y < top + layout.rowH + gap) return i;
   }
   return -1;
+}
+
+// ------------------------------------------------------------------ grid (two-column panels)
+
+export type GridDir = 'up' | 'down' | 'left' | 'right';
+
+/**
+ * Spatial focus move in a column-major grid of `n` items with `perCol` rows
+ * per column (src/ui/screenView.ts draws panels this way). Up / down wrap
+ * inside the column; left / right go to the neighbouring column (wrapping),
+ * clamped to its last row when it is shorter (odd counts).
+ */
+export function gridMove(focus: number, n: number, perCol: number, dir: GridDir): number {
+  if (n <= 0 || perCol <= 0) return focus;
+  const cols = Math.ceil(n / perCol);
+  const col = Math.floor(focus / perCol);
+  const row = focus % perCol;
+  const colLen = (c: number) => Math.min(perCol, n - c * perCol);
+  if (dir === 'up' || dir === 'down') {
+    const len = colLen(col);
+    const r = (row + (dir === 'down' ? 1 : -1) + len) % len;
+    return col * perCol + r;
+  }
+  if (cols < 2) return focus;
+  const c = (col + (dir === 'right' ? 1 : -1) + cols) % cols;
+  return c * perCol + Math.min(row, colLen(c) - 1);
 }
