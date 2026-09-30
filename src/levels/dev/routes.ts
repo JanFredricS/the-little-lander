@@ -7,6 +7,7 @@
 import type { LevelId } from '../../contracts';
 import type { RouteNode } from './autopilot';
 import { DESCENT_LINE } from '../descent';
+import { THROAT_TUBE } from '../theThroat';
 
 export const hangarRunRoute: RouteNode[] = [
   { x: 300, y: 1150, speed: 90 },
@@ -88,8 +89,31 @@ export const floatingIslesRoute: RouteNode[] = [
   { x: 17300, y: 1500, land: true, hold: 1, speed: 110 },
 ];
 
+/** Map 4: down the tube's centre line, around the pillars, slow in squeezes. */
+export const theThroatRoute: RouteNode[] = (() => {
+  const lanes = [
+    { x: 740, y: 2030, w: 110 },
+    { x: 720, y: 2150, w: 110 },
+    { x: 740, y: 2280, w: 110 },
+    { x: 785, y: 4430, w: 100 },
+    { x: 785, y: 4550, w: 100 },
+    { x: 830, y: 4690, w: 100 },
+    { x: 610, y: 6950, w: 120 },
+    { x: 610, y: 7050, w: 120 },
+    { x: 640, y: 7180, w: 120 },
+  ];
+  // centre-line nodes, minus those the pillars sit on (the lanes replace them)
+  const clear = THROAT_TUBE.slice(1, -2).filter((n) => !((n.y > 1950 && n.y < 2350) || (n.y > 4350 && n.y < 4750) || (n.y > 6900 && n.y < 7200)));
+  const pts = [...clear, ...lanes].sort((a, b) => a.y - b.y);
+  const route: RouteNode[] = pts.map((p) => ({ x: p.x, y: p.y, speed: Math.min(110, Math.round(p.w * 0.45)), tol: Math.min(40, Math.round(p.w / 4)) }));
+  route.push({ x: 800, y: 11500, speed: 80 });
+  route.push({ x: 800, y: 11690, land: true, hold: 1, speed: 60 });
+  return route;
+})();
+
 export const ROUTES: Partial<Record<LevelId, readonly RouteNode[]>> = {
   hangarRun: hangarRunRoute,
   descent: descentRoute,
   floatingIsles: floatingIslesRoute,
+  throat: theThroatRoute,
 };
