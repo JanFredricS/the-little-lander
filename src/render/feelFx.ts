@@ -3,9 +3,10 @@
  * which it never draws over or replaces.
  *
  *  - Particles (one fixed-capacity pool, sprites from a SpritePool, no
- *    per-frame allocation): landing dust (softLand, hard ground hits),
- *    impact sparks, a crash explosion + smoke, and sparse exhaust smoke
- *    from every burning nozzle.
+ *    per-frame allocation): landing dust (softLand, scrapes), impact sparks
+ *    + shake only for hits at or above the active vessel's damageSpeed (a
+ *    safe landing never sparks), a crash explosion + smoke, and exhaust
+ *    smoke from every burning nozzle.
  *  - Screen shake: a trauma value (0..1) raised by hits / crash / radiation
  *    / boss blows and decaying over ~0.6 s; offset = trauma² × SHAKE_MAX_PX,
  *    rounded to whole px (pixel-perfect). Capped, and off with
@@ -31,7 +32,9 @@ export const HIT_FLASH_SEC = 0.12;
 /** Particle pool size; the oldest particle is recycled when it is full. */
 const CAPACITY = 96;
 /** Seconds between exhaust smoke puffs (per burning nozzle). */
-const EXHAUST_EVERY = 0.11;
+const EXHAUST_EVERY = 0.07;
+/** Impacts below this (px/s) leave no dust at all (grazes, resting contact). */
+const DUST_MIN_SPEED = 30;
 
 type Kind = 'dust' | 'spark' | 'smoke' | 'explosion';
 
@@ -115,10 +118,16 @@ export class FeelFx {
         this.dust(e.pos, 6, 40);
         break;
       case 'impact': {
-        if (e.speed < 50) break;
-        const k = Math.min(1, e.speed / 400);
+        // keyed to the active vessel: sparks + shake only where the hull takes damage
+        const t = this.session.tuning[this.session.state.mode];
+        const debris = e.with.startsWith('debris');
+        if (e.speed < t.damageSpeed) {
+          if (!debris && e.speed >= DUST_MIN_SPEED) this.dust(e.pos, 2, 20 + 20 * (e.speed / t.damageSpeed));
+          break;
+        }
+        const k = Math.min(1, (e.speed - t.damageSpeed) / Math.max(1, t.crashSpeed - t.damageSpeed));
         this.burst('spark', e.pos, 3 + Math.round(5 * k), 60 + 140 * k, 320, 0.5);
-        if (!e.with.startsWith('debris')) this.dust(e.pos, 2 + Math.round(3 * k), 30 + 40 * k);
+        if (!debris) this.dust(e.pos, 2 + Math.round(3 * k), 30 + 40 * k);
         this.addTrauma(0.1 + 0.25 * k);
         break;
       }
@@ -218,7 +227,7 @@ export class FeelFx {
       const y = vs.pos.y + n.x * sn + ly * c;
       const j = hash(++this.seq) - 0.5;
       // down the nozzle axis, plus the vessel's own drift
-      this.spawn('smoke', x, y, -sn * 70 + j * 30 + vs.vel.x * 0.3, c * 70 + vs.vel.y * 0.3, -30, 2.2, 0.55, (main ? 0.5 : 0.35) + 0.2 * hash(this.seq * 3));
+      this.spawn('smoke', x, y, -sn * 70 + j * 30 + vs.vel.x * 0.3, c * 70 + vs.vel.y * 0.3, -30, 2.2, 0.65, (main ? 0.6 : 0.45) + 0.2 * hash(this.seq * 3));
     }
   }
 

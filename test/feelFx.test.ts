@@ -70,6 +70,24 @@ describe('FeelFx', () => {
     }
   });
 
+  it('impacts spark + shake only at or above the active vessel\'s damageSpeed (safe landings just dust)', async () => {
+    const { s, fx } = await make();
+    const dmg = s.tuning[s.state.mode].damageSpeed;
+    const impact = (speed: number): GameEvent => ({ type: 'impact', pos: { x: 0, y: 0 }, speed, with: 'terrain' });
+    fx.update(0, false);
+    fx.onEvent(impact(dmg - 1)); // a firm but safe touchdown
+    fx.update(16, false);
+    expect(fx.traumaLevel).toBe(0);
+    const kinds = () => (fx as unknown as { parts: { live: boolean; kind: string }[] }).parts.filter((p) => p.live).map((p) => p.kind);
+    expect(kinds().length).toBeGreaterThan(0);
+    expect(kinds().every((k) => k === 'dust')).toBe(true);
+    fx.onEvent(impact(dmg + 20)); // a damaging hit
+    expect(fx.traumaLevel).toBeGreaterThan(0);
+    expect(kinds()).toContain('spark');
+    fx.destroy();
+    s.destroy();
+  });
+
   it('particles are pooled (bounded), freeze while paused and expire', async () => {
     const { s, fx } = await make();
     fx.update(0, false);
