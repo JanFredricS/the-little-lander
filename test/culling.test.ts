@@ -8,10 +8,11 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Texture } from 'pixi.js';
+import { Graphics, Texture } from 'pixi.js';
 import type { ArtApi, Vec2 } from '../src/contracts';
 import { LevelSession } from '../src/game/session';
 import { floatingIsles } from '../src/levels/floatingIsles';
+import { hollow } from '../src/levels/hollow';
 import { keeper } from '../src/levels/keeper';
 import { vaults } from '../src/levels/vaults';
 import { FlightView } from '../src/render/flightView';
@@ -92,6 +93,29 @@ describe('render culling', () => {
     expect(pool.count).toBe(0);
     fx.destroy();
     s.destroy();
+  });
+
+  it('FlightView builds beacon columns, radiation glows and chevron patterns once: frames only move / fade them', async () => {
+    for (const spec of [floatingIsles, hollow]) {
+      const s = await LevelSession.create(spec);
+      s.start();
+      const fv = new FlightView(s, art);
+      const calls = { rect: 0, circle: 0, fill: 0, poly: 0 };
+      const spies = (Object.keys(calls) as (keyof typeof calls)[]).map((k) =>
+        vi.spyOn(Graphics.prototype, k).mockImplementation(function (this: Graphics) {
+          calls[k]++;
+          return this;
+        }),
+      );
+      for (let i = 0; i < 30; i++) {
+        s.step({ thrust: false, engineLeft: false, engineRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false });
+        fv.render(1, i * 16.7, null); // no culling: every site / emitter / zone is live
+      }
+      for (const sp of spies) sp.mockRestore();
+      expect(calls, spec.id).toEqual({ rect: 0, circle: 0, fill: 0, poly: 0 });
+      fv.destroy();
+      s.destroy();
+    }
   });
 
   it('ropePolylineInto reuses its scratch points and matches ropePolyline', () => {
