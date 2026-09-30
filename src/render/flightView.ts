@@ -38,6 +38,8 @@ const ANIM_MS = 140;
 const ROPE_STEP = 4;
 /** Gravity-zone chevron grid spacing (px). */
 const CHEVRON_GRID = 48;
+/** Dark outline behind the beacon landing column + brackets. */
+const BEACON_OUTLINE = 0x0c2a16;
 /** Off-view margin (px) kept when culling bodies, markers and rope. */
 const CULL_MARGIN = 32;
 
@@ -157,6 +159,13 @@ export class FlightView {
         const r = l + e.w;
         const top = e.y - zh;
         g.rect(l, top, e.w, zh).fill({ color: 0x60ff90, alpha: 0.08 + 0.07 * pulse });
+        // dark 1 px edges so the column reads against pale skies (floating isles)
+        g.rect(l, top, 1, zh).fill({ color: BEACON_OUTLINE, alpha: 0.35 });
+        g.rect(r - 1, top, 1, zh).fill({ color: BEACON_OUTLINE, alpha: 0.35 });
+        g.rect(l - 1, top - 1, 8, 3).fill({ color: BEACON_OUTLINE, alpha: 0.8 });
+        g.rect(l - 1, top - 1, 3, 8).fill({ color: BEACON_OUTLINE, alpha: 0.8 });
+        g.rect(r - 7, top - 1, 8, 3).fill({ color: BEACON_OUTLINE, alpha: 0.8 });
+        g.rect(r - 2, top - 1, 3, 8).fill({ color: BEACON_OUTLINE, alpha: 0.8 });
         // corner brackets (left, right)
         g.rect(l, top, 6, 1).fill({ color: 0x60ff90, alpha: 0.7 });
         g.rect(l, top, 1, 6).fill({ color: 0x60ff90, alpha: 0.7 });
