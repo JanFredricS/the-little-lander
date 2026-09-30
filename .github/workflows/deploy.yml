@@ -1,8 +1,10 @@
 name: CI & Deploy
 
+# Tests + build run on every branch push and PR; only main deploys (see the
+# deploy job's `if`).
 on:
   push:
-    branches: [main]
+    branches: ['**']
   pull_request:
   workflow_dispatch:
 
