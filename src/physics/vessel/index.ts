@@ -1,11 +1,6 @@
 /**
- * Vessel controllers, one per VesselMode. Internally they take FlightPhysics
- * (PhysicsApi + the contact-data extension, src/physics/contactData.ts), so a
- * non-conforming physics is a compile error; VESSEL_FACTORIES adapts them to
- * the frozen VesselControllerFactory signature (plain PhysicsApi) by
- * narrowing with requireContactData() at that single boundary.
- * Proposed contract amendment (S8): type VesselControllerFactory's `physics`
- * as PhysicsApi-with-bodyContacts so this adapter can go.
+ * Vessel controllers, one per VesselMode, built on PhysicsApi (whose
+ * bodyContacts() — S8 amendment — feeds soft-landing and impulse damage).
  *
  *   const factory = vesselFactory('lander', vesselOptionsFor(spec));
  *   const vessel = factory(physics, spawn, events);
@@ -14,8 +9,7 @@
  * world at creation time and one harpoon gun.
  */
 
-import type { GameEventSink, VesselControllerFactory, VesselMode, VesselSpawn } from '../../contracts';
-import { requireContactData, type FlightPhysics } from '../contactData';
+import type { GameEventSink, PhysicsApi, VesselControllerFactory, VesselMode, VesselSpawn } from '../../contracts';
 import { referenceGravity, resolveTuning, type VesselOptions } from '../tuning';
 import { CsmController } from './csm';
 import { HarpoonController, HarpoonThrustController } from './harpoon';
@@ -34,24 +28,19 @@ const CTORS = {
   harpoonThrust: HarpoonThrustController,
 } as const;
 
-export function createVessel(mode: VesselMode, physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink, options?: VesselOptions): FlightVessel {
+export function createVessel(mode: VesselMode, physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options?: VesselOptions): FlightVessel {
   const opts = options ?? { tuning: resolveTuning(), refGravity: referenceGravity(physics.getGravity()), harpoonGuns: 1 };
   return new CTORS[mode](physics, spawn, events, opts);
 }
 
-/** A factory for `mode` with fixed options (strict: FlightPhysics). */
-export function vesselFactory(mode: VesselMode, options?: VesselOptions): (physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink) => FlightVessel {
+/** A factory for `mode` with fixed options (a VesselControllerFactory returning the FlightVessel view). */
+export function vesselFactory(mode: VesselMode, options?: VesselOptions): (physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink) => FlightVessel {
   return (physics, spawn, events) => createVessel(mode, physics, spawn, events, options);
 }
 
-/** Adapt a strict factory to the frozen contract type: the single PhysicsApi -> FlightPhysics narrowing point. */
-export function contractFactory(strict: (physics: FlightPhysics, spawn: VesselSpawn, events: GameEventSink) => FlightVessel): VesselControllerFactory {
-  return (physics, spawn, events) => strict(requireContactData(physics), spawn, events);
-}
-
 export const VESSEL_FACTORIES: Readonly<Record<VesselMode, VesselControllerFactory>> = {
-  csm: contractFactory(vesselFactory('csm')),
-  lander: contractFactory(vesselFactory('lander')),
-  harpoon: contractFactory(vesselFactory('harpoon')),
-  harpoonThrust: contractFactory(vesselFactory('harpoonThrust')),
+  csm: vesselFactory('csm'),
+  lander: vesselFactory('lander'),
+  harpoon: vesselFactory('harpoon'),
+  harpoonThrust: vesselFactory('harpoonThrust'),
 };

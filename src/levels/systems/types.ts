@@ -15,8 +15,7 @@
  * doors, vines ...). Both should converge on one LevelSystem registry.
  */
 
-import type { GameEvent, InputFrame, LevelSpec, ObjectiveSpec, VesselState } from '../../contracts';
-import type { FlightPhysics } from '../../physics/contactData';
+import type { GameEvent, InputFrame, LevelSpec, ObjectiveSpec, PhysicsApi, VesselState } from '../../contracts';
 import type { FlightEnvironment } from '../../physics/env/environment';
 import type { FlightVessel } from '../../physics/vessel';
 import type { BuiltLevel } from '../build';
@@ -24,7 +23,7 @@ import type { BuiltLevel } from '../build';
 /** What a level system may see / do. Everything in world px unless stated. */
 export interface LevelSystemHost {
   readonly spec: LevelSpec;
-  readonly physics: FlightPhysics;
+  readonly physics: PhysicsApi;
   readonly built: BuiltLevel;
   readonly env: FlightEnvironment;
   /** The CURRENT vessel (replaced on mode switches). */

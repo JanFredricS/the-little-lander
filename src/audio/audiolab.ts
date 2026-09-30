@@ -36,6 +36,8 @@ const SAMPLE_EVENTS: GameEvent[] = [
   { type: 'gooBurned', gooId: 1, attached: 0 },
   { type: 'harpoonFired', gun: 0, dir: { x: 0, y: -1 } },
   { type: 'harpoonMissed', gun: 0 },
+  { type: 'ropeReeling', gun: 0, dir: 'in' },
+  { type: 'ropeReeling', gun: 0, dir: 'out' },
   { type: 'ropeAttached', gun: 0, anchor: { x: 0, y: 0 }, brittle: true },
   { type: 'ropeBroken', gun: 0, reason: 'overload' },
   { type: 'ropeReleased', gun: 0 },

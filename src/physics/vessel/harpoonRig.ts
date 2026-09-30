@@ -48,6 +48,8 @@ interface Gun {
   /** Rope max length (m). */
   length: number;
   brittleLeft: number | undefined;
+  /** Winch direction the player is holding on this anchored rope (ropeReeling edges). */
+  reeling: 'in' | 'out' | null;
   tension: number;
   firedSeq: number;
 }
@@ -78,6 +80,7 @@ export class HarpoonRig {
       joint: null,
       length: 0,
       brittleLeft: undefined,
+      reeling: null,
       tension: 0,
       firedSeq: 0,
     }));
@@ -93,6 +96,12 @@ export class HarpoonRig {
     if (frame.release) for (const g of this.guns) if (g.phase !== 'idle') this.free(g, 'released');
     if (frame.fire) this.fire();
     const reel = (frame.reelIn ? -this.t.reelInSpeed : 0) + (frame.reelOut ? this.t.reelOutSpeed : 0);
+    const dir = reel < 0 ? 'in' : reel > 0 ? 'out' : null;
+    for (const g of this.guns) {
+      if (g.phase !== 'anchored' || g.reeling === dir) continue;
+      g.reeling = dir;
+      this.host.events({ type: 'ropeReeling', gun: g.index, dir });
+    }
     if (reel !== 0) {
       for (const g of this.guns) {
         // the anchor body may have vanished since the last step (postStep reports the snap)
@@ -248,6 +257,7 @@ export class HarpoonRig {
   }
 
   private dropJoint(g: Gun): void {
+    g.reeling = null; // the rope is gone: reeling just ends (contract: no ropeReeling event)
     if (g.joint !== null && this.host.physics.hasJoint(g.joint)) this.host.physics.destroyJoint(g.joint);
     g.joint = null;
     g.brittleLeft = undefined;

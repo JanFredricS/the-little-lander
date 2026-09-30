@@ -48,6 +48,12 @@ export type GameEvent =
   | { type: 'ropeAttached'; gun: number; anchor: Vec2; brittle: boolean }
   | { type: 'ropeBroken'; gun: number; reason: 'brittle' | 'overload' }
   | { type: 'ropeReleased'; gun: number }
+  /**
+   * S8 amendment: the winch of an anchored gun started reeling in/out, or
+   * stopped (dir null). Edge-triggered on the player's reel input; a rope
+   * that breaks / is released while reeling just ends (no extra event).
+   */
+  | { type: 'ropeReeling'; gun: number; dir: 'in' | 'out' | null }
   | { type: 'vesselModeChanged'; from: VesselMode; to: VesselMode }
   | { type: 'objectiveComplete'; objectiveId: string }
   | { type: 'levelComplete'; levelId: LevelId; timeSec: number; orbs: number; score: number }

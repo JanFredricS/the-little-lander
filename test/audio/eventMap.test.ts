@@ -50,6 +50,7 @@ describe('event -> sfx mapping', () => {
     expect(cuesFor({ type: 'gravityChanged', gravity: { x: 0, y: 9 }, rampProgress: 0.4 })).toEqual([]);
     expect(cuesFor({ type: 'windGust', zoneId: 'w', phase: 'end', accel: { x: 0, y: 0 } })).toEqual([]);
     expect(cuesFor({ type: 'hullChanged', hull: 90, delta: -5, reason: 'goo' })).toEqual([]);
+    expect(cuesFor({ type: 'ropeReeling', gun: 0, dir: null })).toEqual([]);
   });
 
   it('every SFX recipe schedules at least one voice with sane params', () => {

@@ -19,6 +19,7 @@ export const SAMPLE_EVENTS: { [T in GameEventType]: GameEventOf<T> } = {
   gooBurned: { type: 'gooBurned', gooId: 1, attached: 0 },
   harpoonFired: { type: 'harpoonFired', gun: 0, dir: { x: 0, y: -1 } },
   harpoonMissed: { type: 'harpoonMissed', gun: 0 },
+  ropeReeling: { type: 'ropeReeling', gun: 0, dir: 'in' },
   ropeAttached: { type: 'ropeAttached', gun: 0, anchor: { x: 0, y: 0 }, brittle: false },
   ropeBroken: { type: 'ropeBroken', gun: 0, reason: 'brittle' },
   ropeReleased: { type: 'ropeReleased', gun: 0 },

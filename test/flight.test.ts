@@ -177,16 +177,12 @@ describe('csm', () => {
     }
   });
 
-  it('vessels require the physics contact-data extension (compile time + contract boundary)', async () => {
+  it('VESSEL_FACTORIES build vessels from the contract PhysicsApi (bodyContacts is part of it)', async () => {
     const r = await rig('csm');
-    const bare: PhysicsApi = new Proxy(r.physics, { get: (o, k) => (k === 'bodyContacts' ? undefined : Reflect.get(o, k, o)) });
-    const opts = { tuning: resolveTuning(), refGravity: 3.2, harpoonGuns: 1 as const };
-    // @ts-expect-error a plain PhysicsApi is not FlightPhysics
-    expect(() => createVessel('lander', bare, { pos: { x: 0, y: 0 } }, () => {}, opts)).toThrow(/ContactDataSource/);
-    // The frozen contract factory takes plain PhysicsApi and narrows at runtime.
-    expect(() => VESSEL_FACTORIES.lander(bare, { pos: { x: 0, y: 0 } }, () => {})).toThrow(/ContactDataSource/);
-    const ok = VESSEL_FACTORIES.csm(r.physics as PhysicsApi, { pos: { x: 0, y: -50 } }, () => {});
+    const physics: PhysicsApi = r.physics;
+    const ok = VESSEL_FACTORIES.csm(physics, { pos: { x: 0, y: -50 } }, () => {});
     expect(ok.state().mode).toBe('csm');
+    expect(Array.isArray(physics.bodyContacts(ok.body))).toBe(true);
     ok.destroy();
   });
 
@@ -398,6 +394,12 @@ describe('harpoon', () => {
     s = run(60, input({ reelIn: true }));
     expect(s.ropeState!.guns[0]!.length!).toBeCloseTo(l0 - resolveTuning().harpoon.reelInSpeed, -1);
     expect(s.pos.y).toBeLessThan(-40); // pulled up towards the anchor
+    // ropeReeling (S8 amendment): one edge on start, none while held
+    expect(ofType(events, 'ropeReeling')).toEqual([{ type: 'ropeReeling', gun: 0, dir: 'in' }]);
+    run(1);
+    expect(ofType(events, 'ropeReeling').at(-1)).toEqual({ type: 'ropeReeling', gun: 0, dir: null });
+    run(5, input({ reelOut: true }));
+    expect(ofType(events, 'ropeReeling').map((e) => e.dir)).toEqual(['in', null, 'out']);
     s = run(1, input({ release: true }));
     expect(ofType(events, 'ropeReleased')).toHaveLength(1);
     expect(s.ropeState?.guns[0]?.phase).toBe('idle');
