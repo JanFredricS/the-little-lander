@@ -61,9 +61,9 @@ export interface FlightVessel extends VesselController {
 /**
  * Every engine a vessel may light. 'main' / 'left' / 'right' are the frozen
  * VesselState.engines / `enginesChanged` flags. The S9 lander top thrusters
- * ('topLeft' / 'topRight') are NOT in those frozen contract shapes:
- * renderers read them from FlightVessel.engineFlags(), and the
- * enginesChanged event carries them as extra boolean properties (audio);
+ * ('topLeft' / 'topRight') are NOT in VesselState.engines:
+ * renderers read them from FlightVessel.engineFlags(); the enginesChanged
+ * event has them as OPTIONAL fields (S9 amendment, audit cycle 1);
  * VesselState.engines stays exactly main/left/right. Readers go through
  * engineOn(), so contract consumers that only know main/left/right are
  * unaffected.

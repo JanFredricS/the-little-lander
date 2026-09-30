@@ -142,7 +142,7 @@ describe('S9 top thrusters: physics', () => {
     const s = r.tick(input({ topRight: true }));
     expect(s.engines).toEqual({ main: false, left: false, right: false });
     expect(r.vessel.engineFlags()).toMatchObject({ topLeft: false, topRight: true });
-    const ev = r.events.filter((e) => e.type === 'enginesChanged').at(-1) as unknown as Record<string, boolean>;
+    const ev = r.events.filter((e) => e.type === "enginesChanged").at(-1);
     expect(ev).toMatchObject({ main: false, left: false, right: false, topLeft: false, topRight: true });
     r.tick();
     expect(r.vessel.engineFlags().topRight).toBe(false);

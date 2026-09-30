@@ -15,7 +15,6 @@ import type {
   BodyContact,
   CrashCause,
   FuelChangeReason,
-  GameEventOf,
   GameEventSink,
   HullChangeReason,
   InputFrame,
@@ -271,13 +270,12 @@ export abstract class VesselBase implements FlightVessel {
     return !this.crashed && this.fuel > 0;
   }
 
-  /** Set the lit engines; `enginesChanged` fires on any change (the S9 top flags ride along as extra properties). */
+  /** Set the lit engines; `enginesChanged` fires on any change (incl. the S9 top-thruster flags). */
   protected setEngines(main: boolean, left: boolean, right: boolean, topLeft = false, topRight = false): void {
     const e = this.engines;
     if (e.main === main && e.left === left && e.right === right && e.topLeft === topLeft && e.topRight === topRight) return;
     this.engines = { main, left, right, topLeft, topRight };
-    const ev: GameEventOf<'enginesChanged'> & EngineFlagsExt = { type: 'enginesChanged', main, left, right, topLeft, topRight };
-    this.events(ev);
+    this.events({ type: 'enginesChanged', main, left, right, topLeft, topRight });
   }
 
   /** Burn `fraction` of the tank (a 'burn' fuelChanged event every 5 %). */
