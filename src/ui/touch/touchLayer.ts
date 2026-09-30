@@ -9,7 +9,7 @@
 
 import type { VesselMode } from '../../contracts';
 import { rasterText } from '../font';
-import { touchLayout, type TouchLayout } from './touchLayout';
+import { touchLayout, type TouchLayout, type TouchLayoutOptions } from './touchLayout';
 import { TouchModel, type ControlSink } from './touchModel';
 
 const STYLE_ID = 'tll-touch-style';
@@ -47,6 +47,7 @@ export class TouchLayer {
   private lastSize = '';
   private ro: ResizeObserver | null = null;
   private visible = false;
+  private opts: TouchLayoutOptions = {};
 
   constructor(
     private readonly host: HTMLElement,
@@ -104,6 +105,14 @@ export class TouchLayer {
     this.relayout();
   }
 
+  /** S9: swapped engine buttons (Settings.swapEngineButtons); rebuilds the buttons (releasing held ones) when it changes. */
+  setSwapEngines(swap: boolean): void {
+    if (!!this.opts.swapEngines === swap) return;
+    this.opts = { ...this.opts, swapEngines: swap };
+    this.lastSize = '';
+    this.relayout();
+  }
+
   dispose(): void {
     this.model.clear();
     this.ro?.disconnect();
@@ -116,10 +125,10 @@ export class TouchLayer {
     if (!this.visible || !this.mode) return;
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
-    const key = `${this.mode}|${w}|${h}`;
+    const key = `${this.mode}|${w}|${h}|${!!this.opts.swapEngines}`;
     if (key === this.lastSize) return;
     this.lastSize = key;
-    this.layout = touchLayout(this.mode, w, h);
+    this.layout = touchLayout(this.mode, w, h, this.opts);
     this.model.setLayout(this.layout);
     this.el.replaceChildren();
     this.btnEls.clear();

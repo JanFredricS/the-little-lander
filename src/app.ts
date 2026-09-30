@@ -39,7 +39,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'save'>;
 }
 
 /**
@@ -117,6 +117,8 @@ export class App {
       save: () => this.save.state,
       touchPref: this.save.state.settings.touchControls,
       onTouchPrefChange: (p) => this.save.setSettings({ touchControls: p }),
+      swapEngineButtons: this.save.state.settings.swapEngineButtons,
+      onSwapEngineButtonsChange: (swap) => this.save.setSettings({ swapEngineButtons: swap }),
       story: () => this.storyContext(),
       onContinueStory: () => this.titleContinue(),
       ...uiOpts,

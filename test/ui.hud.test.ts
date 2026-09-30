@@ -202,6 +202,13 @@ describe('controls help', () => {
       expect(helpCard(m, true).lines.join(' ')).not.toMatch(/SPACE/);
     }
     expect(helpCard('lander', false).lines.join(' ')).toMatch(/LEFT ENGINE/);
+    // S9: top thrusters on the keyboard + touch cards; the swapped touch card explains the flip
+    expect(helpCard('lander', false).lines.join(' ')).toMatch(/Q \/ U\s+TOP LEFT/);
+    expect(helpCard('lander', false).lines.join(' ')).toMatch(/E \/ O\s+TOP RIGHT/);
+    expect(helpCard('lander', true).lines.join(' ')).toMatch(/TOP L/);
+    expect(helpCard('lander', true, true, true).lines.join(' ')).toMatch(/LEFT BUTTON FIRES THE RIGHT ENGINE/);
+    expect(helpCard('lander', false, true, true)).toEqual(helpCard('lander', false, true, false)); // keyboard unaffected
+    expect(helpCardKey('lander', true, true, 0, true)).not.toBe(helpCardKey('lander', true, true, 0, false));
   });
 
   it('help card cache key changes with the theme border (level change re-tints the card)', () => {
@@ -215,6 +222,8 @@ describe('controls help', () => {
     expect(frameHasInput({ ...f, aim: { x: 1, y: 0 }, aimTarget: { x: 10, y: 10 } })).toBe(false);
     expect(frameHasInput({ ...f, aim: { x: 1, y: 0 }, aimTarget: null })).toBe(true);
     expect(frameHasInput({ ...f, engineLeft: true })).toBe(true);
+    expect(frameHasInput({ ...f, topLeft: true })).toBe(true); // S9 top thrusters dismiss the card too
+    expect(frameHasInput({ ...f, topRight: true })).toBe(true);
     expect(frameHasInput({ ...f, fire: true })).toBe(true);
   });
 });

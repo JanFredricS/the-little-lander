@@ -32,18 +32,22 @@ beacons, find the missing research team and get everyone home.
 
 Each level opens with a controls card for the current vessel (press any
 control to start). **Esc / P** (keyboard) or **II** (touch) pauses. The
-pause menu can restart the level, show the controls card again and switch
-the touch controls on, off or auto.
+pause menu can restart the level, show the controls card again, switch
+the touch controls on, off or auto, and toggle **SWAP ENGINE BUTTONS**.
 
 | Vessel | Keyboard / mouse | Touch |
 |---|---|---|
 | **CSM** (maps 2-3) | **W / ↑ / Space** thrust (pulse it, it is strong) · **A / ←** rotate left · **D / →** rotate right | ◀ ▶ under the left thumb rotate · **THRUST** under the right thumb (short taps) |
-| **Lander** (maps 1, 3-4, 8) | **A / ← / J** left engine · **D / → / L** right engine · **W / ↑ / K / Space** both engines. One engine alone tilts you, so pulse to steer · **Q / U** top-left thruster · **E / O** top-right thruster (they push the other way: upside down, both lift you and one flips you back over) | **L ENG** bottom left · **R ENG** bottom right · hold both to go straight up · smaller **TOP L / TOP R** buttons above them fire the top thrusters |
+| **Lander** (maps 1, 3-4, 8) | **A / ← / J** left engine · **D / → / L** right engine · **W / ↑ / K / Space** both engines. One engine alone tilts you, so pulse to steer · **Q / U** top-left thruster · **E / O** top-right thruster (they push the other way: upside down, both lift you and one flips you back over) | Two big engine buttons in the bottom corners, hold both to go straight up · smaller **TOP L / TOP R** buttons above them fire the top thrusters. By default the buttons are **swapped**: the left button fires the right engine (you tilt toward the button you press), and the top buttons swap the same way. **SWAP ENGINE BUTTONS: OFF** in the pause menu puts **L ENG** back on the left |
 | **Harpoon pod** (map 5) | **Mouse / arrows** aim · **Click / Space** fire · **Right click / X** release · **W / R** reel in · **S / F** reel out | Drag on the left half to aim · **FIRE / REL** harpoon · **▲ IN / ▼ OUT** reel |
 | **Harpoon + thrust** (maps 6-7) | **Mouse / arrows** aim · **Click / Space** fire · **X** release · **W** thrust · **A / D** rotate · **R** reel in · **F** reel out | Drag on the left to aim · **FIRE / REL** · **▲▼** reel · **◀ ▶** rotate · **THR** thrust |
 
 Touch controls appear automatically on touch devices. Force them with
-`?touch=on` or `?touch=off`.
+`?touch=on` or `?touch=off`. On phones, pressing START (or the first tap)
+switches to fullscreen where the browser allows it; on iPhone Safari a
+"swipe up for fullscreen" hint shows while the landscape toolbar is
+visible. In portrait the game view fills the screen width, with the touch
+buttons in the bars above and below it.
 
 ## The story
 

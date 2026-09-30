@@ -99,6 +99,68 @@ describe('S9 lander top-thruster buttons', () => {
   });
 });
 
+describe('S9 swapped engine buttons (touch)', () => {
+  const side = (l: ReturnType<typeof touchLayout>, control: string, w: number) => {
+    const b = l.buttons.find((x) => x.control === control)!;
+    return b.rect.x + b.rect.w / 2 < w / 2 ? 'left' : 'right';
+  };
+
+  it('direct mapping: left buttons fire the left engine / top thruster', () => {
+    const l = touchLayout('lander', 844, 390, { swapEngines: false });
+    expect(side(l, 'engineLeft', 844)).toBe('left');
+    expect(side(l, 'engineRight', 844)).toBe('right');
+    expect(side(l, 'topLeft', 844)).toBe('left');
+    expect(side(l, 'topRight', 844)).toBe('right');
+    expect(touchLayout('lander', 844, 390)).toEqual(l); // pure default = direct
+  });
+
+  it('swapped: the LEFT buttons fire the RIGHT engine / top thruster and vice versa; labels name the engine', () => {
+    for (const [w, h] of SIZES) {
+      const l = touchLayout('lander', w, h, { swapEngines: true });
+      expect(side(l, 'engineRight', w), `${w}x${h}`).toBe('left');
+      expect(side(l, 'engineLeft', w)).toBe('right');
+      expect(side(l, 'topRight', w)).toBe('left');
+      expect(side(l, 'topLeft', w)).toBe('right');
+      expect(l.buttons.find((b) => b.control === 'engineRight')!.label).toBe('R ENG');
+      // same rects as the direct layout, only the controls move
+      const d = touchLayout('lander', w, h);
+      expect(l.buttons.map((b) => b.rect).sort((a, b) => a.x - b.x || a.y - b.y)).toEqual(d.buttons.map((b) => b.rect).sort((a, b) => a.x - b.x || a.y - b.y));
+    }
+  });
+
+  it('touch model: pressing the bottom-left button presses engineRight when swapped, engineLeft when direct', () => {
+    for (const [swap, left, right, topLeftSide] of [
+      [true, 'engineRight', 'engineLeft', 'topRight'],
+      [false, 'engineLeft', 'engineRight', 'topLeft'],
+    ] as const) {
+      const l = touchLayout('lander', 844, 390, { swapEngines: swap });
+      const bl = l.buttons.filter((b) => b.control !== 'pause').sort((a, b) => a.rect.x - b.rect.x || b.rect.y - a.rect.y);
+      const bottomLeft = centre(bl[0]!.rect);
+      const topLeftBtn = centre(bl[1]!.rect);
+      const bottomRight = centre(l.buttons.find((b) => b.control === right)!.rect);
+      const sink = new Sink();
+      const m = new TouchModel(sink);
+      m.setLayout(l);
+      m.down(1, bottomLeft.x, bottomLeft.y);
+      m.down(2, bottomRight.x, bottomRight.y);
+      m.down(3, topLeftBtn.x, topLeftBtn.y);
+      expect(sink.log, `swap=${swap}`).toEqual([`+${left}`, `+${right}`, `+${topLeftSide}`]);
+    }
+  });
+
+  it('other modes ignore the swap', () => {
+    for (const mode of ['csm', 'harpoon', 'harpoonThrust'] as const) expect(touchLayout(mode, 844, 390, { swapEngines: true })).toEqual(touchLayout(mode, 844, 390));
+  });
+
+  it('keyboard mapping is unaffected by the setting (it lives in the touch layout only)', async () => {
+    const { DEFAULT_BINDINGS } = await import('../src/shell/input');
+    expect(DEFAULT_BINDINGS.lander.KeyA).toEqual(['engineLeft']);
+    expect(DEFAULT_BINDINGS.lander.KeyD).toEqual(['engineRight']);
+    expect(DEFAULT_BINDINGS.lander.KeyQ).toEqual(['topLeft']);
+    expect(DEFAULT_BINDINGS.lander.KeyE).toEqual(['topRight']);
+  });
+});
+
 describe('touch model (multi-touch)', () => {
   const layout = touchLayout('lander', 844, 390);
   const L = centre(layout.buttons.find((b) => b.control === 'engineLeft')!.rect);

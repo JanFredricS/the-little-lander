@@ -43,6 +43,10 @@ export interface GameUiOptions {
   touchPref?: TouchPref;
   /** Persist a changed preference (the App writes SaveState.settings.touchControls). */
   onTouchPrefChange?(p: TouchPref): void;
+  /** S9: initial swapped-engine-buttons setting (SaveState.settings.swapEngineButtons; default true). */
+  swapEngineButtons?: boolean;
+  /** Persist a changed swap setting. */
+  onSwapEngineButtonsChange?(swap: boolean): void;
   /** Story flow hooks for the title CONTINUE / results NEXT items (S3). */
   story?(): StoryContext;
   /** Title CONTINUE activated: the App resumes the story (cutscene + level). */
@@ -71,6 +75,7 @@ export class GameUi {
   private loading = false;
   private touchDetected: boolean;
   private touchPref: TouchPref;
+  private swapEngines: boolean;
   private lastHull: number | null = null;
   private press: { id: number; x: number; y: number; index: number; dragged: boolean; scrollAnchor: number } | null = null;
   private readonly unbind: (() => void)[] = [];
@@ -84,7 +89,9 @@ export class GameUi {
     this.hudView.root.visible = false;
     this.touchDetected = detectTouch();
     this.touchPref = o.touchPref ?? 'auto';
+    this.swapEngines = o.swapEngineButtons ?? true;
     this.touch = new TouchLayer(o.host, o.virtual);
+    this.touch.setSwapEngines(this.swapEngines);
     this.rotate = new RotateHint(o.host, () => this.touchDetected);
 
     const onKey = (e: KeyboardEvent) => this.onKey(e);
@@ -171,6 +178,7 @@ export class GameUi {
       save: (this.o.save ?? readSaveView)(),
       showDebug: !!this.o.showDebugLevels,
       touchPref: this.touchPref,
+      swapEngines: this.swapEngines,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -205,8 +213,8 @@ export class GameUi {
     this.hudView.border = tint;
     this.screenView.border = this.spec ? tint : UI.accent;
     const helpTouch = touchVisible(this.touchPref, this.touchDetected);
-    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false);
-    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks);
+    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines);
+    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines);
     else this.hudView.setHelp(null, false);
   }
 
@@ -318,6 +326,12 @@ export class GameUi {
     } else if (a.ui === 'toggleTouch') {
       this.touchPref = nextTouchPref(this.touchPref);
       this.o.onTouchPrefChange?.(this.touchPref);
+      this.refreshModel(false);
+      this.syncLayers();
+    } else if (a.ui === 'toggleSwap') {
+      this.swapEngines = !this.swapEngines;
+      this.touch.setSwapEngines(this.swapEngines);
+      this.o.onSwapEngineButtonsChange?.(this.swapEngines);
       this.refreshModel(false);
       this.syncLayers();
     }
