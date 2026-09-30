@@ -7,7 +7,7 @@
  * objectiveDone), so the physics internals stay untouched.
  *
  * Step order inside LevelSession.step():
- *   env.beforeStep(); systems.beforeStep()   // forces for this step
+ *   env.beforeStep(); systems.beforeStep(frame)   // forces for this step
  *   vessel.applyInput(); physics.step(); vessel.state()
  *   env.afterStep();  systems.afterStep()    // breakage, hits, kill checks
  *
@@ -15,7 +15,7 @@
  * doors, vines ...). Both should converge on one LevelSystem registry.
  */
 
-import type { GameEvent, LevelSpec, ObjectiveSpec, VesselState } from '../../contracts';
+import type { GameEvent, InputFrame, LevelSpec, ObjectiveSpec, VesselState } from '../../contracts';
 import type { FlightPhysics } from '../../physics/contactData';
 import type { FlightEnvironment } from '../../physics/env/environment';
 import type { FlightVessel } from '../../physics/vessel';
@@ -37,7 +37,7 @@ export interface LevelSystemHost {
 
 export interface LevelSystem {
   /** After env.beforeStep(), before the vessel's input + physics.step(). */
-  beforeStep?(): void;
+  beforeStep?(frame?: InputFrame): void;
   /** After physics.step(), vessel.state() and env.afterStep(). */
   afterStep?(): void;
   /** true once this system considers the objective complete (surviveBoss). */

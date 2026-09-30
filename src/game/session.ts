@@ -151,7 +151,7 @@ export class LevelSession {
     }
     this.checkModeSwitch();
     this.env.beforeStep();
-    for (const sys of this.systems.list) sys.beforeStep?.();
+    for (const sys of this.systems.list) sys.beforeStep?.(frame);
     this.vessel.applyInput(frame, FIXED_DT);
     this.physics.step(FIXED_DT);
     this.vessel.state(); // contacts: crash / damage / soft-land

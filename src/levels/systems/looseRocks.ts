@@ -5,7 +5,9 @@
  * (a harpoon anchored to the rock). Past `breakForce` (low-passed, N) the
  * rock breaks loose: the held body is destroyed — which also drops the rope
  * joint, so the harpoon rig reports ropeBroken('overload'), i.e. "the rock
- * came away" — and a free-falling rock body replaces it.
+ * came away" — and a free-falling rock body replaces it. Reeling in on a
+ * taut rope counts as a winch pull of winchPull x the vessel's weight (see
+ * winchingOn): "harpoon a rock, reel in hard, it comes away".
  *
  * Falling rocks are solid (tag 'fallingRock'): they hurt the vessel like any
  * heavy body, and the Keeper system consumes them as boss hits. Harpoons
@@ -32,6 +34,10 @@ export interface LooseRockOptions {
   restFadeSec?: number;
   /** ... or after this long in total (s). */
   maxFallSec?: number;
+  /** Winch pull on a taut rope while reeling in, x the vessel's weight. */
+  winchPull?: number;
+  /** A rock torn loose snaps down at this speed (px/s, along gravity): a crisp, aimable drop. */
+  snapSpeed?: number;
 }
 
 const DEFAULTS: Required<LooseRockOptions> = {
@@ -40,6 +46,8 @@ const DEFAULTS: Required<LooseRockOptions> = {
   smoothing: 0.3,
   restFadeSec: 1.5,
   maxFallSec: 12,
+  winchPull: 2.6,
+  snapSpeed: 0,
 };
 
 export interface HangingRock {
@@ -71,6 +79,7 @@ export class LooseRockSystem implements LevelSystem {
   private readonly o: Required<LooseRockOptions>;
   private nextId = 1;
   private wrapped: VesselHooks | null = null;
+  private readonly lastLen: (number | undefined)[] = [];
 
   constructor(
     private readonly host: LevelSystemHost,
@@ -103,15 +112,49 @@ export class LooseRockSystem implements LevelSystem {
   afterStep(): void {
     const p = this.host.physics;
     const g = p.getGravity();
+    const winching = this.winchingOn();
     for (const r of this.rocks) {
       if (r.body === null || r.weld === null || !p.hasJoint(r.weld)) continue;
       const f = p.getJointForce(r.weld);
       const m = p.getMass(r.body);
-      const pull = Math.hypot(f.x + m * g.x, f.y + m * g.y);
+      let pull = Math.hypot(f.x + m * g.x, f.y + m * g.y);
+      if (winching !== null && winching.rock === r) pull = Math.max(pull, winching.force);
       r.pull += (pull - r.pull) * this.o.smoothing;
-      if (r.pull > r.entity.breakForce) this.drop(r.entity.id);
+      if (r.pull > r.entity.breakForce) {
+        const pos = vMToPx(this.host.physics.getTransform(r.body));
+        const g = this.host.vessel.hooks.gravityAt?.(pos) ?? this.host.physics.getGravity();
+        const gl = Math.hypot(g.x, g.y) || 1;
+        this.drop(r.entity.id, { x: (g.x / gl) * this.o.snapSpeed, y: (g.y / gl) * this.o.snapSpeed });
+      }
     }
     this.cleanup();
+  }
+
+  /**
+   * The winch pulling on a rock: the rope is anchored on it, taut, and being
+   * reeled in this step. Box2D resets a distance joint's accumulated impulse
+   * when its length changes, so the measured joint force reads ~0 exactly
+   * while the winch works; the winch pull is modelled instead as
+   * winchPull x the vessel's weight (a hanging pod alone never breaks a rock).
+   */
+  private winchingOn(): { rock: HangingRock; force: number } | null {
+    const h = this.host;
+    const guns = h.state.ropeState?.guns ?? [];
+    let out: { rock: HangingRock; force: number } | null = null;
+    guns.forEach((gun, i) => {
+      const prev = this.lastLen[i];
+      this.lastLen[i] = gun.phase === 'anchored' ? gun.length : undefined;
+      if (gun.phase !== 'anchored' || gun.head === undefined || gun.length === undefined || prev === undefined) return;
+      if (prev - gun.length < 0.5) return; // not reeling in
+      const rock = this.rocks.find((r) => r.body !== null && Math.hypot(gun.head!.x - r.entity.x, gun.head!.y - r.entity.y) <= r.entity.radius + 6);
+      if (!rock) return;
+      const mount = (h.vessel as { mountWorld?: () => Vec2 }).mountWorld?.() ?? h.state.pos;
+      const dist = Math.hypot(gun.head.x - mount.x, gun.head.y - mount.y);
+      if (dist < gun.length - 3) return; // slack
+      const gv = h.vessel.hooks.gravityAt?.(h.state.pos) ?? h.physics.getGravity();
+      out = { rock, force: this.o.winchPull * h.physics.getMass(h.vessel.body) * Math.hypot(gv.x, gv.y) };
+    });
+    return out;
   }
 
   /** Break a hanging rock loose (rope pull, boss slam). Returns false if the site is empty. */

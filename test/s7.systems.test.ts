@@ -10,6 +10,7 @@ import { LevelSession } from '../src/game/session';
 import { validateLevel } from '../src/levels/validate';
 import { aheadOfFront } from '../src/levels/systems/killFront';
 import { emptyFrame } from '../src/shell/input';
+import { pxToM } from '../src/physics/units';
 
 const cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -90,6 +91,21 @@ describe('loose rocks', () => {
     expect(s.vessel.hooks.anchorAt(f.rock.body, f.pos).ok).toBe(false);
   });
 
+  it('a pod hanging still does not break a rock, but reeling in on it (the winch) does', async () => {
+    const { s, events, run } = await session(podUnderRock(1000));
+    const weight = s.physics.getMass(s.vessel.body) * 5;
+    // breakForce between the hanging weight and the winch pull
+    (s.systems.rocks!.rocks[0]!.entity as { breakForce: number }).breakForce = weight * 1.8;
+    run(1, input({ fire: true, aim: { x: 0, y: -1 } }));
+    run(180);
+    expect(s.systems.rocks!.isHanging('rock1')).toBe(true);
+    run(30, input({ reelIn: true }));
+    expect(s.systems.rocks!.isHanging('rock1')).toBe(false);
+    expect(events.some((e) => e.type === 'ropeBroken')).toBe(true);
+    run(30, input({ reelIn: true })); // the rig copes with its anchor body vanishing mid-reel
+    expect(s.state.ropeState!.guns[0]!.phase).toBe('idle');
+  });
+
   it('a rock with no rope on it stays put', async () => {
     const { s, run } = await session(podUnderRock(1.5));
     run(180);
@@ -162,5 +178,66 @@ describe('kill front', () => {
     run(2);
     const f = s.systems.killFront!.fronts[0]!;
     expect(f.pos - s.state.pos.y).toBeLessThanOrEqual(700 + 1);
+  });
+});
+
+describe('self-righting assist (harpoonThrust)', () => {
+  /** A harpoonThrust pod knocked onto its side on flat ground. */
+  async function onItsSide() {
+    const env = await session(lab({ vesselMode: 'harpoonThrust', spawn: { x: 500, y: GROUND - 30 } }));
+    env.s.physics.setTransform(env.s.vessel.body, { x: pxToM(500), y: pxToM(GROUND - 9) }, -Math.PI / 2);
+    env.run(90);
+    expect(Math.abs(env.s.state.angle)).toBeGreaterThan(1.2);
+    return env;
+  }
+
+  it('holding rotate towards upright rolls a pod on its side back onto its base', async () => {
+    const { s, run } = await onItsSide();
+    // hold rotate until it is (nearly) upright, like a player would
+    for (let i = 0; i < 150 && s.state.angle < -0.3; i++) run(1, input({ rotateCW: true }));
+    run(60);
+    expect(Math.abs(Math.atan2(Math.sin(s.state.angle), Math.cos(s.state.angle)))).toBeLessThan(0.4);
+    expect(s.state.crashed).toBe(false);
+    expect(s.state.pos.y).toBeGreaterThan(GROUND - 30); // stayed on the ground
+  });
+
+  it('does nothing without the input, or when rotating the wrong way', async () => {
+    const { s, run } = await onItsSide();
+    const a0 = s.state.angle;
+    run(120);
+    run(120, input({ rotateCCW: true }));
+    expect(s.systems.righting!.active).toBe(0);
+    expect(Math.abs(s.state.angle)).toBeGreaterThan(1.0);
+    expect(Math.abs(s.state.angle - a0)).toBeLessThan(Math.PI);
+  });
+
+  it('is off in flight (no contacts)', async () => {
+    const { s, run } = await session(lab({ vesselMode: 'harpoonThrust', spawn: { x: 500, y: 1700 } }));
+    s.physics.setTransform(s.vessel.body, { x: pxToM(500), y: pxToM(1700) }, -1);
+    let max = 0;
+    for (let i = 0; i < 20; i++) {
+      run(1, input({ rotateCW: true }));
+      max = Math.max(max, s.systems.righting!.active);
+    }
+    expect(max).toBe(0);
+  });
+});
+
+describe('loose rock snap', () => {
+  it('a rock torn loose snaps down at snapSpeed (the Keeper arena option: 160 px/s)', async () => {
+    const { s, run } = await session(lab({ id: 'keeper', vesselMode: 'harpoon', spawn: { x: 500, y: ROOF + 200 }, entities: [rock(1000)] }));
+    const weight = s.physics.getMass(s.vessel.body) * 5;
+    (s.systems.rocks!.rocks[0]!.entity as { breakForce: number }).breakForce = weight * 1.8;
+    run(1, input({ fire: true, aim: { x: 0, y: -1 } }));
+    run(120);
+    let vy: number | null = null;
+    for (let i = 0; i < 60 && vy === null; i++) {
+      run(1, input({ reelIn: true }));
+      const f = s.systems.rocks!.fallingInfo();
+      if (f.length) vy = f[0]!.vel.y;
+    }
+    expect(vy).not.toBeNull();
+    expect(vy!).toBeGreaterThan(150);
+    expect(vy!).toBeLessThan(175);
   });
 });

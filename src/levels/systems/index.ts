@@ -9,12 +9,14 @@ import { KeeperSystem } from '../boss/keeperSystem';
 import { CrumbleSystem } from './crumble';
 import { KillFrontSystem, type KillFrontOptions } from './killFront';
 import { LooseRockSystem, type LooseRockOptions } from './looseRocks';
+import { RightingSystem } from './righting';
 import type { LevelSystem, LevelSystemHost } from './types';
 
 export type { LevelSystem, LevelSystemHost } from './types';
 export { CrumbleSystem } from './crumble';
 export { KillFrontSystem } from './killFront';
 export { LooseRockSystem } from './looseRocks';
+export { RightingSystem } from './righting';
 export { KeeperSystem } from '../boss/keeperSystem';
 
 export interface LevelSystemOptions {
@@ -24,7 +26,7 @@ export interface LevelSystemOptions {
 
 /** Per-level system options (tuned in the S7 playtest pass). */
 export const LEVEL_SYSTEM_OPTIONS: Partial<Record<LevelId, LevelSystemOptions>> = {
-  keeper: { looseRocks: { respawnSec: 14 } },
+  keeper: { looseRocks: { respawnSec: 14, snapSpeed: 160 } },
   madDash: { killFront: { maxLag: 700 } },
 };
 
@@ -35,6 +37,7 @@ export interface LevelSystems {
   crumble: CrumbleSystem | null;
   killFront: KillFrontSystem | null;
   keeper: KeeperSystem | null;
+  righting: RightingSystem | null;
 }
 
 export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOptions = LEVEL_SYSTEM_OPTIONS[host.spec.id] ?? {}): LevelSystems {
@@ -45,6 +48,7 @@ export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOp
   const killFront = spec.zones.some((z) => z.kind === 'killFront') ? new KillFrontSystem(host, options.killFront, crumble) : null;
   const boss = spec.entities.find((e): e is BossSpawnEntity => e.kind === 'bossSpawn');
   const keeper = boss ? new KeeperSystem(host, boss, rocks) : null;
-  const list = [rocks, crumble, killFront, keeper].filter((s): s is NonNullable<typeof s> => s !== null);
-  return { list, rocks, crumble, killFront, keeper };
+  const righting = spec.vesselMode === 'harpoonThrust' ? new RightingSystem(host) : null;
+  const list = [rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
+  return { list, rocks, crumble, killFront, keeper, righting };
 }

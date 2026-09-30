@@ -95,7 +95,8 @@ export class HarpoonRig {
     const reel = (frame.reelIn ? -this.t.reelInSpeed : 0) + (frame.reelOut ? this.t.reelOutSpeed : 0);
     if (reel !== 0) {
       for (const g of this.guns) {
-        if (g.phase !== 'anchored' || g.joint === null) continue;
+        // the anchor body may have vanished since the last step (postStep reports the snap)
+        if (g.phase !== 'anchored' || g.joint === null || !this.host.physics.hasJoint(g.joint)) continue;
         const next = Math.min(pxToM(this.t.ropeRange), Math.max(pxToM(this.t.ropeMin), g.length + pxToM(reel) * dt));
         // Winch stall (S7 fix): never reel in while the pod lags behind the rope length
         // (pinned against rock / the rope bent over a corner) — an unlimited winch would
