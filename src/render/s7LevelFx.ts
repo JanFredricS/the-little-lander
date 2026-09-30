@@ -9,17 +9,19 @@
  * NOT drawn here (S6's TerrainView / EntityView own them).
  *
  * Hooked into LevelView with two containers (under / over) and one render
- * call — a minimal S7 hook. Rocks / ledges / front are placeholder shapes
- * in the theme's spirit until S2 draws obj.* sprites.
+ * call — a minimal S7 hook. Rocks (hanging, falling, keeper slam pieces)
+ * are S2 boulder sprites and ledge chunks debris sprites, all from one
+ * SpritePool (S8); ledges stay a shaded ruin slab and the front a churning
+ * procedural edge, culled to the view.
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
-import type { ArtApi, LevelSpec, SpriteName, StaticPropEntity, ThemeId } from '../contracts';
+import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
+import type { ArtApi, BodyHandle, LevelSpec, SpriteName, StaticPropEntity, ThemeId, Vec2 } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
+import { SpritePool, SpriteTextures } from './spritePool';
 
-const ROCK = 0x7a6a58;
-const ROCK_DARK = 0x4a3e34;
 const RUIN = 0x6a6a70;
 const RUIN_DARK = 0x3e3e46;
 const FRONT_DARK = 0x1a0c0a;
@@ -59,6 +61,18 @@ const GLOW_RANGE = 1400;
 /** Keeper body frame period (ms) while idle. */
 const IDLE_FRAME_MS = 320;
 
+/** Boulder sprite for a rock of radius r (px), by nearest size. */
+function boulderFor(r: number): { name: SpriteName; size: number } {
+  return r <= 8 ? { name: 'prop.boulderSmall', size: 12 } : r <= 16 ? { name: 'prop.boulderMedium', size: 24 } : { name: 'prop.boulderLarge', size: 48 };
+}
+
+/** Scratch pose (px) reused by S7LevelFx.at(): no per-body allocation per frame. */
+interface PxPose {
+  x: number;
+  y: number;
+  angle: number;
+}
+
 export class S7LevelFx {
   /** Behind terrain (reserved: nothing yet). */
   readonly under = new Container();
@@ -69,7 +83,9 @@ export class S7LevelFx {
   private readonly keeper = new Container();
   private readonly body = new Sprite(Texture.EMPTY);
   private readonly eye = new Sprite(Texture.EMPTY);
-  private readonly textures = new Map<string, Texture>();
+  private readonly tex: SpriteTextures;
+  private readonly pool: SpritePool;
+  private readonly pose: PxPose = { x: 0, y: 0, angle: 0 };
   private readonly theme: ThemeId;
   private readonly dark = new Graphics();
   private readonly glow = new Graphics();
@@ -79,13 +95,17 @@ export class S7LevelFx {
 
   constructor(
     private readonly session: LevelSession,
-    private readonly art: ArtApi,
+    art: ArtApi,
+    tex?: SpriteTextures,
   ) {
     this.theme = session.spec.themeId;
+    this.tex = tex ?? new SpriteTextures(art, this.theme);
+    const rocks = new Container();
+    this.pool = new SpritePool(rocks, this.tex);
     this.keeper.addChild(this.body, this.eye);
     this.keeper.visible = false;
     this.glow.blendMode = 'add';
-    this.over.addChild(this.dark, this.glow, this.g, this.keeper, this.front);
+    this.over.addChild(this.dark, this.glow, this.g, rocks, this.keeper, this.front);
     const d = S7_DARKNESS[session.spec.id];
     this.glowProps = d
       ? session.spec.entities.filter((e): e is StaticPropEntity => e.kind === 'staticProp' && d.glowSprites.includes(e.sprite))
@@ -98,15 +118,13 @@ export class S7LevelFx {
     return !!(s.rocks || s.crumble || s.killFront || s.keeper || S7_DARKNESS[session.spec.id]);
   }
 
-  render(alpha: number, nowMs: number): void {
+  /** `o` = view origin (world px of the view's top-left), for culling. */
+  render(alpha: number, nowMs: number, o: Vec2 = { x: 0, y: 0 }): void {
     const s = this.session;
     const sys = s.systems;
     const p = s.physics;
     const g = this.g.clear();
-    const at = (body: Parameters<typeof p.getInterpolatedTransform>[0]) => {
-      const t = p.getInterpolatedTransform(body, alpha);
-      return { x: mToPx(t.x), y: mToPx(t.y), angle: t.angle };
-    };
+    this.pool.begin();
     const shake = (amp: number) => (Math.sin(nowMs * 0.09) + Math.sin(nowMs * 0.057)) * 0.5 * amp;
 
     this.renderDarkness(nowMs);
@@ -133,8 +151,11 @@ export class S7LevelFx {
       }
       for (const ch of sys.crumble.chunks) {
         if (!p.hasBody(ch.body)) continue;
-        const t = at(ch.body);
-        g.rect(t.x - ch.size / 2, t.y - ch.size / 2, ch.size, ch.size).fill(RUIN);
+        const t = this.at(ch.body, alpha);
+        const big = ch.size > 10;
+        const sp = this.pool.next(big ? 'obj.debrisLarge' : 'obj.debrisSmall', 0, t.x, t.y);
+        sp.scale.set(ch.size / (big ? 16 : 8));
+        sp.rotation = t.angle;
       }
     }
 
@@ -144,15 +165,15 @@ export class S7LevelFx {
         if (!r.body || !p.hasBody(r.body)) continue;
         const e = r.entity;
         const strain = Math.min(1, r.pull / Math.max(0.01, e.breakForce));
-        const t = at(r.body);
+        const t = this.at(r.body, alpha);
         const x = t.x + (strain > 0.3 ? shake(2 * strain) : 0);
-        this.rock(g, x, t.y, e.radius);
+        this.rock(x, t.y, e.radius, t.angle);
         if (strain > 0.5) g.moveTo(x - e.radius * 0.6, t.y - e.radius).lineTo(x + e.radius * 0.6, t.y - e.radius).stroke({ width: 1, color: 0xffe0a0, alpha: strain - 0.4 });
       }
       for (const f of sys.rocks.falling) {
         if (!p.hasBody(f.body)) continue;
-        const t = at(f.body);
-        this.rock(g, t.x, t.y, f.radius);
+        const t = this.at(f.body, alpha);
+        this.rock(t.x, t.y, f.radius, t.angle);
       }
     }
 
@@ -162,8 +183,8 @@ export class S7LevelFx {
       const b = kp.brain;
       for (const piece of kp.pieces) {
         if (!p.hasBody(piece.body)) continue;
-        const t = at(piece.body);
-        this.rock(g, t.x, t.y, piece.radius);
+        const t = this.at(piece.body, alpha);
+        this.rock(t.x, t.y, piece.radius, t.angle);
       }
       const dead = b.mode === 'dead';
       this.keeper.visible = !dead && b.mode !== 'intro';
@@ -215,7 +236,9 @@ export class S7LevelFx {
       }
     }
 
-    // ---- collapse front: a dark churning mass with a burning edge
+    this.pool.end();
+
+    // ---- collapse front: a dark churning mass with a burning edge (teeth + embers culled to the view)
     const fg = this.front.clear();
     if (sys.killFront) {
       const { w, h } = s.spec.worldSize;
@@ -228,7 +251,10 @@ export class S7LevelFx {
           const dir = z.speed < 0 ? 1 : -1; // the kill side extends this way from the edge
           const y0 = dir > 0 ? edge : edge - depth;
           fg.rect(0, y0, w, depth).fill({ color: FRONT_DARK, alpha: 0.92 });
-          for (let x = 0; x < w; x += 16) {
+          if (edge < o.y - 140 || edge > o.y + VIEW_HEIGHT + 140) continue; // edge off-screen: the fill is enough
+          const tx0 = Math.max(0, Math.floor((o.x - 16) / 16) * 16);
+          const tx1 = Math.min(w, o.x + VIEW_WIDTH + 16);
+          for (let x = tx0; x < tx1; x += 16) {
             const tooth = 6 + 6 * Math.abs(Math.sin(x * 0.07 + nowMs * 0.004));
             fg.rect(x, edge - (dir > 0 ? tooth : 0), 16, tooth).fill({ color: FRONT_DARK, alpha: 0.92 });
             fg.rect(x, edge - dir * tooth - 1, 16, 2).fill({ color: FRONT_EDGE, alpha: 0.8 });
@@ -236,6 +262,7 @@ export class S7LevelFx {
           // embers rising off it
           for (let i = 0; i < 24; i++) {
             const ex = (i * 173 + nowMs * 0.03 * (1 + (i % 3))) % w;
+            if (ex < o.x - 2 || ex > o.x + VIEW_WIDTH) continue;
             const ey = edge - dir * (((nowMs * 0.05 + i * 37) % 120) + 4);
             fg.rect(ex, ey, 2, 2).fill({ color: FRONT_EDGE, alpha: 0.7 });
           }
@@ -280,22 +307,28 @@ export class S7LevelFx {
     this.over.destroy({ children: true });
   }
 
-  private rock(g: Graphics, x: number, y: number, r: number): void {
-    g.circle(x, y, r).fill(ROCK);
-    g.circle(x + r * 0.25, y + r * 0.25, r * 0.55).fill(ROCK_DARK);
-    g.circle(x - r * 0.3, y - r * 0.3, r * 0.3).fill(0x9a8a74);
+  /** Interpolated pose of `body` in px, written into one reused scratch object. */
+  private at(body: BodyHandle, alpha: number): PxPose {
+    const t = this.session.physics.getInterpolatedTransform(body, alpha);
+    const q = this.pose;
+    q.x = mToPx(t.x);
+    q.y = mToPx(t.y);
+    q.angle = t.angle;
+    return q;
+  }
+
+  /** A boulder sprite scaled to the rock's collision diameter, rolling with its body. */
+  private rock(x: number, y: number, r: number, angle: number): void {
+    const b = boulderFor(r);
+    const sp = this.pool.next(b.name, 0, x, y);
+    sp.scale.set((2 * r) / b.size);
+    sp.rotation = angle;
   }
 
   private setSprite(sprite: Sprite, name: SpriteName, frame: number): void {
-    const key = `${name}#${frame}`;
-    let tex = this.textures.get(key);
-    const f = this.art.getSprite(name, frame, this.theme);
-    if (!tex) {
-      tex = Texture.from(f.canvas as HTMLCanvasElement);
-      this.textures.set(key, tex);
-    }
-    if (sprite.texture !== tex) sprite.texture = tex;
-    sprite.anchor.set(f.pivot.x / f.width, f.pivot.y / f.height);
+    const f = this.tex.get(name, frame);
+    if (sprite.texture !== f.tex) sprite.texture = f.tex;
+    sprite.anchor.set(f.ax, f.ay);
   }
 }
 

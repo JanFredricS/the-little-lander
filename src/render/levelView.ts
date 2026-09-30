@@ -4,14 +4,16 @@
  * chunks), level-runtime entities (entityView.ts: doors, moving islands,
  * vines, creatures), prop sprites, exit docks, the flight systems
  * (src/render/flightView.ts: vessel, flames, rope, pickups, beacons, goo,
- * debris, zones — pooled sprites) and a dim
- * debug telemetry line (the player HUD is src/ui, S4). Everything is in
- * virtual px; the world container is offset by the interpolated camera.
+ * debris, zones — pooled sprites) and, on debug levels or with ?telemetry
+ * in the URL, a dim telemetry line (the player HUD is src/ui, S4).
+ * Everything is in virtual px; the world container is offset by the
+ * interpolated camera. Static props share cached textures and are culled
+ * to the view each frame (maps 5/6 have ~400).
  */
 
 import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
-import type { ArtApi, BackdropLayer, LevelSpec } from '../contracts';
+import type { ArtApi, BackdropLayer, BodyHandle, LevelSpec } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import { EntityView } from './entityView';
@@ -29,7 +31,12 @@ export class LevelView {
   private readonly s7: S7LevelFx | null;
   private readonly backdrop: { layer: BackdropLayer; view: Sprite | TilingSprite }[] = [];
   private readonly props = new Map<string, Sprite>();
-  private readonly hud: Text;
+  /** Dynamic props: sprite follows its body. */
+  private readonly movers: { sprite: Sprite; body: BodyHandle }[] = [];
+  /** Props that never move (decor + static solid props) with their world AABB, for per-frame culling. */
+  private readonly staticProps: { sprite: Sprite; x0: number; y0: number; x1: number; y1: number }[] = [];
+  private readonly hud: Text | null;
+  private hudNextMs = 0;
   private fpsFrames = 0;
   private fpsLastMs = 0;
   private fps = 0;
@@ -63,7 +70,7 @@ export class LevelView {
 
     for (const e of spec.entities) {
       if (e.kind !== 'staticProp') continue;
-      const s = new Sprite(Texture.from(art.getSprite(e.sprite, 0, spec.themeId).canvas as HTMLCanvasElement));
+      const s = new Sprite(this.flight.tex.get(e.sprite, 0).tex);
       s.anchor.set(0.5);
       s.width = e.w;
       s.height = e.h;
@@ -71,21 +78,32 @@ export class LevelView {
       s.rotation = e.angle ?? 0;
       this.props.set(e.id, s);
       this.world.addChild(s);
+      if (!e.dynamic) {
+        const r = Math.hypot(e.w, e.h) / 2;
+        this.staticProps.push({ sprite: s, x0: e.x - r, y0: e.y - r, x1: e.x + r, y1: e.y + r });
+      }
     }
 
     this.world.addChild(this.flight.over);
     this.world.addChild(this.entities.front);
-    this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art) : null;
+    this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art, this.flight.tex) : null;
     if (this.s7) {
       this.world.addChildAt(this.s7.under, 0);
       this.world.addChild(this.s7.over);
     }
 
-    // S0 debug line; the player HUD is src/ui (S4), so this sits at the bottom, dimmed.
-    this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
-    this.hud.alpha = 0.7;
-    this.hud.position.set(4, spec.debug ? 338 : 348);
-    this.root.addChild(this.hud);
+    for (const [id, { entity, body }] of session.built.props) {
+      const sprite = this.props.get(id);
+      if (sprite && entity.dynamic) this.movers.push({ sprite, body });
+    }
+
+    // Debug telemetry (S0): debug levels, or ?telemetry in the URL. The player HUD is src/ui (S4).
+    if (spec.debug || telemetryRequested()) {
+      this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
+      this.hud.alpha = 0.7;
+      this.hud.position.set(4, spec.debug ? 338 : 348);
+      this.root.addChild(this.hud);
+    } else this.hud = null;
   }
 
   render(alpha: number, nowMs: number, paused: boolean): void {
@@ -105,16 +123,19 @@ export class LevelView {
       } else view.position.set(dx, dy);
     }
 
-    for (const [id, { body }] of s.built.props) {
-      const sprite = this.props.get(id);
-      if (!sprite || !s.physics.hasBody(body)) continue;
+    for (const { sprite, body } of this.movers) {
+      if (!s.physics.hasBody(body)) continue;
       const t = s.physics.getInterpolatedTransform(body, alpha);
       sprite.position.set(mToPx(t.x), mToPx(t.y));
       sprite.rotation = t.angle;
     }
+    const vx1 = o.x + VIEW_WIDTH;
+    const vy1 = o.y + VIEW_HEIGHT;
+    for (const p of this.staticProps) p.sprite.visible = p.x1 > o.x && p.x0 < vx1 && p.y1 > o.y && p.y0 < vy1;
 
     this.flight.render(alpha, nowMs, o);
-    this.s7?.render(alpha, nowMs);
+    this.s7?.render(alpha, nowMs, o);
+    if (!this.hud) return;
     const st = s.state;
 
     this.fpsFrames++;
@@ -123,6 +144,8 @@ export class LevelView {
       this.fpsFrames = 0;
       this.fpsLastMs = nowMs;
     }
+    if (nowMs < this.hudNextMs) return; // Text re-rasterises on change: 4 Hz is plenty
+    this.hudNextMs = nowMs + 250;
     const speed = Math.hypot(st.vel.x, st.vel.y);
     const status = st.crashed ? 'CRASHED' : st.landed ? 'landed' : 'flying';
     // Mode, goo, orbs and beacons are on the S4 HUD (fed by GameEvents); this line is debug-only telemetry.
@@ -168,4 +191,9 @@ export class LevelView {
     }
     return c;
   }
+}
+
+/** ?telemetry in the page URL (browser only). */
+function telemetryRequested(): boolean {
+  return typeof location !== 'undefined' && new URLSearchParams(location.search).has('telemetry');
 }

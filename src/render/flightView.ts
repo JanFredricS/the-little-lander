@@ -70,7 +70,8 @@ export class FlightView {
   private readonly fx = new Graphics();
   private readonly theme: ThemeId;
   private hullKey = '';
-  private readonly tex: SpriteTextures;
+  /** Shared texture cache (LevelView / S7LevelFx reuse it). */
+  readonly tex: SpriteTextures;
   /** Markers in front of terrain (decor tiles would hide them), behind bodies: beacon sites. */
   private readonly markers: SpritePool;
   /** Bodies in front: pickups, beacons, debris, goo, rope. */

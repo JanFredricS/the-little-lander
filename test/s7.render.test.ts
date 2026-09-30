@@ -18,7 +18,7 @@ import { S7LevelFx, s7DarknessAt } from '../src/render/s7LevelFx';
 import type { Pilot } from './support/s7Harness';
 import { keeperPilot, landerDashPilot } from './support/s7Pilots';
 
-const art = { getSprite: () => ({ canvas: {}, width: 8, height: 8, pivot: { x: 4, y: 4 } }) } as unknown as ArtApi;
+const art = { getSprite: () => ({ canvas: {}, width: 8, height: 8, pivot: { x: 4, y: 4 } }), getSpriteFrameCount: () => 1 } as unknown as ArtApi;
 
 beforeAll(() => {
   vi.spyOn(Texture, 'from').mockImplementation(() => Texture.WHITE);
@@ -35,7 +35,7 @@ async function drive(spec: LevelSpec, pilot: Pilot, seconds: number, seen: (fx: 
   for (let i = 0; i < seconds * 60 && !s.outcome; i++) {
     s.step(pilot(s, i));
     if (i % 3 === 0) {
-      fx.render(0.5, i * 16.7);
+      fx.render(0.5, i * 16.7, { x: s.state.pos.x - 320, y: s.state.pos.y - 180 }); // view follows the vessel (culling)
       seen(fx, s);
     }
   }
