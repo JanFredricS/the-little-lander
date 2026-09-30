@@ -66,6 +66,14 @@ export class WebAudioDriver implements AudioDriver {
   private build(): void {
     const C = audioContextCtor();
     if (!C) return;
+    // iOS Safari 16.4+: without this, WebAudio is muted by the ring/silent
+    // hardware switch. 'playback' opts the page into media-style audio.
+    try {
+      const sess = (navigator as { audioSession?: { type: string } }).audioSession;
+      if (sess) sess.type = 'playback';
+    } catch {
+      /* older browsers: no audioSession */
+    }
     const ctx = new C({ latencyHint: 'interactive' });
     this.ctx = ctx;
     const comp = ctx.createDynamicsCompressor();
