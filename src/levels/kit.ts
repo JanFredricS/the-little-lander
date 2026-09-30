@@ -315,3 +315,24 @@ export function scatterRocks(nodes: readonly TubeNode[], seed: number, o: Scatte
   }
   return out;
 }
+
+/** All y where a closed polygon's edges cross the vertical line at x (sorted). */
+export function crossingsAt(points: readonly Vec2[], x: number): number[] {
+  const ys: number[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
+    if ((a.x <= x && b.x > x) || (b.x <= x && a.x > x)) ys.push(a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x));
+  }
+  return ys.sort((p, q) => p - q);
+}
+
+/** Top / bottom surface of a polygon piece at x (NaN when x misses it). */
+export function topAt(points: readonly Vec2[], x: number): number {
+  const ys = crossingsAt(points, x);
+  return ys.length ? ys[0]! : NaN;
+}
+export function bottomAt(points: readonly Vec2[], x: number): number {
+  const ys = crossingsAt(points, x);
+  return ys.length ? ys[ys.length - 1]! : NaN;
+}

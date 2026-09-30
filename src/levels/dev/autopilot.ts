@@ -65,6 +65,7 @@ export class Autopilot {
   private accL = 0;
   private accR = 0;
   private accM = 0;
+  private descending = false;
 
   constructor(readonly route: readonly RouteNode[]) {}
 
@@ -139,7 +140,11 @@ export class Autopilot {
     let vdy: number;
     if (node.land) {
       const above = node.y - 50;
-      if (Math.abs(dx) > 10 || pos.y < above - 60) {
+      // hysteresis: start the final descent once centred (10 px), abandon
+      // it only when blown well off (30 px)
+      if (this.descending ? Math.abs(dx) > 30 : Math.abs(dx) > 10 || pos.y < above - 60) this.descending = false;
+      else this.descending = true;
+      if (!this.descending) {
         // get above the pad first
         const tx = node.x - pos.x;
         const ty = Math.min(above, pos.y) - pos.y;
@@ -270,6 +275,7 @@ export class Autopilot {
 
   private advance(): void {
     this.i++;
+    this.descending = false;
     this.held = 0;
   }
 }
