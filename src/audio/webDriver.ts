@@ -34,10 +34,6 @@ function audioContextCtor(): Ctor | null {
   return w.AudioContext ?? w.webkitAudioContext ?? null;
 }
 
-export function webAudioAvailable(): boolean {
-  return audioContextCtor() !== null;
-}
-
 const MIN_GAIN = 0.0001;
 
 export class WebAudioDriver implements AudioDriver {

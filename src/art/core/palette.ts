@@ -112,11 +112,3 @@ export function crossMap(src: ArtPalette, dst: ArtPalette, overrides: Readonly<R
   for (const [k, v] of Object.entries(overrides)) t[Number(k)] = v;
   return t;
 }
-
-/** Blend two colours (used only when AUTHORING palettes, never per pixel). */
-export function mixRgb(a: Rgb, b: Rgb, t: number): Rgb {
-  const A = rgb(a),
-    B = rgb(b);
-  const ch = (k: number) => Math.round(A[k]! * (1 - t) + B[k]! * t);
-  return (ch(0) << 16) | (ch(1) << 8) | ch(2);
-}

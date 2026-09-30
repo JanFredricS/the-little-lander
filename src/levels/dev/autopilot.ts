@@ -33,11 +33,6 @@ export interface RouteNode {
   stop?: boolean;
 }
 
-export interface AutopilotStats {
-  node: number;
-  done: boolean;
-}
-
 const G_ALIGN = 0.5; // csm: max angle error (rad) to fire the main engine
 const GOO_DEFEND_RADIUS = 95; // csm: burn free goo closer than this (px)
 

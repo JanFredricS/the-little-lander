@@ -98,26 +98,6 @@ export function vGradient(p: Pix, x: number, y: number, w: number, h: number, ra
   }
 }
 
-/**
- * Radial glow: remaps pixels within radius r through `table` with dither
- * density falling off from the centre. Use for light pools / halos.
- */
-export function glowRemap(p: Pix, cx: number, cy: number, rx: number, ry: number, table: ArrayLike<number>, strength = 1, falloff = 1.5): void {
-  p.apply(
-    (x, y, cur) => {
-      if (cur === 0) return -1;
-      const d = Math.hypot((x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry);
-      if (d >= 1) return -1;
-      const k = Math.pow(1 - d, falloff) * strength;
-      return k > bayer(x, y) ? (table[cur] ?? cur) : -1;
-    },
-    cx - rx - 1,
-    cy - ry - 1,
-    rx * 2 + 2,
-    ry * 2 + 2,
-  );
-}
-
 /** Solid radial halo painted (not remapped) through a ramp: bright centre -> dithered edge. */
 export function halo(p: Pix, cx: number, cy: number, r: number, ramp: readonly number[], opts: { core?: number; onlyOver?: boolean } = {}): void {
   p.apply(
@@ -134,17 +114,6 @@ export function halo(p: Pix, cx: number, cy: number, r: number, ramp: readonly n
     r * 2 + 2,
     r * 2 + 2,
   );
-}
-
-/** Polygon points for a regular-ish jagged shape. */
-export function jaggedPoly(cx: number, cy: number, rx: number, ry: number, n: number, seed: number, jag = 0.3): [number, number][] {
-  const pts: [number, number][] = [];
-  for (let i = 0; i < n; i++) {
-    const a = (i / n) * Math.PI * 2 + (hash2(i, 0, seed) - 0.5) * 0.4;
-    const r = 1 - jag / 2 + hash2(i, 1, seed) * jag;
-    pts.push([cx + Math.cos(a) * rx * r, cy + Math.sin(a) * ry * r]);
-  }
-  return pts;
 }
 
 /** A new buffer (helper to keep call sites short). */
