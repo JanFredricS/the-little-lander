@@ -13,7 +13,7 @@
  * rope layer (flight.over); the rest sit between terrain and the vessel.
  */
 
-import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
+import { Container, Graphics, Sprite, Text, Texture, TextureSource, TilingSprite } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, BackdropLayer, BodyHandle, LevelSpec } from '../contracts';
 import type { LevelSession } from '../game/session';
@@ -181,11 +181,47 @@ export class LevelView {
       ` · v ${speed.toFixed(0)}px/s · ${status} · ${this.fps}fps${paused ? ' · PAUSED' : ''}`;
   }
 
+  /**
+   * Hand every texture this level can show to `upload` once, so it reaches
+   * the GPU on the loading screen rather than when first seen: the shared
+   * sprite cache (pre-warmed flight / particle / S7 rock + Keeper frames),
+   * every vessel-pose halo, and every Sprite / TilingSprite in the display
+   * tree (backdrops, props, hidden pooled and flame sprites). Terrain chunks
+   * are painted and uploaded as the camera streams them (only the ones on
+   * screen at load are included).
+   */
+  forEachTextureSource(upload: (source: TextureSource) => void): void {
+    const seen = new Set<TextureSource>();
+    const add = (t: Texture | undefined) => {
+      if (!t || t === Texture.EMPTY || seen.has(t.source)) return;
+      seen.add(t.source);
+      upload(t.source);
+    };
+    this.flight.tex.forEachTexture(add);
+    this.flight.forEachExtraTexture(add);
+    const walk = (c: Container) => {
+      if (c instanceof Sprite || c instanceof TilingSprite) add(c.texture);
+      for (const child of c.children) walk(child);
+    };
+    walk(this.root);
+  }
+
+  /**
+   * Level teardown, including the GPU: every texture source the level
+   * pre-uploaded is unloaded now instead of lingering until Pixi's (slow,
+   * 5 min) GC. Sources are unloaded, not destroyed: most wrap memoised art
+   * canvases that menus or the next level may use again (they simply
+   * re-upload). Terrain chunk textures are owned and destroyed by TerrainView.
+   */
   destroy(): void {
+    const sources: TextureSource[] = [];
+    this.forEachTextureSource((src) => sources.push(src));
     this.feel.destroy();
     this.terrain.destroy();
     this.entities.destroy();
+    this.flight.destroy(); // halos + sprite cache teardown (its containers leave the tree)
     this.root.destroy({ children: true });
+    for (const src of sources) if (!src.destroyed) src.unload();
   }
 
   /**

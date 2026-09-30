@@ -26,6 +26,23 @@ function ball(w: PhysicsWorld, x = 0, y = 0) {
 }
 
 describe('PhysicsWorld', () => {
+  it('getGravity mirrors exactly what Box2D stores (float32), without the per-call wasm read', async () => {
+    const w = await world({ x: 0.1, y: 9.81 });
+    const native = () => {
+      const b2 = (w as unknown as { b2: { b2World_GetGravity(id: unknown): { x: number; y: number; delete(): void } } }).b2;
+      const g = b2.b2World_GetGravity((w as unknown as { worldId: unknown }).worldId);
+      const out = { x: g.x, y: g.y };
+      g.delete();
+      return out;
+    };
+    expect(w.getGravity()).toEqual(native());
+    w.setGravity({ x: -0.3, y: 1.7 });
+    expect(w.getGravity()).toEqual(native());
+    const g = w.getGravity();
+    g.y = 99; // a copy: callers cannot mutate the world's gravity
+    expect(w.getGravity()).toEqual(native());
+  });
+
   it('falls under gravity (y-down) at the expected rate', async () => {
     const w = await world();
     const b = ball(w);

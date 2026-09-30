@@ -10,7 +10,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Container, Graphics, Texture } from 'pixi.js';
+import { Container, Graphics, Texture, TextureSource } from 'pixi.js';
 import type { ArtApi, Vec2 } from '../src/contracts';
 import { LevelSession } from '../src/game/session';
 import { floatingIsles } from '../src/levels/floatingIsles';
@@ -224,5 +224,90 @@ describe('render culling', () => {
     expect(staticProps.some((p) => p.sprite === fg)).toBe(true);
     lv.destroy();
     s.destroy();
+  });
+});
+
+describe('per-frame render helpers (hitch pass)', () => {
+  it('clearIfDrawn leaves an empty Graphics untouched (no geometry rebuild)', async () => {
+    const { clearIfDrawn } = await import('../src/render/spritePool');
+    const g = new Graphics();
+    let updates = 0;
+    g.context.on('update', () => updates++);
+    clearIfDrawn(g);
+    clearIfDrawn(g);
+    expect(updates).toBe(0);
+    g.rect(0, 0, 4, 4).fill(0xffffff);
+    const before = updates;
+    clearIfDrawn(g);
+    expect(updates).toBe(before + 1);
+    expect(g.context.instructions.length).toBe(0);
+  });
+
+  it('SpritePool.reserve pre-creates hidden sprites that next() then reuses', async () => {
+    const { SpritePool } = await import('../src/render/spritePool');
+    const layer = new Container();
+    const tex = { get: () => ({ tex: Texture.WHITE, ax: 0.5, ay: 0.5 }) } as unknown as ConstructorParameters<typeof SpritePool>[1];
+    const pool = new SpritePool(layer, tex);
+    pool.reserve(8);
+    expect(layer.children).toHaveLength(8);
+    expect(layer.children.every((c) => !c.visible)).toBe(true);
+    pool.begin();
+    for (let i = 0; i < 8; i++) pool.next('fx.spark', 0, i, i);
+    pool.end();
+    expect(layer.children).toHaveLength(8); // no new display objects
+    expect(layer.children.every((c) => c.visible)).toBe(true);
+  });
+});
+
+describe('LevelView GPU set (pre-upload at load, unload at teardown)', () => {
+  it('enumerates the S7 rock / Keeper frames before they are ever drawn, and unloads everything on destroy', async () => {
+    // distinct canvas per (sprite, frame) and a real texture per canvas, so sources can be told apart
+    const canvases = new Map<string, object>();
+    const byCanvas = new Map<object, Texture>();
+    const named = new Map<Texture, string>();
+    const levelArt = {
+      getSprite: (name: string, frame: number) => {
+        const key = `${name}#${frame}`;
+        let canvas = canvases.get(key);
+        if (!canvas) canvases.set(key, (canvas = { key }));
+        return { canvas, width: 8, height: 8, pivot: { x: 4, y: 4 } };
+      },
+      getSpriteFrameCount: () => 2,
+      palettes: new Proxy({}, { get: () => ({ background: 0 }) }),
+      getBackdropLayers: () => [],
+    } as unknown as ArtApi;
+    const from = vi.spyOn(Texture, 'from').mockImplementation(((canvas: { key?: string }) => {
+      let t = byCanvas.get(canvas);
+      if (!t) {
+        t = new Texture({ source: new TextureSource({ width: 8, height: 8 }) });
+        byCanvas.set(canvas, t);
+        named.set(t, canvas.key ?? '?');
+      }
+      return t;
+    }) as typeof Texture.from);
+    const unload = vi.spyOn(TextureSource.prototype, 'unload');
+    try {
+      const s = await LevelSession.create(keeper);
+      s.start();
+      const lv = new LevelView(s, levelArt);
+      const sources = new Set<TextureSource>();
+      lv.forEachTextureSource((src) => sources.add(src));
+      const names = new Set([...named].filter(([t]) => sources.has(t.source)).map(([, n]) => n));
+      for (const n of ['boss.keeperBody#0', 'boss.keeperBody#1', 'boss.keeperEye#1', 'prop.boulderLarge#0', 'obj.debrisSmall#0', 'fx.explosion#1'])
+        expect(names.has(n), n).toBe(true);
+      // each source once
+      let calls = 0;
+      lv.forEachTextureSource(() => calls++);
+      expect(calls).toBe(sources.size);
+
+      unload.mockClear();
+      lv.destroy();
+      const unloaded = new Set(unload.mock.contexts as TextureSource[]);
+      for (const src of sources) expect(unloaded.has(src)).toBe(true);
+      s.destroy();
+    } finally {
+      unload.mockRestore();
+      from.mockImplementation(() => Texture.WHITE);
+    }
   });
 });

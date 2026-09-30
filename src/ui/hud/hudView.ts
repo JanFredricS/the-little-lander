@@ -15,6 +15,13 @@ import { UI } from '../uiTheme';
 import { fuelLow, HULL_LOW, MODE_LABEL, objectiveLines, windArrow, type HudState } from './hudState';
 
 const MAX_OBJECTIVE_LINES = 5;
+/** Slots of the vector-layer redraw key (see render()). */
+const KEY_SLOTS = 11;
+
+/** Bar fill fraction as bar() clamps it (NaN -> 0). */
+function clampFrac(v: number): number {
+  return Math.max(0, Math.min(1, v || 0));
+}
 
 export class HudView {
   readonly root = new Container();
@@ -35,6 +42,18 @@ export class HudView {
   private readonly helpBody = new PixelText('', { color: UI.ink });
   private readonly helpHint = new PixelText('', { color: UI.dim });
   private helpKey = '';
+  /**
+   * Inputs of the last vector redraw. Pixi rebuilds a Graphics' geometry (and
+   * the JS garbage that goes with it) on every clear(), so the bars / panel /
+   * badge are only redrawn when something they show changed, not every frame.
+   */
+  private readonly drawKey = new Float64Array(KEY_SLOTS).fill(NaN);
+  private keyChanged = false;
+  // text inputs of the last frame (strings are only rebuilt when these change)
+  private extrasFor = [-1, -1, -1];
+  private objectivesFor: HudState['objectives'] | null = null;
+  private objectiveCount = 0;
+  private radFor = NaN;
   border: number = UI.ink;
   /** Virtual px the fuel/hull panel shifts right to clear the touch RESTART button (0 without touch controls). */
   leftInset = 0;
@@ -81,44 +100,40 @@ export class HudView {
 
   render(s: HudState, nowMs: number): void {
     const blink = Math.floor(nowMs / 250) % 2 === 0;
-    const g = this.g.clear();
+    this.keyChanged = false;
 
     // --- fuel / hull panel (top-left; right of the touch RESTART button when shown)
-    const extras: string[] = [];
-    if (s.attachedGoo > 0) extras.push(`GOO ×${s.attachedGoo}`);
-    if (s.orbTarget > 0 || s.orbs > 0) extras.push(`ORBS ${s.orbs}${s.orbTarget > 0 ? `/${s.orbTarget}` : ''}`);
-    this.extra.setText(extras.join('  '), { color: s.attachedGoo > 0 ? UI.goo : UI.accent });
+    const hasExtras = s.attachedGoo > 0 || s.orbTarget > 0 || s.orbs > 0;
+    const ef = this.extrasFor;
+    if (ef[0] !== s.attachedGoo || ef[1] !== s.orbs || ef[2] !== s.orbTarget) {
+      ef[0] = s.attachedGoo;
+      ef[1] = s.orbs;
+      ef[2] = s.orbTarget;
+      const extras: string[] = [];
+      if (s.attachedGoo > 0) extras.push(`GOO ×${s.attachedGoo}`);
+      if (s.orbTarget > 0 || s.orbs > 0) extras.push(`ORBS ${s.orbs}${s.orbTarget > 0 ? `/${s.orbTarget}` : ''}`);
+      this.extra.setText(extras.join('  '), { color: s.attachedGoo > 0 ? UI.goo : UI.accent });
+    }
     const lx = Math.max(0, Math.round(this.leftInset));
     this.fuelLabel.position.set(lx + 9, 8);
     this.hullLabel.position.set(lx + 9, 20);
     this.extra.position.set(lx + 9, 34);
-    panel(g, lx + 3, 3, 116, extras.length ? 43 : 30, this.border, 0.7);
     const low = fuelLow(s);
     const fuelColor = low ? (blink ? UI.danger : UI.light) : UI.fuel;
-    bar(g, lx + 37, 9, 76, 6, s.fuel, fuelColor);
-    if (low && blink) this.fuelLabel.setText('FUEL', { color: UI.danger });
-    else this.fuelLabel.setText('FUEL', { color: UI.ink });
-    bar(g, lx + 37, 21, 76, 6, s.hull, s.hull < HULL_LOW ? UI.danger : UI.hull);
+    this.fuelLabel.setText('FUEL', { color: low && blink ? UI.danger : UI.ink });
+    const hullColor = s.hull < HULL_LOW ? UI.danger : UI.hull;
 
-    // --- mode badge + objectives (top-right)
+    // --- mode badge (top-right)
     this.modeText.setText(MODE_LABEL[s.mode]);
     const bw = this.modeText.width + 10;
     const bx = VIEW_WIDTH - 4 - bw;
-    g.rect(bx - 1, 3, bw + 2, 14).fill(UI.outline);
-    g.rect(bx, 4, bw, 12).fill(UI.accent);
     this.modeText.position.set(bx + 5, 7);
     this.badgeLeft = bx - 1;
-    const lines = objectiveLines(s).slice(0, MAX_OBJECTIVE_LINES);
-    this.objTexts.forEach((t, i) => {
-      const l = lines[i];
-      t.visible = !!l;
-      if (!l) return;
-      t.setText(`${l.done ? '*' : '■'} ${l.text}`, { color: l.done ? UI.ok : UI.ink });
-      t.position.set(VIEW_WIDTH - 5 - t.width, 22 + i * 10);
-    });
 
     // --- warnings (top centre, below the touch pause button)
     const wy = 62;
+    let arrowX = NaN;
+    let arrowAngle = 0;
     if (s.wind && !s.crashed) {
       const dir = windArrow(s.wind.accel);
       const warning = s.wind.phase === 'warning';
@@ -129,17 +144,67 @@ export class HudView {
       const total = tw + 30;
       const x0 = Math.round(VIEW_WIDTH / 2 - total / 2);
       this.warnText.position.set(x0 + 30, wy - 4);
-      if (visible && dir) arrow(g, x0 + 11, wy, Math.atan2(s.wind.accel.y, s.wind.accel.x), 18, UI.wind);
+      if (visible && dir) {
+        arrowX = x0 + 11;
+        arrowAngle = Math.atan2(s.wind.accel.y, s.wind.accel.x);
+      }
     } else this.warnText.visible = false;
+
+    // --- vector layer: redraw only when one of its inputs changed
+    this.put(0, lx);
+    this.put(1, hasExtras ? 1 : 0);
+    this.put(2, Math.round(76 * clampFrac(s.fuel)));
+    this.put(3, fuelColor);
+    this.put(4, Math.round(76 * clampFrac(s.hull)));
+    this.put(5, hullColor);
+    this.put(6, bw);
+    this.put(7, arrowX);
+    this.put(8, arrowAngle);
+    this.put(9, s.bossHp === null ? -1 : Math.round(200 * clampFrac(s.bossHp)));
+    this.put(10, this.border);
+    if (this.keyChanged) {
+      const g = this.g.clear();
+      panel(g, lx + 3, 3, 116, hasExtras ? 43 : 30, this.border, 0.7);
+      bar(g, lx + 37, 9, 76, 6, s.fuel, fuelColor);
+      bar(g, lx + 37, 21, 76, 6, s.hull, hullColor);
+      g.rect(bx - 1, 3, bw + 2, 14).fill(UI.outline);
+      g.rect(bx, 4, bw, 12).fill(UI.accent);
+      if (!Number.isNaN(arrowX)) arrow(g, arrowX, wy, arrowAngle, 18, UI.wind);
+      if (s.bossHp !== null) bar(g, Math.round(VIEW_WIDTH / 2 - 100), VIEW_HEIGHT - 12, 200, 5, s.bossHp, UI.danger);
+    }
+
+    // --- objectives (top-right, under the badge); the lines only change with the objectives array
+    if (s.objectives !== this.objectivesFor) {
+      this.objectivesFor = s.objectives;
+      const lines = objectiveLines(s).slice(0, MAX_OBJECTIVE_LINES);
+      this.objectiveCount = lines.length;
+      this.objTexts.forEach((t, i) => {
+        const l = lines[i];
+        t.visible = !!l;
+        if (l) t.setText(`${l.done ? '*' : '■'} ${l.text}`, { color: l.done ? UI.ok : UI.ink });
+      });
+    }
+    for (let i = 0; i < this.objectiveCount; i++) {
+      const t = this.objTexts[i]!;
+      t.position.set(VIEW_WIDTH - 5 - t.width, 22 + i * 10);
+    }
 
     const ry = wy + 16;
     if (s.radiationHit > 0) {
       this.radText.visible = true;
-      this.radText.setText(`RADIATION HIT! -${Math.round(s.radiationFuelLost * 100)}% FUEL`, { color: UI.danger });
+      const lost = -1 - Math.round(s.radiationFuelLost * 100); // negative: never equals a countdown key
+      if (lost !== this.radFor) {
+        this.radFor = lost;
+        this.radText.setText(`RADIATION HIT! -${-1 - lost}% FUEL`, { color: UI.danger });
+      }
     } else if (s.radiation && !s.crashed) {
       const urgent = s.radiation.inSec < 1.5;
       this.radText.visible = !urgent || blink;
-      this.radText.setText(`RADIATION IN ${s.radiation.inSec.toFixed(1)}S - TAKE COVER`, { color: UI.radiation });
+      const tenths = Math.round(s.radiation.inSec * 10);
+      if (tenths !== this.radFor) {
+        this.radFor = tenths;
+        this.radText.setText(`RADIATION IN ${(tenths / 10).toFixed(1)}S - TAKE COVER`, { color: UI.radiation });
+      }
     } else this.radText.visible = false;
     this.radText.position.set(Math.round(VIEW_WIDTH / 2 - this.radText.width / 2), ry);
 
@@ -152,12 +217,15 @@ export class HudView {
 
     // --- boss hp (bottom centre)
     this.bossLabel.visible = s.bossHp !== null;
-    if (s.bossHp !== null) {
-      const w = 200;
-      const x = Math.round(VIEW_WIDTH / 2 - w / 2);
-      this.bossLabel.position.set(x, VIEW_HEIGHT - 22);
-      bar(g, x, VIEW_HEIGHT - 12, w, 5, s.bossHp, UI.danger);
-    }
+    if (s.bossHp !== null) this.bossLabel.position.set(Math.round(VIEW_WIDTH / 2 - 100), VIEW_HEIGHT - 22);
+  }
+
+  /** Record redraw-key slot `i`; flags a redraw when it changed. */
+  private put(i: number, v: number): void {
+    const k = this.drawKey;
+    if (k[i] === v || (Number.isNaN(v) && Number.isNaN(k[i]!))) return;
+    k[i] = v;
+    this.keyChanged = true;
   }
 
   destroy(): void {

@@ -11,7 +11,7 @@ describe('FPS meter', () => {
     expect(r.fps).toBeCloseTo(60, 0);
     expect(r.frameMs).toBeCloseTo(16.7, 1);
     expect(r.workMs).toBeCloseTo(3, 5);
-    expect(fpsText(r)).toBe('60 FPS 16.7MS CPU 3.0');
+    expect(fpsText(r)).toBe('60 FPS 16.7MS CPU 3.0 MAX 17 HITCH 0');
   });
 
   it('tracks the worst frame and ignores a long hidden-tab gap', () => {
@@ -24,6 +24,30 @@ describe('FPS meter', () => {
     expect(worst[1]).toBeCloseTo(33.3, 1);
     expect(m.frame(t + 5000, 1)).toBe(false); // gap: window restarts
     expect(fpsText(null)).toBe('-- FPS');
+  });
+
+  it('keeps the worst frame of the last ~2 s and counts hitches (> 50 ms)', () => {
+    const m = new FpsMeter(500);
+    let t = 0;
+    m.frame(t, 1);
+    const recent: number[] = [];
+    const hitches: number[] = [];
+    // one 120 ms hitch at frame 10, then 3 s of steady 60 fps
+    for (let i = 0; i < 200; i++)
+      if (m.frame((t += i === 10 ? 120 : 1000 / 60), 1)) {
+        recent.push(Math.round(m.reading!.worstRecentMs));
+        hitches.push(m.reading!.hitches);
+      }
+    expect(recent.slice(0, 4)).toEqual([120, 120, 120, 120]); // stays up for 4 windows (~2 s)
+    expect(recent[4]).toBe(17); // then drops back
+    expect(hitches.at(-1)).toBe(1);
+    m.frame((t += 51), 1);
+    m.frame((t += 49), 1); // not a hitch
+    for (let i = 0; i < 40; i++) m.frame((t += 1000 / 60), 1);
+    expect(m.reading!.hitches).toBe(2);
+    m.reset();
+    for (let i = 0; i <= 31; i++) m.frame(t + i * (1000 / 60), 1);
+    expect(m.reading!.hitches).toBe(0);
   });
 
   it('reset() drops the reading and the open window', () => {

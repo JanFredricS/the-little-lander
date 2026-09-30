@@ -25,7 +25,7 @@
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
-import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
+import { VESSEL_MODES, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GravityZone, LevelSpec, SpriteFrame, SpriteName, ThemeId, Vec2, VesselMode } from '../contracts';
 import { getVesselAnchors, type EngineAnchor } from '../art/sprites/vessels';
 import { engineOn } from '../physics/vessel/types';
@@ -33,7 +33,7 @@ import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
 import { ropePolylineInto } from './ropeLine';
-import { SpritePool, SpriteTextures } from './spritePool';
+import { clearIfDrawn, SpritePool, SpriteTextures } from './spritePool';
 import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from './vesselFit';
 
 /** Flame animation frame period (ms). */
@@ -88,6 +88,20 @@ function spriteOf(frame: SpriteFrame): Sprite {
   return s;
 }
 
+/** Sprites the flight layer may draw at any moment of a level (pre-warmed at level load). */
+const FLIGHT_SPRITES: readonly SpriteName[] = [
+  'obj.beaconSite',
+  'obj.beacon',
+  'obj.orb',
+  'obj.fuel',
+  'fx.radiationPulse',
+  'obj.debrisBurning',
+  'obj.goo',
+  'obj.ropeSegment',
+  'obj.harpoonHead',
+  'fx.windStreak',
+];
+
 /** Seconds a radiation pulse line stays visible. */
 const PULSE_FLASH = 0.35;
 
@@ -97,6 +111,14 @@ const DEBRIS_SPRITES: Partial<Record<ThemeId, { small: [SpriteName, number]; lar
   collapse: { small: ['obj.debrisSmall', 8], large: ['prop.fallingDebris', 16] },
 };
 const DEFAULT_DEBRIS = { small: ['obj.debrisSmall', 8] as [SpriteName, number], large: ['obj.debrisLarge', 16] as [SpriteName, number] };
+
+interface HullLook {
+  hull: { tex: Texture; ax: number; ay: number };
+  halo: Texture | null;
+  haloAx: number;
+  haloAy: number;
+  flames: { anchor: EngineAnchor; sprite: Sprite }[];
+}
 
 export class FlightView {
   /** Behind terrain-level props: zones, markers. */
@@ -122,6 +144,13 @@ export class FlightView {
   private readonly fx = new Graphics();
   private readonly theme: ThemeId;
   private hullKey = '';
+  /**
+   * Per (mode, pose): hull texture, readability halo and flame sprites, built
+   * once at level load. Building a halo reads the sprite canvas back
+   * (getImageData, a GPU readback on iOS) and uploads a new texture, which
+   * used to happen on every touchdown / lift-off of the lander (pose change).
+   */
+  private readonly hullLooks = new Map<string, HullLook>();
   /** Hull hit tint on (set per frame by LevelView from FeelFx, S8). */
   hitFlash = false;
   /** Shared texture cache (LevelView / S7LevelFx reuse it). */
@@ -163,6 +192,12 @@ export class FlightView {
     this.vesselArt.addChild(this.halo, this.flames, this.hull);
     this.vessel.addChild(this.vesselArt);
     this.over.addChild(markerLayer, bodyLayer, this.overFx, this.heads, this.vessel, this.fx, windLayer);
+    // sprites first used mid-flight (pickups, debris, rope, wind, flames): textures now, GPU upload by the App
+    this.tex.warm(FLIGHT_SPRITES);
+    this.tex.warm([this.debrisSprites.small[0], this.debrisSprites.large[0]]);
+    for (const mode of VESSEL_MODES) for (const f of getVesselAnchors(MODE_SPRITES[mode]).engines.flat()) this.tex.warm([f.flame as SpriteName]);
+    // every mode / pose the vessel can take (mode switches, lander contact pose): no mid-flight canvas work
+    for (const mode of VESSEL_MODES) for (const landed of [false, true]) this.hullLook(mode, vesselFrame(mode, landed));
   }
 
   /** `o` = view origin (world px of the view's top-left), for culling; null draws everything. */
@@ -315,7 +350,7 @@ export class FlightView {
     }
 
     // radiation pulse flash
-    const fx = this.fx.clear();
+    const fx = clearIfDrawn(this.fx);
     for (const em of env.radiation.emitters) {
       const last = em.last;
       if (!last || t - last.at > PULSE_FLASH || !last.inRange) continue;
@@ -343,7 +378,25 @@ export class FlightView {
     wind.end();
   }
 
+  /**
+   * Textures held outside the display tree / sprite cache: the halo of every
+   * vessel pose (only the current one is on the halo sprite).
+   */
+  forEachExtraTexture(fn: (tex: Texture) => void): void {
+    for (const look of this.hullLooks.values()) if (look.halo) fn(look.halo);
+  }
+
+  /**
+   * Level teardown. Halo canvases are memoised per sprite frame (a retry
+   * reuses them and their Pixi textures), so their GPU copies are unloaded
+   * like the shared sprite textures rather than destroyed.
+   */
   destroy(): void {
+    this.forEachExtraTexture((t) => {
+      if (!t.destroyed && !t.source.destroyed) t.source.unload();
+    });
+    this.hullLooks.clear();
+    this.tex.release();
     this.under.destroy({ children: true });
     this.over.destroy({ children: true });
   }
@@ -497,27 +550,44 @@ export class FlightView {
     if (key === this.hullKey) return;
     this.hullKey = key;
     const name = MODE_SPRITES[mode];
-    const hf = this.art.getSprite(name, frame, this.theme);
-    this.hull.texture = Texture.from(hf.canvas as HTMLCanvasElement);
-    this.hull.anchor.set(hf.pivot.x / hf.width, hf.pivot.y / hf.height);
-    const halo = vesselHalo(hf);
-    if (this.halo.texture !== Texture.EMPTY) this.halo.texture.destroy(true);
-    this.halo.texture = halo ? Texture.from(halo) : Texture.EMPTY;
-    this.halo.anchor.set((hf.pivot.x + 1) / (hf.width + 2), (hf.pivot.y + 1) / (hf.height + 2));
-    this.halo.visible = !!halo;
+    const look = this.hullLook(mode, frame);
+    this.hull.texture = look.hull.tex;
+    this.hull.anchor.set(look.hull.ax, look.hull.ay);
+    this.halo.texture = look.halo ?? Texture.EMPTY;
+    this.halo.anchor.set(look.haloAx, look.haloAy);
+    this.halo.visible = !!look.halo;
     // native size, ground line on the collision bottom (hull / feet)
     this.vesselArt.position.set(0, vesselArtOffsetY(name, geo.h, frame));
-    for (const f of this.flameSprites) f.sprite.destroy();
+    for (const f of this.flameSprites) f.sprite.visible = false;
+    this.flameSprites = look.flames;
+  }
+
+  /** Textures + (hidden) flame sprites of one vessel mode / pose, built on first request. */
+  private hullLook(mode: VesselMode, frame: number): HullLook {
+    const key = `${mode}#${frame}`;
+    let look = this.hullLooks.get(key);
+    if (look) return look;
+    const name = MODE_SPRITES[mode];
+    const hf = this.art.getSprite(name, frame, this.theme);
+    const halo = cachedHalo(hf);
     const anchors = getVesselAnchors(name).engines;
-    this.flameSprites = (anchors[frame] ?? anchors[0] ?? []).map((anchor) => {
-      const sprite = spriteOf(this.art.getSprite(anchor.flame as SpriteName, 0, this.theme));
-      // anchors are px from the sprite's top-left; flames point down (+y) unrotated
-      sprite.position.set(anchor.x - hf.pivot.x, anchor.y - hf.pivot.y);
-      sprite.rotation = Math.atan2(-anchor.dir.x, anchor.dir.y);
-      sprite.visible = false;
-      this.flames.addChild(sprite);
-      return { anchor, sprite };
-    });
+    look = {
+      hull: this.tex.get(name, frame),
+      halo: halo ? Texture.from(halo) : null,
+      haloAx: (hf.pivot.x + 1) / (hf.width + 2),
+      haloAy: (hf.pivot.y + 1) / (hf.height + 2),
+      flames: (anchors[frame] ?? anchors[0] ?? []).map((anchor) => {
+        const sprite = spriteOf(this.art.getSprite(anchor.flame as SpriteName, 0, this.theme));
+        // anchors are px from the sprite's top-left; flames point down (+y) unrotated
+        sprite.position.set(anchor.x - hf.pivot.x, anchor.y - hf.pivot.y);
+        sprite.rotation = Math.atan2(-anchor.dir.x, anchor.dir.y);
+        sprite.visible = false;
+        this.flames.addChild(sprite);
+        return { anchor, sprite };
+      }),
+    };
+    this.hullLooks.set(key, look);
+    return look;
   }
 
   private headSprite(i: number): Sprite {
@@ -560,6 +630,20 @@ export class FlightView {
       }
     }
   }
+}
+
+/** Halo canvas per vessel sprite frame canvas (ArtApi memoises frames): retries / later levels reuse it. */
+const haloCache = new WeakMap<object, HTMLCanvasElement | null>();
+
+function cachedHalo(frame: SpriteFrame): HTMLCanvasElement | null {
+  const key = frame.canvas as object;
+  if (!key) return vesselHalo(frame);
+  let halo = haloCache.get(key);
+  if (halo === undefined) {
+    halo = vesselHalo(frame);
+    haloCache.set(key, halo);
+  }
+  return halo;
 }
 
 /** Halo ring colour: pale cream, the UI's `light` (reads on dark sky; the sprite's own dark outline reads on bright terrain). */

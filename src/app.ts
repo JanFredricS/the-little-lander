@@ -88,6 +88,16 @@ export class App {
   /** performance.now() at the first fixed step of the current animation frame (FPS counter CPU time). */
   private frameT0: number | null = null;
   private readonly unbind: (() => void)[] = [];
+  /** Input sampling context, updated in place every step. */
+  private readonly inputCtx: InputSampleContext = {
+    mode: 'lander',
+    vesselWorldPos: { x: 0, y: 0 },
+    clientToWorld: (cx, cy) => {
+      const s = this.session;
+      const v = this.pixi.clientToView(cx, cy);
+      return s ? s.camera.viewToWorld(s.camera.position, v) : v;
+    },
+  };
 
   constructor(
     private readonly host: HTMLElement,
@@ -252,6 +262,9 @@ export class App {
     }
     this.view = new LevelView(session, this.art, { reducedMotion: this.save.state.settings.reducedMotion });
     this.pixi.app.stage.addChildAt(this.view.root, 0);
+    // GPU uploads now (loading screen) for the level's sprites, halos, backdrops and props (see
+    // LevelView.forEachTextureSource); terrain chunks keep streaming in as the camera moves
+    this.view.forEachTextureSource((src) => this.pixi.uploadTexture(src));
     this.ui.levelStarted(spec);
     session.start();
     this.clearInputOnNextStep = true;
@@ -279,11 +292,10 @@ export class App {
       this.input.clear();
       this.clearInputOnNextStep = false;
     }
-    const ctx: InputSampleContext = {
-      mode: s.state.mode,
-      vesselWorldPos: s.state.pos,
-      clientToWorld: (cx, cy) => s.camera.viewToWorld(s.camera.position, this.pixi.clientToView(cx, cy)),
-    };
+    // one reused context (no per-step object + closure)
+    const ctx = this.inputCtx;
+    ctx.mode = s.state.mode;
+    ctx.vesselWorldPos = s.state.pos;
     const frame = this.input.sample(ctx);
     if (s.outcome) {
       // The wreck plays out (no flight input), but RESTART (Backspace / touch ↻) still works right away.

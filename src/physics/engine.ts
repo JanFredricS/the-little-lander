@@ -86,6 +86,12 @@ export class PhysicsWorld implements PhysicsApi {
   private destroyed = false;
   private readonly v1: b2Vec2;
   private readonly v2: b2Vec2;
+  /**
+   * World gravity as Box2D stores it (float32-rounded), mirrored in JS:
+   * getGravity() is polled every step (env gravity, vessels, systems) and the
+   * embind getter allocates a wasm-backed vector each call.
+   */
+  private readonly gravity = { x: 0, y: 0 };
 
   static async create(options: WorldOptions = {}): Promise<PhysicsWorld> {
     return new PhysicsWorld(await loadPhysics(), options);
@@ -100,6 +106,8 @@ export class PhysicsWorld implements PhysicsApi {
     const def = b2.b2DefaultWorldDef();
     const g = options.gravity ?? { x: 0, y: 9.8 };
     def.gravity = this.vec(this.v1, g.x, g.y);
+    this.gravity.x = Math.fround(g.x);
+    this.gravity.y = Math.fround(g.y);
     def.enableContinuous = true;
     def.hitEventThreshold = options.hitSpeedThreshold ?? 1;
     this.worldId = b2.b2CreateWorld(def);
@@ -149,16 +157,15 @@ export class PhysicsWorld implements PhysicsApi {
 
   getGravity(): Vec2 {
     this.assertAlive();
-    const g = this.b2.b2World_GetGravity(this.worldId);
-    const out = { x: g.x, y: g.y };
-    g.delete();
-    return out;
+    return { x: this.gravity.x, y: this.gravity.y };
   }
 
   setGravity(g: Vec2): void {
     this.assertAlive();
     if (!Number.isFinite(g.x) || !Number.isFinite(g.y)) throw new Error('setGravity: gravity must be finite');
     this.b2.b2World_SetGravity(this.worldId, this.vec(this.v1, g.x, g.y));
+    this.gravity.x = Math.fround(g.x);
+    this.gravity.y = Math.fround(g.y);
     // Sleeping bodies ignore a gravity change until woken: wake them all.
     for (const rec of this.bodies.values()) if (rec.dynamic) this.b2.b2Body_SetAwake(rec.id, true);
   }
@@ -353,11 +360,16 @@ export class PhysicsWorld implements PhysicsApi {
 
   // ------------------------------------------------------------ kinematics
 
+  /**
+   * Current pose. Served from the pose cache: rec.curr is read from Box2D
+   * after every step (all non-static bodies), at creation and on
+   * setTransform, which are the only ways a pose changes. Reading Box2D
+   * again here allocated two embind wrappers per call, and this is polled
+   * several times per step (vessel state, debris cleanup, gravity zones).
+   */
   getTransform(h: BodyHandle): Pose {
-    const rec = this.body(h);
-    const t: Pose = { x: 0, y: 0, angle: 0 };
-    this.readPose(rec.id, t);
-    return t;
+    const c = this.body(h).curr;
+    return { x: c.x, y: c.y, angle: c.angle };
   }
 
   getInterpolatedTransform(h: BodyHandle, alpha: number): Pose {

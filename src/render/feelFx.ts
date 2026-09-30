@@ -87,6 +87,9 @@ export class FeelFx {
     private readonly opts: FeelOptions = {},
   ) {
     this.pool = new SpritePool(this.layer, tex);
+    // the first crash / landing must not create textures or sprites mid-flight
+    tex.warm(Object.values(SPRITE));
+    this.pool.reserve(CAPACITY);
     for (let i = 0; i < CAPACITY; i++) this.parts.push({ live: false, kind: 'dust', x: 0, y: 0, vx: 0, vy: 0, ay: 0, drag: 0, age: 0, life: 1, scale: 1 });
     this.off = session.on((e) => this.onEvent(e));
   }

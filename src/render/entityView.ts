@@ -15,6 +15,7 @@ import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, SpriteFrame, SpriteName, Vec2 } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
+import { clearIfDrawn } from './spritePool';
 import { paintOutline } from './terrainView';
 
 /** Interpolate a→b into `out` (render-path scratch: no per-entity allocation). */
@@ -157,7 +158,7 @@ export class EntityView {
       if (view.sprite.visible) view.sprite.position.set(x, y);
     }
 
-    const g = this.vines.clear();
+    const g = clearIfDrawn(this.vines);
     for (const v of rt.vines.vines) {
       // a vine hangs from its anchor and can swing at most its length away
       const ax = v.entity.x;
@@ -182,7 +183,7 @@ export class EntityView {
       }
     }
 
-    const glow = this.glow.clear();
+    const glow = clearIfDrawn(this.glow);
     const ambient = rt.creatures.ambient;
     for (let i = 0; i < ambient.length; i++) {
       const c = ambient[i]!;

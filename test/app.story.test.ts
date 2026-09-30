@@ -54,6 +54,8 @@ const h = vi.hoisted(() => ({
   uiScreens: [] as string[],
   pending: null as PendingCutscene | null,
   levelsStarted: [] as LevelId[],
+  /** Texture sources the App handed to PixiHost.uploadTexture (one fake source per LevelView). */
+  uploaded: [] as unknown[],
   pilotFor: null as null | ((id: LevelId) => Pilot),
   /** Test override for every map's pilot (the crash test). */
   pilotOverride: null as null | ((id: LevelId) => Pilot),
@@ -81,6 +83,9 @@ vi.mock('../src/render/pixiApp', () => ({
     clientToView: () => ({ x: 0, y: 0 }),
     lowRes: false,
     setLowRes() {},
+    uploadTexture(src: unknown) {
+      h.uploaded.push(src);
+    },
     destroy() {},
   }),
 }));
@@ -95,6 +100,9 @@ vi.mock('../src/render/levelView', () => ({
       h.levelsStarted.push(session.spec.id);
     }
     render() {}
+    forEachTextureSource(upload: (src: unknown) => void) {
+      upload({ level: this.session.spec.id });
+    }
     destroy() {
       if (h.session === this.session) {
         h.session = null;
@@ -245,6 +253,7 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
   Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null, steps: 0 });
   h.uiScreens = [];
   h.levelsStarted = [];
+  h.uploaded = [];
   const save = new SaveStore(memoryStorage());
   const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {}, crashStep: -1, resultsStep: -1 };
   r.app = new App({} as HTMLElement, {
@@ -333,6 +342,8 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
       'keeper', 'keeperFalls', 'madDash', 'finale',
     ]);
     expect(h.levelsStarted).toEqual([...STORY_LEVELS]);
+    // every level's textures were pre-uploaded at load (LevelView enumeration -> PixiHost.uploadTexture)
+    expect(h.uploaded).toEqual(STORY_LEVELS.map((level) => ({ level })));
     // App-owned side effects: save progress, cutscenes marked seen, cutsceneDone events
     expect(save.state.unlocked).toEqual([...STORY_LEVELS]);
     expect(STORY_LEVELS.every((id) => save.state.best[id] !== undefined)).toBe(true);

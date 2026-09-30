@@ -20,7 +20,7 @@ import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, BodyHandle, LevelSpec, SpriteName, StaticPropEntity, ThemeId, Vec2 } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
-import { SpritePool, SpriteTextures } from './spritePool';
+import { clearIfDrawn, SpritePool, SpriteTextures } from './spritePool';
 
 const RUIN = 0x6a6a70;
 const RUIN_DARK = 0x3e3e46;
@@ -122,6 +122,11 @@ export class S7LevelFx {
     this.tex = tex ?? new SpriteTextures(art, this.theme);
     const rocks = new Container();
     this.pool = new SpritePool(rocks, this.tex);
+    // rocks, slam / ledge debris and the Keeper: textures at level load (uploaded with the rest by the App),
+    // not on the first loose rock or the boss reveal
+    const sys = session.systems;
+    if (sys.rocks || sys.crumble || sys.keeper) this.tex.warm([BOULDER_SMALL.name, BOULDER_MEDIUM.name, BOULDER_LARGE.name, 'obj.debrisSmall', 'obj.debrisLarge']);
+    if (sys.keeper) this.tex.warm(['boss.keeperBody', 'boss.keeperEye']);
     this.keeper.addChild(this.body, this.eye);
     this.keeper.visible = false;
     this.glow.blendMode = 'add';
@@ -143,7 +148,7 @@ export class S7LevelFx {
     const s = this.session;
     const sys = s.systems;
     const p = s.physics;
-    const g = this.g.clear();
+    const g = clearIfDrawn(this.g);
     this.pool.begin();
     this.nowMs = nowMs;
     if (o) {
@@ -276,7 +281,7 @@ export class S7LevelFx {
     this.pool.end();
 
     // ---- collapse front: a dark churning mass with a burning edge (teeth + embers culled to the view)
-    const fg = this.front.clear();
+    const fg = clearIfDrawn(this.front);
     if (sys.killFront) {
       const { w, h } = s.spec.worldSize;
       for (const f of sys.killFront.fronts) {
@@ -320,15 +325,20 @@ export class S7LevelFx {
    * nearby glow prop so the bioluminescence reads brighter as it gets darker.
    */
   private renderDarkness(nowMs: number): void {
-    const dk = this.dark.clear();
-    const gl = this.glow.clear();
+    const gl = clearIfDrawn(this.glow);
     const d = S7_DARKNESS[this.session.spec.id];
     if (!d) return;
     const vx = this.session.state.pos.x;
     this.darkness = s7DarknessAt(this.session.spec, vx);
-    if (this.darkness <= 0.001) return;
-    const { w, h } = this.session.spec.worldSize;
-    dk.rect(-2000, -2000, w + 4000, h + 4000).fill({ color: d.color, alpha: this.darkness });
+    // the world-covering rect is drawn once; only the layer alpha follows the progress (no per-frame rebuild)
+    const dk = this.dark;
+    if (dk.context.instructions.length === 0) {
+      const { w, h } = this.session.spec.worldSize;
+      dk.rect(-2000, -2000, w + 4000, h + 4000).fill({ color: d.color, alpha: 1 });
+    }
+    dk.visible = this.darkness > 0.001;
+    dk.alpha = this.darkness;
+    if (!dk.visible) return;
     const k = this.darkness / d.max;
     for (const e of this.glowProps) {
       if (Math.abs(e.x - vx) > GLOW_RANGE) continue;

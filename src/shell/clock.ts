@@ -6,6 +6,11 @@
  * - Real frame time feeds an accumulator; at most MAX_FRAME_SECONDS (250 ms)
  *   of real time is accepted per frame — the excess is DROPPED, so a slow
  *   device runs in slow motion instead of spiralling.
+ * - On top of that, at most MAX_CATCHUP_STEPS fixed steps run per frame; the
+ *   rest of a long frame's time is dropped too. A hitch (GC pause, texture
+ *   upload) then costs a brief slow-motion blip instead of a burst of up to
+ *   15 physics steps in the NEXT frame, which made that frame slow as well
+ *   and stretched one hitch into a visible stutter on phones.
  * - Render gets alpha = leftover accumulator / FIXED_DT to interpolate
  *   between the previous and the current simulation state.
  * - Simulation time = steps × FIXED_DT, never wall clock.
@@ -19,6 +24,9 @@
 import { FIXED_DT, MAX_FRAME_SECONDS } from '../contracts';
 
 const EPS = 1e-9;
+
+/** Fixed steps run per animation frame at most (4 × 1/60 s = a 15 fps floor before slow motion). */
+export const MAX_CATCHUP_STEPS = 4;
 
 export class FixedStepClock {
   private accumulator = 0;
@@ -46,14 +54,17 @@ export class FixedStepClock {
   /**
    * Feed real elapsed seconds; returns how many fixed steps to run now.
    * Negative / non-finite input counts as 0; input above MAX_FRAME_SECONDS is
-   * clamped. Paused clocks return 0 and accumulate nothing.
+   * clamped, and more than MAX_CATCHUP_STEPS steps' worth is dropped (the
+   * leftover keeps only its sub-step fraction for alpha).
+   * Paused clocks return 0 and accumulate nothing.
    */
   advance(realDtSeconds: number): number {
     if (this._paused) return 0;
     const dt = Math.min(MAX_FRAME_SECONDS, Math.max(0, Number.isFinite(realDtSeconds) ? realDtSeconds : 0));
     this.accumulator += dt;
-    const n = Math.floor((this.accumulator + EPS) / FIXED_DT);
-    this.accumulator = Math.max(0, this.accumulator - n * FIXED_DT);
+    const due = Math.floor((this.accumulator + EPS) / FIXED_DT);
+    const n = Math.min(MAX_CATCHUP_STEPS, due);
+    this.accumulator = Math.max(0, this.accumulator - due * FIXED_DT);
     this._steps += n;
     return n;
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_DT, MAX_FRAME_SECONDS } from '../src/contracts';
-import { FixedStepClock, FrameLoop, type RafLike } from '../src/shell/clock';
+import { FixedStepClock, FrameLoop, MAX_CATCHUP_STEPS, type RafLike } from '../src/shell/clock';
 
 describe('FixedStepClock', () => {
   it('runs one step per 1/60 s', () => {
@@ -19,20 +19,26 @@ describe('FixedStepClock', () => {
     expect(c.alpha).toBeCloseTo(0.25, 9);
   });
 
-  it('caps catch-up at 250 ms and drops the excess', () => {
+  it('caps catch-up at MAX_CATCHUP_STEPS per frame and drops the excess', () => {
     const c = new FixedStepClock();
-    const maxSteps = Math.floor(MAX_FRAME_SECONDS / FIXED_DT + 1e-9);
-    expect(maxSteps).toBe(15);
-    expect(c.advance(5)).toBe(maxSteps);
+    expect(MAX_CATCHUP_STEPS).toBe(4);
+    expect(MAX_FRAME_SECONDS / FIXED_DT).toBeGreaterThan(MAX_CATCHUP_STEPS); // the step cap is the tighter one
+    expect(c.advance(5)).toBe(MAX_CATCHUP_STEPS);
     expect(c.advance(0)).toBe(0); // excess was dropped, not carried over
+    // a 100 ms hitch: 4 steps now, not 6, and nothing owed to the next frame
+    expect(c.advance(0.1)).toBe(4);
+    expect(c.advance(FIXED_DT)).toBe(1);
+    // the sub-step fraction survives for interpolation
+    expect(c.advance(6.5 * FIXED_DT)).toBe(4);
+    expect(c.alpha).toBeCloseTo(0.5, 6);
   });
 
   it('cancelSteps un-counts steps that were not run', () => {
     const c = new FixedStepClock();
-    expect(c.advance(10 * FIXED_DT)).toBe(10);
-    c.cancelSteps(7);
-    expect(c.steps).toBe(3);
-    expect(c.simTime).toBeCloseTo(3 * FIXED_DT, 12);
+    expect(c.advance(4 * FIXED_DT)).toBe(4);
+    c.cancelSteps(3);
+    expect(c.steps).toBe(1);
+    expect(c.simTime).toBeCloseTo(1 * FIXED_DT, 12);
     c.cancelSteps(99);
     expect(c.steps).toBe(0);
   });
@@ -55,7 +61,7 @@ describe('FixedStepClock', () => {
     expect(c.advance(FIXED_DT * 0.5)).toBe(0);
   });
 
-  it('is deterministic: step count depends only on total time, not frame slicing', () => {
+  it('is deterministic: while no frame exceeds MAX_CATCHUP_STEPS, step count depends only on total time, not slicing', () => {
     const total = 3.7;
     const slices = [0.001, 0.016, 0.033, 0.007, 0.05, 0.0166, 0.02];
     const a = new FixedStepClock();
@@ -67,9 +73,13 @@ describe('FixedStepClock', () => {
       t += dt;
     }
     const b = new FixedStepClock();
-    for (let k = 0; k < 37; k++) b.advance(0.1);
+    for (let k = 0; k < 74; k++) b.advance(0.05); // within the per-frame step cap
     expect(a.steps).toBe(b.steps);
     expect(a.steps).toBe(Math.floor(total / FIXED_DT + 1e-6));
+    // beyond the cap the excess is dropped on purpose (slow motion), so totals then differ
+    const c = new FixedStepClock();
+    c.advance(0.2);
+    expect(c.steps).toBe(MAX_CATCHUP_STEPS);
   });
 });
 
@@ -111,8 +121,8 @@ describe('FrameLoop', () => {
     raf.frame(1000 / 30); // two steps
     expect(steps).toEqual([0, 1]);
     expect(alphas).toHaveLength(2);
-    raf.frame(1000 / 30 + 1000); // 1 s gap -> capped to 15 steps
-    expect(steps.length).toBe(2 + 15);
+    raf.frame(1000 / 30 + 1000); // 1 s gap -> capped to MAX_CATCHUP_STEPS
+    expect(steps.length).toBe(2 + MAX_CATCHUP_STEPS);
   });
 
   it('stops the remaining steps of a batched frame when a step pauses the loop', () => {
@@ -130,9 +140,9 @@ describe('FrameLoop', () => {
     );
     loop.start();
     raf.frame(0);
-    raf.frame(1000); // lagged frame: 15 steps batched
+    raf.frame(1000); // lagged frame: MAX_CATCHUP_STEPS steps batched
     expect(steps).toEqual([0]);
-    // Only executed steps count: no phantom sim time from the 14 skipped steps.
+    // Only executed steps count: no phantom sim time from the skipped steps.
     expect(loop.clock.steps).toBe(1);
     expect(loop.clock.simTime).toBeCloseTo(FIXED_DT, 12);
     loop.setPaused(false);

@@ -24,6 +24,11 @@ export interface PixiHost {
    */
   setLowRes(on: boolean): void;
   readonly lowRes: boolean;
+  /**
+   * Upload a texture to the GPU now (level load) instead of on the first frame
+   * that draws it, which on iOS shows as a one-off hitch mid-flight.
+   */
+  uploadTexture(source: TextureSource): void;
   /** Client (CSS) point -> virtual view px. */
   clientToView(clientX: number, clientY: number): { x: number; y: number };
   destroy(): void;
@@ -77,6 +82,11 @@ export class RenderResolutionState {
   }
 }
 
+/** GPU resources unused this long (ms) are unloaded by Pixi's GC (default 60 s). */
+export const GPU_GC_MAX_UNUSED_MS = 5 * 60_000;
+/** How often Pixi's GPU GC sweeps (ms, default 30 s). */
+export const GPU_GC_FREQUENCY_MS = 60_000;
+
 export async function createPixiHost(host: HTMLElement, opts: PixiHostOptions = {}): Promise<PixiHost> {
   TextureSource.defaultOptions.scaleMode = 'nearest';
   const app = new Application();
@@ -89,6 +99,14 @@ export async function createPixiHost(host: HTMLElement, opts: PixiHostOptions = 
     roundPixels: true,
     background: 0x0b0d14,
     preference: 'webgl',
+    // Pixi's GPU garbage collector (default: sweep every 30 s, unload anything
+    // unused for 60 s) evicted the textures pre-uploaded at level load (crash
+    // explosion, landed pose, pickups further on) and re-uploaded them on first
+    // sight: a hitch mid-flight. LevelView.destroy() unloads a level's textures
+    // itself at level end, so the GC only has to catch what nothing frees
+    // explicitly (menu / UI resources idle for minutes).
+    gcMaxUnusedTime: GPU_GC_MAX_UNUSED_MS,
+    gcFrequency: GPU_GC_FREQUENCY_MS,
   });
   const canvas = app.canvas;
   canvas.style.position = 'absolute';
@@ -120,6 +138,10 @@ export async function createPixiHost(host: HTMLElement, opts: PixiHostOptions = 
     get scale() {
       if (!scale) throw new Error('scale not computed yet');
       return scale;
+    },
+    uploadTexture(source) {
+      if (source.destroyed || source.width <= 0 || source.height <= 0) return;
+      app.renderer.texture.initSource(source);
     },
     clientToView(clientX, clientY) {
       return clientToView(clientX, clientY, canvas.getBoundingClientRect());

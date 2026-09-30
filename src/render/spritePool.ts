@@ -8,7 +8,7 @@
  *    before it.
  */
 
-import { Container, Sprite, Texture } from 'pixi.js';
+import { Container, Sprite, Texture, type Graphics } from 'pixi.js';
 import type { ArtApi, SpriteName, ThemeId } from '../contracts';
 
 interface FrameTex {
@@ -33,6 +33,32 @@ export class SpriteTextures {
       this.counts.set(name, n);
     }
     return n;
+  }
+
+  /** Create the textures of every frame of `names` now (level load) instead of on first use mid-flight. */
+  warm(names: readonly SpriteName[]): void {
+    for (const name of names) {
+      const n = this.frameCount(name);
+      for (let i = 0; i < n; i++) this.get(name, i);
+    }
+  }
+
+  /**
+   * Level teardown: drop the GPU copies of every texture this cache made and
+   * forget them. Unload, not destroy: the textures wrap the ArtApi's memoised
+   * canvases (Pixi caches Texture.from per canvas), which menus or the next
+   * level may show again; they re-upload on their next preload / first use.
+   */
+  release(): void {
+    this.forEachTexture((t) => {
+      if (!t.destroyed && !t.source.destroyed) t.source.unload();
+    });
+    this.cache.clear();
+  }
+
+  /** Every texture created so far (GPU pre-upload at level load). */
+  forEachTexture(fn: (tex: Texture) => void): void {
+    for (const frames of this.cache.values()) for (const f of frames) if (f) fn(f.tex);
   }
 
   /** Texture + normalised pivot of `name` frame `frame` (wraps like ArtApi.getSprite). */
@@ -62,6 +88,16 @@ export class SpritePool {
     readonly container: Container,
     private readonly textures: SpriteTextures,
   ) {}
+
+  /** Pre-create hidden sprites up to `n` (level load), so a burst never allocates display objects mid-flight. */
+  reserve(n: number): void {
+    while (this.sprites.length < n) {
+      const s = new Sprite(Texture.EMPTY);
+      s.visible = false;
+      this.sprites.push(s);
+      this.container.addChild(s);
+    }
+  }
 
   begin(): void {
     this.used = 0;
@@ -96,4 +132,15 @@ export class SpritePool {
   get count(): number {
     return this.used;
   }
+}
+
+/**
+ * clear() a per-frame Graphics only when it holds something. Pixi marks a
+ * cleared Graphics dirty and rebuilds its GPU geometry on the next render even
+ * when it was already empty, so an idle fx layer (no radiation pulse, no
+ * vines on screen) would otherwise cost a geometry rebuild + garbage every frame.
+ */
+export function clearIfDrawn(g: Graphics): Graphics {
+  if (g.context.instructions.length > 0) g.clear();
+  return g;
 }
