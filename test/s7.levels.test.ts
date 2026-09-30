@@ -13,7 +13,7 @@ import { LevelSession } from '../src/game/session';
 import { KEEPER_ARENA, KEEPER_ROCK_X, keeper } from '../src/levels/keeper';
 import { KEEPER_TUNING } from '../src/levels/boss/keeperTuning';
 import { LEVEL_SYSTEM_OPTIONS } from '../src/levels/systems';
-import { s7DoorCentre, s7DoorGap } from '../src/levels/systems/s7Doors';
+import { doorCentre, doorGap } from '../src/levels/runtime/doors';
 import { aheadOfFront } from '../src/levels/systems/killFront';
 import {
   MADDASH_GATES,
@@ -316,10 +316,10 @@ describe('map 8 — The Mad Dash', () => {
       const climb = e.close.rect.y + e.close.rect.h - (e.y + e.h / 2 + 9);
       for (const speed of [MADDASH_INTENDED_SPEED, Math.abs(front.speed)]) {
         const c = Math.min(1, climb / speed / e.closeDurationSec);
-        const gap = s7DoorGap(e, c);
+        const gap = doorGap(e, c);
         if (speed === MADDASH_INTENDED_SPEED) expect(gap, g.id).toBeGreaterThanOrEqual(2 * LANDER_HALF + 60);
         else expect(gap, `${g.id} at the front's speed`).toBeGreaterThanOrEqual(2 * LANDER_HALF + 20);
-        const door = s7DoorCentre(e, c);
+        const door = doorCentre(e, c);
         const edge = g.from === 'left' ? door.x + e.w / 2 : door.x - e.w / 2;
         const x = line.reduce((best, p) => (Math.abs(p.y - e.y) < Math.abs(best.y - e.y) ? p : best)).x;
         expect(g.from === 'left' ? x - edge : edge - x, `${g.id}: the line is on the open side`).toBeGreaterThan(LANDER_HALF + 10);
@@ -338,7 +338,4 @@ describe('map 8 — The Mad Dash', () => {
     expect(burn / t.burnSeconds).toBeLessThan(0.8);
   });
 
-  it('the closing gates run on the S7 door driver (opt-in) until S6 lands', () => {
-    expect(LEVEL_SYSTEM_OPTIONS.madDash?.s7Doors).toBe(true);
-  });
 });

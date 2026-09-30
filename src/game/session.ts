@@ -30,6 +30,7 @@ import { PhysicsWorld } from '../physics/engine';
 import { buildLevel, flightLevelBodies, type BuiltLevel } from '../levels/build';
 import { createLevelSystems, type LevelSystems } from '../levels/systems';
 import { FlightEnvironment } from '../physics/env/environment';
+import { LevelRuntime } from '../levels/runtime';
 import { TriggerLatch } from '../physics/env/triggers';
 import { resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
 import { createVessel, type FlightVessel } from '../physics/vessel';
@@ -54,6 +55,8 @@ export class LevelSession {
   vessel: FlightVessel;
   readonly built: BuiltLevel;
   readonly env: FlightEnvironment;
+  /** Level-owned entities the flight environment leaves unhandled (doors, islands, vines, creatures). */
+  readonly runtime: LevelRuntime;
   readonly tuning: PhysicsTuning;
   private readonly vesselOptions: VesselOptions;
   private readonly sink: GameEventSink;
@@ -79,6 +82,14 @@ export class LevelSession {
       this.vesselOptions,
     );
     this.env.attach(this.vessel);
+    this.runtime = new LevelRuntime({
+      physics,
+      spec,
+      triggerContext: (p) => this.env.triggerContext(p),
+      requestModeSwitch: (m) => this.requestModeSwitch(m),
+      crashVessel: (cause) => this.vessel.crash(cause),
+      beaconSites: this.env.beacons.sites,
+    });
     this.modeSwitchLatch = spec.modeSwitch ? new TriggerLatch(spec.modeSwitch.trigger) : null;
     this.camera = new Camera({
       worldW: spec.worldSize.w,
@@ -151,11 +162,13 @@ export class LevelSession {
     }
     this.checkModeSwitch();
     this.env.beforeStep();
+    this.runtime.beforeStep(this.vesselState);
     for (const sys of this.systems.list) sys.beforeStep?.(frame);
     this.vessel.applyInput(frame, FIXED_DT);
     this.physics.step(FIXED_DT);
     this.vessel.state(); // contacts: crash / damage / soft-land
     this.env.afterStep();
+    this.runtime.afterStep(this.vessel.state());
     for (const sys of this.systems.list) sys.afterStep?.();
     this.vesselState = this.vessel.state();
     const s = this.vesselState;
@@ -171,6 +184,7 @@ export class LevelSession {
 
   destroy(): void {
     this.listeners.length = 0;
+    this.runtime.destroy();
     for (const sys of this.systems.list) sys.destroy?.();
     this.physics.destroy();
   }

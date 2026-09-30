@@ -2,13 +2,12 @@
  * S7 render layer for the level-owned systems (src/levels/systems, S7):
  * the Keeper (S2 boss sprites + tendrils + the sweep telegraph line), loose
  * rocks hanging / falling, slam debris, crumbling ledges and their chunks,
- * the collapse front (map 8) and S7's closing gates. Terrain is NOT drawn
- * here (LevelView owns terrain; S6 owns the terrain-tile renderer).
+ * and the collapse front (map 8). Terrain and blast doors are NOT drawn here
+ * (S6's TerrainView / EntityView own them).
  *
  * Hooked into LevelView with two containers (under / over) and one render
- * call — a minimal S7 hook. NOTE(S8): gates move to S6's door renderer when
- * its LevelRuntime lands (with s7Doors); rocks / ledges / front are
- * placeholder shapes in the theme's spirit until S2 draws obj.* sprites.
+ * call — a minimal S7 hook. Rocks / ledges / front are placeholder shapes
+ * in the theme's spirit until S2 draws obj.* sprites.
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
@@ -26,8 +25,6 @@ const TELEGRAPH = 0xffd040;
 const TELEGRAPH_LOCKED = 0xff4030;
 const TENDRIL = 0x7a3aa8;
 const TENDRIL_BURN = 0xff8a30;
-const DOOR = 0x5a6070;
-const DOOR_STRIPE = 0xe0b030;
 
 /** Keeper body frame period (ms) while idle. */
 const IDLE_FRAME_MS = 320;
@@ -35,7 +32,7 @@ const IDLE_FRAME_MS = 320;
 export class S7LevelFx {
   /** Behind terrain (reserved: nothing yet). */
   readonly under = new Container();
-  /** In front: rocks, ledges, boss, gates, and on top the collapse front (it swallows everything). */
+  /** In front: rocks, ledges, boss, and on top the collapse front (it swallows everything). */
   readonly over = new Container();
   private readonly g = new Graphics();
   private readonly front = new Graphics();
@@ -58,7 +55,7 @@ export class S7LevelFx {
   /** Does this level have anything for this layer to draw? */
   static wanted(session: LevelSession): boolean {
     const s = session.systems;
-    return !!(s.rocks || s.crumble || s.killFront || s.keeper || s.doors);
+    return !!(s.rocks || s.crumble || s.killFront || s.keeper);
   }
 
   render(alpha: number, nowMs: number): void {
@@ -173,28 +170,6 @@ export class S7LevelFx {
         const dying = b.mode === 'dying';
         this.keeper.position.set(b.pos.x + (dying ? shake(4) : 0), b.pos.y + (b.mode === 'stagger' ? shake(3) : 0));
         this.keeper.alpha = dying ? Math.max(0.15, 1 - b.modeTime / 3) : 1;
-      }
-    }
-
-    // ---- S7 closing gates
-    if (sys.doors) {
-      for (const d of sys.doors.doors) {
-        const e = d.entity;
-        const t = p.hasBody(d.body) ? at(d.body) : d.pos;
-        const x = t.x - e.w / 2;
-        const y = t.y - e.h / 2;
-        g.rect(x, y, e.w, e.h).fill(DOOR);
-        // hazard stripes on the leading edge
-        const vertical = e.from === 'top' || e.from === 'bottom';
-        const lead = e.from === 'left' ? x + e.w - 14 : e.from === 'right' ? x : x;
-        if (!vertical) {
-          for (let i = 0; i < e.h; i += 8) g.rect(lead, y + i, 14, 4).fill(DOOR_STRIPE);
-        } else {
-          const ly = e.from === 'top' ? y + e.h - 10 : y;
-          for (let i = 0; i < e.w; i += 12) g.rect(x + i, ly, 6, 10).fill(DOOR_STRIPE);
-        }
-        g.rect(x, y, e.w, 1).fill(0xa0a8b8);
-        if (d.phase === 'closing') g.circle(e.x, e.y - e.h / 2 - 8, 3).fill(Math.floor(nowMs / 150) % 2 ? 0xff4030 : 0x602010);
       }
     }
 

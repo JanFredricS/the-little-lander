@@ -65,7 +65,7 @@ describe('S7 playtests (autopilot completes the map)', () => {
       const r = await runPilot(madDash, () => landerDashPilot({ route: MADDASH_ROUTE, vclimb }), 200, (s) => {
         const f = s.systems.killFront!.fronts[0]!;
         if (f.active && !s.outcome) lead = Math.min(lead, f.pos - s.state.pos.y);
-        gates = s.systems.doors!.doors.map((d) => d.phase);
+        gates = s.runtime.doors.doors.map((d) => d.phase);
       });
       expect(r.outcome?.kind, `climb ${vclimb} px/s`).toBe('complete');
       expect(lead, `climb ${vclimb} px/s`).toBeGreaterThan(150);

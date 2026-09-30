@@ -66,7 +66,7 @@ describe('S7 render layer', () => {
     let closing = false;
     await drive(madDash, landerDashPilot({ route: MADDASH_ROUTE }), 75, (_fx, s) => {
       frontSeen ||= s.systems.killFront!.fronts[0]!.active;
-      closing ||= s.systems.doors!.doors.some((d) => d.phase === 'closing');
+      closing ||= s.runtime.doors.doors.some((d) => d.phase === 'closing');
     });
     expect(frontSeen).toBe(true);
     expect(closing).toBe(true);

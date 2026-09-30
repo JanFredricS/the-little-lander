@@ -25,7 +25,8 @@
  * Gates close over 7 / 6.5 / 6 s from 300 px below them; each closes FROM
  * one side, so the line switches sides between them. Late at a gate you
  * wait for the 2.5 s interlock to re-open it — while the front gains.
- * The closing gates run on levels/systems/s7Doors.ts (S8: S6's doors).
+ * The closing gates are plain blastDoor entities driven by S6's LevelRuntime
+ * DoorSystem (src/levels/runtime/doors.ts).
  *
  * Playtest notes (S7; headless reference pilot test/support/s7Pilots.ts
  * landerDashPilot: engineLeft/engineRight taps only, a velocity + tilt loop

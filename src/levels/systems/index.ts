@@ -10,7 +10,6 @@ import { CrumbleSystem } from './crumble';
 import { KillFrontSystem, type KillFrontOptions } from './killFront';
 import { LooseRockSystem, type LooseRockOptions } from './looseRocks';
 import { RightingSystem } from './righting';
-import { S7DoorSystem } from './s7Doors';
 import type { LevelSystem, LevelSystemHost } from './types';
 
 export type { LevelSystem, LevelSystemHost } from './types';
@@ -18,20 +17,17 @@ export { CrumbleSystem } from './crumble';
 export { KillFrontSystem } from './killFront';
 export { LooseRockSystem } from './looseRocks';
 export { RightingSystem } from './righting';
-export { S7DoorSystem } from './s7Doors';
 export { KeeperSystem } from '../boss/keeperSystem';
 
 export interface LevelSystemOptions {
   looseRocks?: LooseRockOptions;
   killFront?: KillFrontOptions;
-  /** Drive blastDoor entities with S7's door system (NOTE(S8): drop once S6's LevelRuntime drives doors). */
-  s7Doors?: boolean;
 }
 
 /** Per-level system options (tuned in the S7 playtest pass). */
 export const LEVEL_SYSTEM_OPTIONS: Partial<Record<LevelId, LevelSystemOptions>> = {
   keeper: { looseRocks: { respawnSec: 14, snapSpeed: 160 } },
-  madDash: { killFront: { maxLag: 600 }, s7Doors: true },
+  madDash: { killFront: { maxLag: 600 } },
 };
 
 /** The systems a level uses, in update order (rocks before the boss that reads them). */
@@ -42,7 +38,6 @@ export interface LevelSystems {
   killFront: KillFrontSystem | null;
   keeper: KeeperSystem | null;
   righting: RightingSystem | null;
-  doors: S7DoorSystem | null;
 }
 
 export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOptions = LEVEL_SYSTEM_OPTIONS[host.spec.id] ?? {}): LevelSystems {
@@ -54,7 +49,6 @@ export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOp
   const boss = spec.entities.find((e): e is BossSpawnEntity => e.kind === 'bossSpawn');
   const keeper = boss ? new KeeperSystem(host, boss, rocks) : null;
   const righting = spec.vesselMode === 'harpoonThrust' ? new RightingSystem(host) : null;
-  const doors = options.s7Doors && has('blastDoor') ? new S7DoorSystem(host) : null;
-  const list = [doors, rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
-  return { list, rocks, crumble, killFront, keeper, righting, doors };
+  const list = [rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
+  return { list, rocks, crumble, killFront, keeper, righting };
 }
