@@ -36,6 +36,15 @@ export const CSM_TUNING = {
   landSpin: 1,
   landSettleSec: 0.25,
   /** Exhaust cone (goo burn-off): length past the nozzle (px) and half-angle (rad). */
+  /**
+   * S10 brake assist: an engine firing against the velocity gets up to
+   * brakeBoost × thrust, ramping linearly from 1× at 0 px/s to the full boost
+   * at >= brakeBoostRef px/s, scaled by how directly it opposes the motion
+   * (perpendicular = no boost). Fuel drain stays un-boosted. 1 = off.
+   */
+  // gentler than the lander: map 2's retro-burns stay a skill
+  brakeBoost: 1.3,
+  brakeBoostRef: 180,
   exhaustLength: 70,
   exhaustHalfAngle: 0.55,
 };

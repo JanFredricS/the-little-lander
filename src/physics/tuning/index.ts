@@ -80,6 +80,9 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   ropeRange: POSITIVE,
   ropeMin: POSITIVE,
   ropeBreakAccel: POSITIVE,
+  // S10 brake assist: max multiplier (1 = off, capped so a retro-burn stays a skill) and full-boost speed (px/s)
+  brakeBoost: { min: 1, max: 3 },
+  brakeBoostRef: POSITIVE,
   // hull / landing
   crashSpeed: POSITIVE,
   landSpeed: POSITIVE,
