@@ -9,8 +9,11 @@ import type { EntitySpec, GameEvent, InputFrame, LevelSpec, TerrainPiece, ZoneSp
 import { LevelSession } from '../src/game/session';
 import { validateLevel } from '../src/levels/validate';
 import { aheadOfFront } from '../src/levels/systems/killFront';
+import { LEVEL_SYSTEM_OPTIONS } from '../src/levels/systems';
+import { S7_REOPEN_AFTER_SEC, s7DoorCentre, s7DoorCovers, s7DoorGap } from '../src/levels/systems/s7Doors';
 import { emptyFrame } from '../src/shell/input';
-import { pxToM } from '../src/physics/units';
+import { pxToM, vPxToM } from '../src/physics/units';
+import { castSolid } from '../src/physics/tags';
 
 const cleanup: (() => void)[] = [];
 afterEach(() => {
@@ -173,11 +176,12 @@ describe('kill front', () => {
     expect(s.systems.crumble!.platforms[0]!.gone).toBe(true);
   });
 
-  it('catch-up (madDash option maxLag 700): the front never trails the vessel by more', async () => {
+  it('catch-up (madDash option maxLag): the front never trails the vessel by more', async () => {
+    const maxLag = LEVEL_SYSTEM_OPTIONS.madDash!.killFront!.maxLag!;
     const { s, run } = await session(lab({ id: 'madDash', spawn: { x: 500, y: 600 }, worldSize: { w: 3000, h: 4000 }, zones: [front({ start: 3900, speed: -10 })] }));
     run(2);
     const f = s.systems.killFront!.fronts[0]!;
-    expect(f.pos - s.state.pos.y).toBeLessThanOrEqual(700 + 1);
+    expect(f.pos - s.state.pos.y).toBeLessThanOrEqual(maxLag + 1);
   });
 });
 
@@ -239,5 +243,74 @@ describe('loose rock snap', () => {
     expect(vy).not.toBeNull();
     expect(vy!).toBeGreaterThan(150);
     expect(vy!).toBeLessThan(175);
+  });
+});
+
+describe('closing gaps (s7Doors, madDash opt-in)', () => {
+  // a door across a vertical slot above the spawn; 'madDash' id opts in to the S7 door driver
+  const door = (over: Partial<Extract<EntitySpec, { kind: 'blastDoor' }>> = {}): EntitySpec => ({
+    id: 'gate',
+    kind: 'blastDoor',
+    x: 500,
+    y: 1700,
+    w: 200,
+    h: 20,
+    from: 'left',
+    close: { kind: 'enterRegion', rect: { x: 300, y: 1800, w: 400, h: 100 } },
+    closeDurationSec: 2,
+    ...over,
+  });
+
+  it('geometry helpers: parked retracted on its side, gap shrinks linearly', () => {
+    const e = door() as Extract<EntitySpec, { kind: 'blastDoor' }>;
+    expect(s7DoorCentre(e, 0)).toEqual({ x: 300, y: 1700 });
+    expect(s7DoorCentre(e, 1)).toEqual({ x: 500, y: 1700 });
+    expect(s7DoorCentre({ ...e, from: 'top' }, 0)).toEqual({ x: 500, y: 1680 });
+    expect(s7DoorGap(e, 0.25)).toBe(150);
+    expect(s7DoorGap({ ...e, from: 'bottom' }, 0.5)).toBe(10);
+    expect(s7DoorCovers(e, s7DoorCentre(e, 0.5), { x: 350, y: 1705 })).toBe(true);
+    expect(s7DoorCovers(e, s7DoorCentre(e, 0.5), { x: 520, y: 1705 })).toBe(false);
+    expect(s7DoorCovers(e, s7DoorCentre(e, 1), { x: 500, y: 1715 })).toBe(false);
+  });
+
+  it('only runs for levels that opt in (S6 owns doors everywhere else)', async () => {
+    const { s } = await session(lab({ entities: [door()] }));
+    expect(s.systems.doors).toBeNull();
+  });
+
+  it('closes over closeDurationSec once triggered, blocks the slot, then re-opens for a vessel stuck behind it', async () => {
+    const { s, run } = await session(lab({ id: 'madDash', entities: [door()] }));
+    const d = s.systems.doors!.doors[0]!;
+    run(1);
+    expect(d.phase).toBe('closing');
+    run(60);
+    expect(d.closed).toBeGreaterThan(0.45);
+    expect(d.closed).toBeLessThan(0.55);
+    run(62);
+    expect(d.phase).toBe('closed');
+    expect(d.pos.x).toBeCloseTo(500, 0);
+    // the slot is sealed
+    const blocked = castSolid(s.physics, vPxToM({ x: 500, y: 1760 }), vPxToM({ x: 500, y: 1640 }));
+    expect(blocked).not.toBeNull();
+    // waiting behind it: the interlock re-opens it for good
+    run(Math.round(S7_REOPEN_AFTER_SEC * 60) + 5);
+    expect(d.phase).toBe('reopening');
+    run(90);
+    expect(d.phase).toBe('lockedOpen');
+    run(150, input({ thrust: true }));
+    expect(s.state.crashed).toBe(false);
+    expect(s.state.pos.y).toBeLessThan(1680);
+  });
+
+  it('crushes a vessel pinned under a door coming down on it', async () => {
+    const { s, events, run } = await session(
+      lab({ id: 'madDash', entities: [door({ x: 500, y: GROUND - 20, w: 100, h: 60, from: 'top', close: { kind: 'time', atSec: 0.1 }, closeDurationSec: 3 })] }),
+    );
+    run(60);
+    expect(s.state.crashed).toBe(false);
+    run(240);
+    expect(s.state.crashed).toBe(true);
+    // pinned against the ground the solver's shove usually wins the race (an impact crash)
+    expect(['crushed', 'impact']).toContain((events.find((e) => e.type === 'crash') as { cause: string }).cause);
   });
 });
