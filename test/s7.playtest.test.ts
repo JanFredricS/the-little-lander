@@ -52,6 +52,8 @@ describe('S7 playtests (autopilot completes the map)', () => {
       expect(r.counts.bossPhase).toBe(3);
       expect(r.counts.bossDefeated).toBe(1);
       expect(r.events.filter((e) => e.type === 'bossHit' && e.source === 'rock').length).toBeGreaterThanOrEqual(5);
+      // S8 fuel curve: the tightest map of the campaign keeps a margin on every winning line (measured 0.35-0.48)
+      expect(r.last.fuel, `keeper lure ${offset}/${below} completion fuel`).toBeGreaterThanOrEqual(0.1);
       wins.push(r.last.hull);
     }
     expect(wins.length).toBeGreaterThanOrEqual(2);
@@ -73,6 +75,7 @@ describe('S7 playtests (autopilot completes the map)', () => {
       expect(gates.every((p) => p === 'closed')).toBe(true);
       expect(r.timeSec).toBeLessThan(130);
       expect(r.last.hull).toBeGreaterThan(0.5);
+      expect(r.last.fuel, `climb ${vclimb} px/s completion fuel`).toBeGreaterThanOrEqual(0.15);
     }
   });
 });

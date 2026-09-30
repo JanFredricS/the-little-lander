@@ -1,5 +1,7 @@
 /**
- * S8 full playthrough: the real screen state machine + story flow
+ * S8 headless-session story coverage (NOT the App: see
+ * test/app.story.test.ts for the App-level flow). The pure screen state
+ * machine + story flow
  * (title -> briefing -> map 1 ... map 8 -> finale/credits -> level select),
  * where every `playing` screen runs the REAL LevelSession for that map,
  * flown by its reference autopilot (maps 1-4: src/levels/dev routes; maps
@@ -11,37 +13,15 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
-import type { CutsceneId, GameEvent, InputFrame, LevelId, ScreenState } from '../src/contracts';
+import type { CutsceneId, GameEvent, LevelId, ScreenState } from '../src/contracts';
 import { STILL_IDS } from '../src/art/stills';
 import { LevelSession } from '../src/game/session';
-import { Autopilot } from '../src/levels/dev/autopilot';
-import { ROUTES } from '../src/levels/dev/routes';
-import { MADDASH_ROUTE } from '../src/levels/madDash';
 import { getLevel } from '../src/levels/registry';
 import { INITIAL_STATE, transition } from '../src/shell/state';
 import { continuePlan, isUnlocked, modeSwitchCutscene, selectLevelAction } from '../src/story/flow';
 import { defaultSave, recordResult } from '../src/story/save';
 import { getCutscene } from '../src/story/scripts';
-import { harpoonPilot, hollowPilot, keeperPilot, landerDashPilot } from './support/s7Pilots';
-
-type Pilot = (s: LevelSession, tick: number) => InputFrame;
-
-function pilotFor(id: LevelId): Pilot {
-  switch (id) {
-    case 'vaults':
-      return harpoonPilot({ landX: 13480 });
-    case 'hollow':
-      return hollowPilot();
-    case 'keeper':
-      return keeperPilot({ attempts: 0, drops: 0 }, { offset: 125, below: 175 });
-    case 'madDash':
-      return landerDashPilot({ route: MADDASH_ROUTE, vclimb: 110 });
-    default: {
-      const ap = new Autopilot(ROUTES[id]!);
-      return (s) => ap.frame(s);
-    }
-  }
-}
+import { MIN_COMPLETION_FUEL, pilotFor } from './support/storyPilots';
 
 interface MapRun {
   id: LevelId;
@@ -70,7 +50,7 @@ async function playMap(id: LevelId, seen: string[]): Promise<MapRun> {
   return r;
 }
 
-describe('full story playthrough (all 8 maps, real sessions)', () => {
+describe('headless story playthrough (all 8 maps, real sessions, no App)', () => {
   const errors: unknown[][] = [];
   beforeEach(() => {
     errors.length = 0;
@@ -127,6 +107,8 @@ describe('full story playthrough (all 8 maps, real sessions)', () => {
     const ev = (id: LevelId, t: GameEvent['type']) => runs.find((r) => r.id === id)!.events.filter((e) => e.type === t);
     expect(ev('floatingIsles', 'vesselModeChanged')).toEqual([{ type: 'vesselModeChanged', from: 'csm', to: 'lander' }]);
     expect(ev('keeper', 'bossDefeated')).toHaveLength(1);
+    // difficulty: every map keeps its fuel margin (S8 curve; see MIN_COMPLETION_FUEL)
+    for (const r of runs) expect(r.fuel, `${r.id} completion fuel`).toBeGreaterThanOrEqual(MIN_COMPLETION_FUEL[r.id]!);
     expect(continuePlan('madDash', getLevel)).toEqual({ action: { type: 'continue', next: null, cutsceneAfter: 'finale' }, cutscenes: ['finale'] });
 
     // every cutscene that played has a script whose stills exist; the finale carries the credits
