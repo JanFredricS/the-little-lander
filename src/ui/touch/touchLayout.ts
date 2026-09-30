@@ -12,11 +12,15 @@
  *                  versa, so the lander tilts toward the button you press.
  *   harpoon        aim drag zone left · FIRE / REL / ▲ IN / ▼ OUT bottom-right
  *   harpoonThrust  harpoon + THRUST (right) + ◀ ▶ rotate (bottom-left)
+ *   DIRECT steering (Settings.steering = 'direct') in lander / csm: no flight
+ *                  buttons - holding anywhere else on the play area steers
+ *                  (the canvas PointerSource), so only the system buttons stay.
  *   all modes      II pause, top centre · ↻ restart level, top-left
  *                  ("system" buttons: opaque, high-contrast, see touchLayer.ts)
  */
 
 import type { ControlId, Rect, VesselMode } from '../../contracts';
+import { isDirectSteerMode } from '../../shell/directSteering';
 import { MIN_TOUCH_CSS } from '../menu';
 
 export type TouchButtonKind = 'hold' | 'tap';
@@ -57,6 +61,8 @@ const r = (x: number, y: number, w: number, h: number): Rect => ({ x: Math.round
 export interface TouchLayoutOptions {
   /** Lander: left-side buttons fire the right-side engines and vice versa (labels name the engine that fires). */
   swapEngines?: boolean;
+  /** DIRECT steering: lander / csm show only the system buttons (the play area itself is the control). */
+  direct?: boolean;
 }
 
 export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchLayoutOptions = {}): TouchLayout {
@@ -92,6 +98,7 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
     return { left: rel.x, top: inB.y };
   };
 
+  if (opts.direct && isDirectSteerMode(mode)) return { mode, buttons, aimZone };
   switch (mode) {
     case 'csm':
       rotateLeft();

@@ -118,6 +118,14 @@ export class TouchLayer {
     this.relayout();
   }
 
+  /** DIRECT steering: lander / csm drop their flight buttons (rebuilds, releasing held ones, when it changes). */
+  setDirectSteering(direct: boolean): void {
+    if (!!this.opts.direct === direct) return;
+    this.opts = { ...this.opts, direct };
+    this.lastSize = '';
+    this.relayout();
+  }
+
   dispose(): void {
     this.model.clear();
     this.ro?.disconnect();
@@ -130,7 +138,7 @@ export class TouchLayer {
     if (!this.visible || !this.mode) return;
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
-    const key = `${this.mode}|${w}|${h}|${!!this.opts.swapEngines}`;
+    const key = `${this.mode}|${w}|${h}|${!!this.opts.swapEngines}|${!!this.opts.direct}`;
     if (key === this.lastSize) return;
     this.lastSize = key;
     this.layout = touchLayout(this.mode, w, h, this.opts);

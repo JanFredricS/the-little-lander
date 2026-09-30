@@ -4,7 +4,7 @@
  * machine, or a UI-local command). Views only draw these; tests drive them.
  */
 
-import type { CrashCause, LevelId, LevelSpec, ScreenAction, ScreenState } from '../contracts';
+import type { CrashCause, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme } from '../contracts';
 import { formatTime, levelEntries, levelMenuItems, nextStoryLevel, STORY_TITLES, type SaveView } from './levelSelect';
 import type { MenuItem } from './menu';
 import type { TouchPref } from './touch/touchModel';
@@ -20,6 +20,8 @@ export interface ScreenContext {
   showFps?: boolean;
   /** Low-res render mode (Settings.lowRes). */
   lowRes?: boolean;
+  /** Flight control scheme (Settings.steering; default 'engines'). */
+  steering?: SteeringScheme;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -53,7 +55,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'toggleSteering' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -77,6 +79,10 @@ export function fpsLabel(on: boolean): string {
 
 export function lowResLabel(on: boolean): string {
   return `LOW-RES MODE: ${on ? 'ON' : 'OFF'}`;
+}
+
+export function steeringLabel(s: SteeringScheme): string {
+  return `STEERING: ${s === 'direct' ? 'DIRECT' : 'ENGINES'}`;
 }
 
 export function swapLabel(swap: boolean): string {
@@ -148,6 +154,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'retry', label: 'RESTART', enabled: true },
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
+          { id: 'steering', label: steeringLabel(ctx.steering ?? 'engines'), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },
           { id: 'lowres', label: lowResLabel(ctx.lowRes ?? false), enabled: true },
@@ -211,6 +218,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'controls') return { ui: 'controls' };
       if (id === 'touch') return { ui: 'toggleTouch' };
       if (id === 'swap') return { ui: 'toggleSwap' };
+      if (id === 'steering') return { ui: 'toggleSteering' };
       if (id === 'fps') return { ui: 'toggleFps' };
       if (id === 'lowres') return { ui: 'toggleLowRes' };
       return { ui: 'none' };

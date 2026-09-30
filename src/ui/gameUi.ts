@@ -13,7 +13,7 @@
 
 import { Container } from 'pixi.js';
 import { VIEW_WIDTH } from '../contracts';
-import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, VesselMode, VesselState } from '../contracts';
+import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
 import { frameHasInput } from './controlsHelp';
@@ -58,6 +58,10 @@ export interface GameUiOptions {
   lowRes?: boolean;
   /** Low-res mode toggled in the pause menu (the App re-renders the canvas + persists). */
   onLowResChange?(on: boolean): void;
+  /** Initial flight control scheme (SaveState.settings.steering; default 'engines'). */
+  steering?: SteeringScheme;
+  /** STEERING toggled in the pause menu (the App switches the input layer + persists). */
+  onSteeringChange?(s: SteeringScheme): void;
   /** The first real touch of the page (a device the startup detection took for desktop). */
   onTouchDetected?(): void;
   /** Story flow hooks for the title CONTINUE / results NEXT items (S3). */
@@ -111,6 +115,7 @@ export class GameUi {
   private swapEngines: boolean;
   private showFps: boolean;
   private lowRes: boolean;
+  private steering: SteeringScheme;
   private readonly fpsMeter = new FpsMeter();
   private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
   /** Cached HUD left inset (virtual px) + when it was measured: measuring reads DOM layout, so not every frame. */
@@ -131,9 +136,11 @@ export class GameUi {
     this.swapEngines = o.swapEngineButtons ?? true;
     this.showFps = o.showFps ?? false;
     this.lowRes = o.lowRes ?? false;
+    this.steering = o.steering ?? 'engines';
     this.fpsLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
+    this.touch.setDirectSteering(this.steering === 'direct');
     this.rotate = new RotateHint(o.host, () => this.touchDetected);
 
     const onKey = (e: KeyboardEvent) => this.onKey(e);
@@ -223,6 +230,7 @@ export class GameUi {
       swapEngines: this.swapEngines,
       showFps: this.showFps,
       lowRes: this.lowRes,
+      steering: this.steering,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -258,8 +266,9 @@ export class GameUi {
     this.hudView.border = tint;
     this.screenView.border = this.spec ? tint : UI.accent;
     const helpTouch = touchVisible(this.touchPref, this.touchDetected);
-    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines);
-    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines);
+    const direct = this.steering === 'direct';
+    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct);
+    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct);
     else this.hudView.setHelp(null, false);
   }
 
@@ -423,6 +432,12 @@ export class GameUi {
       this.swapEngines = !this.swapEngines;
       this.touch.setSwapEngines(this.swapEngines);
       this.o.onSwapEngineButtonsChange?.(this.swapEngines);
+      this.refreshModel(false);
+      this.syncLayers();
+    } else if (a.ui === 'toggleSteering') {
+      this.steering = this.steering === 'direct' ? 'engines' : 'direct';
+      this.touch.setDirectSteering(this.steering === 'direct');
+      this.o.onSteeringChange?.(this.steering);
       this.refreshModel(false);
       this.syncLayers();
     } else if (a.ui === 'toggleFps') {

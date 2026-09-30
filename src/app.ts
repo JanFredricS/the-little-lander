@@ -9,7 +9,7 @@
  */
 
 import { FIXED_DT, VESSEL_MODES } from './contracts';
-import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, StillId } from './contracts';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, SteeringScheme, StillId } from './contracts';
 import { createArt, hasPreload } from './art/art';
 import { STILL_IDS } from './art/stills';
 import { LevelSession } from './game/session';
@@ -18,6 +18,7 @@ import { loadPhysics } from './physics/engine';
 import { createPixiHost, type PixiHost } from './render/pixiApp';
 import { LevelView } from './render/levelView';
 import { FrameLoop, type PauseCause } from './shell/clock';
+import { DirectSteering } from './shell/directSteering';
 import { emptyFrame, InputMapper, KeyboardSource, PointerSource, VirtualControlsSource } from './shell/input';
 import { INITIAL_STATE, isResume, transition } from './shell/state';
 import { playCutscene, type CutscenePlayerHandle } from './story/cutscenePlayer';
@@ -40,7 +41,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'save'>;
 }
 
 /**
@@ -88,6 +89,9 @@ export class App {
   /** performance.now() at the first fixed step of the current animation frame (FPS counter CPU time). */
   private frameT0: number | null = null;
   private readonly unbind: (() => void)[] = [];
+  /** DIRECT steering layer (Settings.steering = 'direct'): steer command -> engine pulses, once per fixed step. */
+  private readonly direct = new DirectSteering();
+  private steering: SteeringScheme = 'engines';
   /** Input sampling context, updated in place every step. */
   private readonly inputCtx: InputSampleContext = {
     mode: 'lander',
@@ -109,10 +113,11 @@ export class App {
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
     // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
-    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, ...uiOpts } = Object.fromEntries(
+    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, onSteeringChange, ...uiOpts } = Object.fromEntries(
       Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
     ) as NonNullable<AppOptions['ui']>;
     const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
+    this.steering = uiOpts.steering ?? this.save.state.settings.steering;
     // Low-res render mode. Until the player toggles it (saved lowRes stays null) it follows the device:
     // ON for touch, OFF for desktop, re-detected every start, and switched ON by the first real touch.
     // Resolved BEFORE the Pixi host exists so the first backbuffer is already the low-res one.
@@ -127,9 +132,17 @@ export class App {
     const keyboard = new KeyboardSource(window);
     // S9 swapped engines apply to the keyboard too (not only the touch buttons): same initial value as the UI's
     keyboard.setSwapEngines(swapEngines);
+    const pointer = new PointerSource(this.pixi.canvas);
+    const setSteering = (s: SteeringScheme) => {
+      this.steering = s;
+      keyboard.setDirectSteering(s === 'direct');
+      pointer.setDirectSteering(s === 'direct');
+      this.direct.reset();
+    };
+    setSteering(this.steering);
     this.input.add(keyboard);
     this.input.add(this.virtual);
-    this.input.add(new PointerSource(this.pixi.canvas));
+    this.input.add(pointer);
     window.addEventListener('keydown', this.onDebugKey);
     this.unbind.push(() => window.removeEventListener('keydown', this.onDebugKey));
 
@@ -155,6 +168,13 @@ export class App {
         else this.save.setSettings({ swapEngineButtons: swap });
       },
       onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
+      steering: this.steering,
+      // the input layer switches at once (toggled while paused; resume clears input); a caller's callback replaces persistence only
+      onSteeringChange: (st) => {
+        setSteering(st);
+        if (onSteeringChange) onSteeringChange(st);
+        else this.save.setSettings({ steering: st });
+      },
       lowRes,
       // a device that turned out to be touch (first real touch) gets the mobile default, unless the player chose
       onTouchDetected: () => {
@@ -290,6 +310,7 @@ export class App {
     if (!s || this.state.id !== 'playing') return;
     if (this.clearInputOnNextStep) {
       this.input.clear();
+      this.direct.reset();
       this.clearInputOnNextStep = false;
     }
     // one reused context (no per-step object + closure)
@@ -313,6 +334,9 @@ export class App {
       this.dispatch({ type: 'retry' }); // playing -> playing: a fresh session of the same level
       return;
     }
+    // DIRECT steering: the held direction becomes this step's engine pulses (flight controls only; edges above untouched).
+    // Skipped while an autopilot / replay source feeds physical engine frames (dev pilots work under any saved scheme).
+    if (this.steering === 'direct' && !this.input.hasEngineFrameSource) this.direct.apply(frame, s.state);
     this.ui.noteFrame(frame);
     if (this.ui.holdSimulation) return; // level-start controls card: wait for the first input
     s.step(frame);
@@ -345,6 +369,7 @@ export class App {
 
   private onPauseChange(paused: boolean, cause: PauseCause): void {
     this.input.clear();
+    this.direct.reset();
     if (paused && cause !== 'manual' && this.state.id === 'playing' && !this.inlineCutscene) this.dispatch({ type: 'pause' });
   }
 

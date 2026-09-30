@@ -58,29 +58,43 @@ const KEYS_LANDER_SWAPPED: readonly string[] = [
   'UPSIDE DOWN? TOP THRUSTERS FLIP YOU',
 ];
 
+/** DIRECT steering (Settings.steering = 'direct'): cards for the modes it drives (src/shell/directSteering.ts). */
+const DIRECT_KEYS: Partial<Record<VesselMode, readonly string[]>> = {
+  lander: ['W A S D / ARROWS   THRUST THAT WAY', 'DIAGONALS TOO - HOLD TO BURN', 'THE LANDER TURNS ITSELF TO PUSH', 'DOWN FIRES THE TOP THRUSTERS', 'LET GO TO COAST'],
+  csm: ['W A S D / ARROWS   THRUST THAT WAY', 'DIAGONALS TOO - HOLD TO BURN', 'THE CSM TURNS, THEN BURNS', 'LET GO TO COAST'],
+};
+const DIRECT_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
+  lander: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE LANDER TURNS ITSELF TO PUSH', 'BELOW THE SHIP: TOP THRUSTERS', 'LET GO TO COAST'],
+  csm: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE CSM TURNS, THEN BURNS', 'LET GO TO COAST'],
+};
+
 /** Cache key for a rendered help card: content AND the theme border it was drawn with. */
-export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false): string {
-  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}`;
+export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false, direct = false): string {
+  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}|${direct}`;
 }
 
-/** `start` = the level-start card (the level waits for the first input). `swap` = engine buttons/keys swapped (S9). */
-export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false): HelpCard {
-  const touchLines = touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode];
-  const keyLines = swap && mode === 'lander' ? KEYS_LANDER_SWAPPED : KEYS[mode];
+/**
+ * `start` = the level-start card (the level waits for the first input). `swap` = engine buttons/keys swapped (S9).
+ * `direct` = DIRECT steering (modes it does not drive keep their normal card; swap does not apply to it).
+ */
+export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false): HelpCard {
+  const directLines = direct ? (touch ? DIRECT_TOUCH[mode] : DIRECT_KEYS[mode]) : undefined;
+  const touchLines = directLines ?? (touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode]);
+  const keyLines = directLines ?? (swap && mode === 'lander' ? KEYS_LANDER_SWAPPED : KEYS[mode]);
   return {
-    title: TITLE[mode],
+    title: directLines ? `${TITLE[mode]} (DIRECT)` : TITLE[mode],
     lines: [...(touch ? touchLines : keyLines), touch ? 'II  PAUSE    ↻  RESTART' : 'ESC / P   PAUSE    BKSP   RESTART'],
     hint: start ? (touch ? 'TOUCH ANY CONTROL TO START' : 'PRESS ANY CONTROL TO START') : touch ? 'TAP TO CLOSE' : 'ANY KEY TO CLOSE',
   };
 }
 
 /**
- * Any control in a frame counts as "first input". Aim counts only from keys
+ * Any control in a frame counts as "first input" (a DIRECT steer too). Aim counts only from keys
  * or a touch drag (aimTarget === null): a mouse merely hovering over the
  * canvas always reports an aim and must not dismiss the card.
  */
 export function frameHasInput(f: InputFrame): boolean {
   const aimed = (f.aim.x !== 0 || f.aim.y !== 0) && f.aimTarget === null;
-  return f.thrust || f.engineLeft || f.engineRight || f.topLeft || f.topRight || f.rotateCW || f.rotateCCW || f.fire || f.release || f.reelIn || f.reelOut || aimed;
+  return f.steer.x !== 0 || f.steer.y !== 0 || f.thrust || f.engineLeft || f.engineRight || f.topLeft || f.topRight || f.rotateCW || f.rotateCCW || f.fire || f.release || f.reelIn || f.reelOut || aimed;
 }
 

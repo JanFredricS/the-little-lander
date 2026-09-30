@@ -16,6 +16,13 @@
  *   harpoonThrust  aim: arrow keys · fire: Space · release: X / ShiftLeft · thrust: W · rotateCCW: A · rotateCW: D · reelIn: R · reelOut: F
  * Pointer (mouse): hover aims (vessel -> pointer), left button = fire, right button = release.
  * Pointer (touch/pen on the game canvas): drag aims (drag start -> current finger).
+ *
+ * DIRECT steering (Settings.steering = 'direct', setDirectSteering on the
+ * keyboard and pointer sources) in the modes of DIRECT_STEER_MODES (lander,
+ * csm): the flight keys are unbound; W A S D / arrows report an 8-way
+ * InputFrame.steer instead (pause / restart keys unchanged), and a finger
+ * (or the left mouse button) held on the canvas reports steer = vessel ->
+ * finger. src/shell/directSteering.ts turns steer into engine pulses.
  */
 
 import type {
@@ -30,6 +37,7 @@ import type {
   Vec2,
   VesselMode,
 } from '../contracts';
+import { isDirectSteerMode } from './directSteering';
 
 export const CONTROL_IDS: readonly ControlId[] = [
   'thrust',
@@ -130,6 +138,7 @@ export function emptyFrame(): InputFrame {
     reelOut: false,
     pause: false,
     restart: false,
+    steer: { x: 0, y: 0 },
   };
 }
 
@@ -152,12 +161,22 @@ export class InputMapper {
     };
   }
 
+  /**
+   * True while a source that emits physical engine frames (InputSource.engineFrames:
+   * autopilots, replays) is registered: the shell then bypasses DIRECT steering.
+   */
+  get hasEngineFrameSource(): boolean {
+    return this.sources.some((s) => s.engineFrames === true);
+  }
+
   /** Sample every source once (consuming latched presses) and merge. */
   sample(ctx: InputSampleContext): InputFrame {
     const frame = emptyFrame();
     let aim: AimSample | null = null;
+    let steer: Vec2 | null = null;
     for (const src of this.sources) {
       const s = src.sample(ctx);
+      if (!steer && s.steer && (s.steer.x !== 0 || s.steer.y !== 0)) steer = s.steer;
       for (const c of CONTROL_IDS) {
         const pressed = s.pressed[c] === true;
         if (isEdgeControl(c)) {
@@ -172,6 +191,7 @@ export class InputMapper {
       frame.aim = normalise(aim.dir);
       frame.aimTarget = aim.target ? { ...aim.target } : null;
     }
+    if (steer) frame.steer = normalise(steer);
     return frame;
   }
 
@@ -248,6 +268,7 @@ export class KeyboardSource implements InputSource {
   private readonly keys = new LatchedKeys<string>();
   private readonly allCodes: ReadonlySet<string>;
   private swapEngines = false;
+  private direct = false;
 
   constructor(
     private readonly target: KeyEventTarget | null,
@@ -268,6 +289,14 @@ export class KeyboardSource implements InputSource {
     this.swapEngines = swap;
   }
 
+  /**
+   * DIRECT steering (Settings.steering = 'direct'): in DIRECT_STEER_MODES the
+   * flight keys are unbound and W A S D / arrows report an 8-way steer.
+   */
+  setDirectSteering(on: boolean): void {
+    this.direct = on;
+  }
+
   /** Feed a key directly (tests, replays). */
   keyDown(code: string): void {
     this.keys.press(code);
@@ -279,6 +308,7 @@ export class KeyboardSource implements InputSource {
 
   sample(ctx: InputSampleContext): InputSourceSample {
     const { down, pressed } = this.keys.take();
+    if (this.direct && isDirectSteerMode(ctx.mode)) return directKeys(down, pressed);
     const map = this.bindings[ctx.mode];
     const outDown: ControlFlags = {};
     const outPressed: ControlFlags = {};
@@ -323,6 +353,21 @@ export class KeyboardSource implements InputSource {
   };
 }
 
+/** Keys still bound under DIRECT steering (shell controls). */
+const DIRECT_KEY_BINDINGS: KeyBindings = PAUSE;
+
+/** DIRECT steering keys: shell controls + an 8-way steer from W A S D / arrows (a tap still steers one tick). */
+function directKeys(down: ReadonlySet<string>, pressed: ReadonlySet<string>): InputSourceSample {
+  const outDown: ControlFlags = {};
+  const outPressed: ControlFlags = {};
+  for (const code of down) for (const c of DIRECT_KEY_BINDINGS[code] ?? []) outDown[c] = true;
+  for (const code of pressed) for (const c of DIRECT_KEY_BINDINGS[code] ?? []) outPressed[c] = true;
+  const held = (a: string, b: string) => down.has(a) || pressed.has(a) || down.has(b) || pressed.has(b);
+  const x = (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0);
+  const y = (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0);
+  return { down: outDown, pressed: outPressed, aim: null, steer: x !== 0 || y !== 0 ? { x, y } : null };
+}
+
 // ----------------------------------------------------------------- pointer
 
 /** Pixel distance (CSS px) a touch must travel before a drag counts as aim. */
@@ -333,14 +378,23 @@ export const TOUCH_AIM_DEADZONE = 8;
  * - Mouse: hovering aims at the pointer (vessel -> pointer, aimTarget set);
  *   left button = fire, right button = release (context menu suppressed).
  * - Touch/pen: dragging aims along the drag (start -> current), no target.
+ * - DIRECT steering (setDirectSteering) in DIRECT_STEER_MODES: a finger (the
+ *   first one down) or the held left mouse button reports steer = vessel ->
+ *   pointer, re-aimed every tick as either moves; a tap shorter than a tick
+ *   still steers one tick. No aim is reported then.
  * On-screen buttons are separate DOM elements above the canvas (UI slice) and
- * never reach this source.
+ * never reach this source, so a tap on pause / restart is never a steer.
  */
 export class PointerSource implements InputSource {
   readonly id = 'pointer';
   private readonly buttons = new LatchedKeys<'fire' | 'release'>();
   private mouse: { x: number; y: number } | null = null;
   private drag: { id: number; sx: number; sy: number; x: number; y: number } | null = null;
+  private direct = false;
+  /** Left mouse button held (DIRECT steering). */
+  private mouseHeld = false;
+  /** Client point of a press not yet sampled (a tap shorter than a tick still steers once). */
+  private pendingHold: { x: number; y: number } | null = null;
 
   constructor(private readonly el: HTMLElement | null) {
     el?.addEventListener('pointermove', this.onMove);
@@ -351,10 +405,30 @@ export class PointerSource implements InputSource {
     el?.addEventListener('contextmenu', this.onContext);
   }
 
+  /** DIRECT steering (Settings.steering = 'direct'). */
+  setDirectSteering(on: boolean): void {
+    this.direct = on;
+  }
+
   sample(ctx: InputSampleContext): InputSourceSample {
     const { down, pressed } = this.buttons.take();
     const flags = (s: ReadonlySet<'fire' | 'release'>): ControlFlags => ({ fire: s.has('fire'), release: s.has('release') });
+    if (this.direct && isDirectSteerMode(ctx.mode)) {
+      const steer = this.steer(ctx);
+      this.pendingHold = null;
+      return { down: {}, pressed: {}, aim: null, steer };
+    }
+    this.pendingHold = null;
     return { down: flags(down), pressed: flags(pressed), aim: this.aim(ctx) };
+  }
+
+  /** DIRECT steering: vessel -> held pointer in world px, or null (public for tests). */
+  steer(ctx: InputSampleContext): Vec2 | null {
+    const at = this.drag ? { x: this.drag.x, y: this.drag.y } : this.mouseHeld && this.mouse ? this.mouse : this.pendingHold;
+    if (!at || !ctx.vesselWorldPos) return null;
+    const t = ctx.clientToWorld(at.x, at.y);
+    const d = { x: t.x - ctx.vesselWorldPos.x, y: t.y - ctx.vesselWorldPos.y };
+    return d.x !== 0 || d.y !== 0 ? d : null;
   }
 
   /** Aim for the current pointer state (public for tests). */
@@ -385,6 +459,8 @@ export class PointerSource implements InputSource {
   clear(): void {
     this.buttons.clear();
     this.drag = null;
+    this.mouseHeld = false;
+    this.pendingHold = null;
   }
 
   dispose(): void {
@@ -409,11 +485,17 @@ export class PointerSource implements InputSource {
   private readonly onDown = (e: PointerEvent): void => {
     if (e.pointerType === 'mouse') {
       this.mouse = { x: e.clientX, y: e.clientY };
-      if (e.button === 0) this.buttons.press('fire');
-      else if (e.button === 2) this.buttons.press('release');
+      if (e.button === 0) {
+        this.buttons.press('fire');
+        this.mouseHeld = true;
+        this.pendingHold = { x: e.clientX, y: e.clientY };
+      } else if (e.button === 2) this.buttons.press('release');
       return;
     }
-    if (!this.drag) this.drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY };
+    if (!this.drag) {
+      this.drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: e.clientX, y: e.clientY };
+      this.pendingHold = { x: e.clientX, y: e.clientY };
+    }
     try {
       this.el?.setPointerCapture?.(e.pointerId);
     } catch {
@@ -423,20 +505,27 @@ export class PointerSource implements InputSource {
 
   private readonly onUp = (e: PointerEvent): void => {
     if (e.pointerType === 'mouse') {
-      if (e.button === 0) this.buttons.release('fire');
-      else if (e.button === 2) this.buttons.release('release');
+      if (e.button === 0) {
+        this.buttons.release('fire');
+        this.mouseHeld = false;
+      } else if (e.button === 2) this.buttons.release('release');
       return;
     }
     if (this.drag && this.drag.id === e.pointerId) this.drag = null;
   };
 
   private readonly onCancel = (e: PointerEvent): void => {
-    if (e.pointerType === 'mouse') this.buttons.clear();
-    else if (this.drag && this.drag.id === e.pointerId) this.drag = null;
+    if (e.pointerType === 'mouse') {
+      this.buttons.clear();
+      this.mouseHeld = false;
+    } else if (this.drag && this.drag.id === e.pointerId) this.drag = null;
   };
 
   private readonly onLeave = (e: PointerEvent): void => {
-    if (e.pointerType === 'mouse') this.mouse = null;
+    if (e.pointerType === 'mouse') {
+      this.mouse = null;
+      this.mouseHeld = false; // a release outside the canvas never reaches us
+    }
   };
 
   private readonly onContext = (e: Event): void => {

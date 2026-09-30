@@ -63,6 +63,10 @@ const h = vi.hoisted(() => ({
   steps: 0,
   /** Optional LevelSpec patch (the chained-cutscene test adds a cutsceneBefore). */
   patch: null as null | ((spec: LevelSpec) => LevelSpec),
+  /** Saved Settings.steering for the next playStory (the DIRECT-persisted test). */
+  steering: 'engines' as 'engines' | 'direct',
+  /** PilotKeys.engineFrames (true = like the browser autopilot; false only for the negative control). */
+  pilotEngineFrames: true,
 }));
 
 vi.mock('../src/levels/registry', async (importOriginal) => {
@@ -193,6 +197,10 @@ vi.mock('../src/shell/input', async (importOriginal) => {
   /** "Keyboard": replays the active map's pilot frame (edge controls as presses). */
   class PilotKeys {
     readonly id = 'keyboard';
+    /** Physical engine frames: the App must bypass DIRECT steering for them (like the browser autopilot). */
+    get engineFrames() {
+      return h.pilotEngineFrames;
+    }
     sample(_ctx: InputSampleContext): InputSourceSample {
       if (!h.session || !h.pilot) return { down: {}, pressed: {}, aim: null };
       const f = h.pilot(h.session, h.tick++);
@@ -204,6 +212,8 @@ vi.mock('../src/shell/input', async (importOriginal) => {
     }
     /** The pilots emit physical engines: the swapped-keys setting does not apply to them. */
     setSwapEngines(_swap: boolean) {}
+    /** The story runs on the default ENGINES scheme (the pilots emit engine frames). */
+    setDirectSteering(_on: boolean) {}
     clear() {}
     dispose() {}
   }
@@ -212,6 +222,7 @@ vi.mock('../src/shell/input', async (importOriginal) => {
     sample(): InputSourceSample {
       return { down: {}, pressed: {}, aim: null };
     }
+    setDirectSteering(_on: boolean) {}
     clear() {}
     dispose() {}
   }
@@ -255,6 +266,7 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
   h.levelsStarted = [];
   h.uploaded = [];
   const save = new SaveStore(memoryStorage());
+  if (h.steering !== 'engines') save.setSettings({ steering: h.steering }); // persisted by an earlier session
   const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {}, crashStep: -1, resultsStep: -1 };
   r.app = new App({} as HTMLElement, {
     art: {} as ArtApi, // no preload: cutscenes start synchronously
@@ -321,6 +333,8 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     errors.length = 0;
     h.patch = null;
     h.pilotOverride = null;
+    h.steering = 'engines';
+    h.pilotEngineFrames = true;
     vi.spyOn(console, 'error').mockImplementation((...a) => void errors.push(a));
     vi.spyOn(console, 'warn').mockImplementation((...a) => void errors.push(a));
     vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
@@ -395,6 +409,33 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(r.app.state).toMatchObject({ id: 'playing', levelId: 'hangarRun' });
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
+  });
+
+  it('a persisted DIRECT steering setting does not disable pilot sources that emit physical engine frames', { timeout: 120_000 }, async () => {
+    // same guaranteed ceiling crash as above, but the save says DIRECT: the pilot's thrust must still reach the lander
+    h.patch = (spec) => (spec.id === 'hangarRun' ? { ...spec, physicsOverrides: { ...spec.physicsOverrides, 'lander.crashSpeed': 120 } } : spec);
+    h.pilotOverride = () => () => ({ ...emptyFrame(), thrust: true });
+    h.steering = 'direct';
+    const r = await playStory((run) => run.app.state.id === 'results');
+    expect(r.save.state.settings.steering).toBe('direct');
+    const s = r.app.state;
+    expect(s.id === 'results' && s.outcome).toMatchObject({ kind: 'failed' });
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+
+    // negative control: the same pilot WITHOUT the engineFrames marker goes through the DIRECT layer,
+    // which reads no steer and coasts: no engine ever fires, so no ceiling crash
+    h.pilotEngineFrames = false;
+    let fired = false;
+    const c = await playStory((run) => {
+      if (h.session?.state.engines.left || h.session?.state.engines.right) fired = true;
+      return h.steps > 240;
+    });
+    expect(c.app.state.id).toBe('playing');
+    expect(h.session!.simTime).toBeGreaterThan(2); // the level really ran
+    expect(fired).toBe(false);
+    expect(c.crashStep).toBe(-1);
+    c.app.destroy();
   });
 
   it('results NEXT plays an after + before cutscene chain inside ONE cutscene screen, then the next level', { timeout: 120_000 }, async () => {

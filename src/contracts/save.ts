@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes). Persistent progress (localStorage key 'the-little-lander/save').
+ * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes; direct-steering amendment: Settings.steering). Persistent progress (localStorage key 'the-little-lander/save').
  * Readers must accept older/partial data: validate, then fill defaults.
  */
 
@@ -45,7 +45,16 @@ export interface Settings {
    * after a first real touch). Only a pause-menu toggle saves true/false.
    */
   lowRes: boolean | null;
+  /**
+   * Flight control scheme (pause menu STEERING). 'engines' = the classic
+   * per-engine / rotate controls. 'direct' (prototype) = hold a finger on
+   * the play area (or W A S D / arrows) and the vessel thrusts toward it;
+   * see src/shell/directSteering.ts. Default 'engines'.
+   */
+  steering: SteeringScheme;
 }
+
+export type SteeringScheme = 'engines' | 'direct';
 
 export interface SaveState {
   version: typeof SAVE_VERSION;

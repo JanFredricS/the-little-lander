@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: topLeft / topRight controls; restart amendment: restart control). Input: the per-tick InputFrame (pure, device-agnostic data)
+ * FROZEN (S0; S9 amendment: topLeft / topRight controls; restart amendment: restart control; direct-steering amendment: InputFrame.steer + InputSourceSample.steer). Input: the per-tick InputFrame (pure, device-agnostic data)
  * and the InputSource plug-in interface that keyboard, mouse/pointer and
  * on-screen touch controls all implement. The game is first-class on BOTH
  * desktop and mobile browsers: every control must be reachable by touch.
@@ -76,6 +76,16 @@ export interface InputFrame {
   pause: boolean;
   /** EDGE. Restart the current level (handled by the shell, not by controllers). */
   restart: boolean;
+  /**
+   * HELD (direct-steering amendment). DIRECT steering command: the world
+   * direction (unit, y-down) the player wants to thrust toward, or {0,0} for
+   * none. Only reported while Settings.steering = 'direct' (a finger / mouse
+   * held on the play area relative to the vessel, or WASD / arrows 8-way).
+   * The shell's DirectSteering layer (src/shell/directSteering.ts) turns it
+   * into engine / rotation flags before the controllers run; controllers
+   * never read it.
+   */
+  steer: Vec2;
 }
 
 /** Semantic digital controls, 1:1 with InputFrame's boolean fields. */
@@ -118,6 +128,12 @@ export interface InputSourceSample {
   pressed: ControlFlags;
   /** Aim, or null when this source has no aim opinion this tick. */
   aim: AimSample | null;
+  /**
+   * Direct-steering amendment: world direction to thrust toward (any length;
+   * zero / null / absent = no command). Merged like aim: the first source
+   * with a non-zero steer wins.
+   */
+  steer?: Vec2 | null;
 }
 
 /** Context the mapper hands every source when sampling. */
@@ -139,6 +155,13 @@ export interface InputSampleContext {
  */
 export interface InputSource {
   readonly id: string;
+  /**
+   * Direct-steering amendment: this source emits PHYSICAL engine / rotation
+   * flags (autopilots, replays, scripted test pilots) that must reach the
+   * controllers as-is. While any such source is registered the shell skips
+   * the DIRECT steering layer, whatever Settings.steering says.
+   */
+  readonly engineFrames?: boolean;
   /** Sample (and consume latched presses) for one tick. */
   sample(ctx: InputSampleContext): InputSourceSample;
   /** Forget all state (pause, blur, visibility loss, screen change). */

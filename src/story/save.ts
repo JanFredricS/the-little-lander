@@ -35,6 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   swapEngineButtons: true,
   showFps: false,
   lowRes: null,
+  steering: 'engines',
 };
 
 export function defaultSave(): SaveState {
@@ -74,6 +75,7 @@ function parseSettings(v: unknown): Settings {
     swapEngineButtons: typeof v.swapEngineButtons === 'boolean' ? v.swapEngineButtons : d.swapEngineButtons,
     showFps: typeof v.showFps === 'boolean' ? v.showFps : d.showFps,
     lowRes: typeof v.lowRes === 'boolean' ? v.lowRes : d.lowRes,
+    steering: v.steering === 'direct' || v.steering === 'engines' ? v.steering : d.steering,
   };
 }
 

@@ -32,6 +32,8 @@ export function fly(app: AppLike): string {
   const pilot = new Autopilot(route);
   const src: InputSource = {
     id: 'autopilot',
+    // physical engine frames: the App bypasses DIRECT steering while this is registered (any saved scheme)
+    engineFrames: true,
     sample(): InputSourceSample {
       const sess = sessionOf(app);
       if (!sess) return { down: {}, pressed: {}, aim: null };
