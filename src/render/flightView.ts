@@ -71,7 +71,7 @@ export class FlightView {
   private readonly theme: ThemeId;
   private hullKey = '';
   private readonly tex: SpriteTextures;
-  /** Markers under the terrain layer: beacon sites, goo nests. */
+  /** Markers in front of terrain (decor tiles would hide them), behind bodies: beacon sites. */
   private readonly markers: SpritePool;
   /** Bodies in front: pickups, beacons, debris, goo, rope. */
   private readonly bodies: SpritePool;
@@ -94,10 +94,10 @@ export class FlightView {
     this.markers = new SpritePool(markerLayer, this.tex);
     this.bodies = new SpritePool(bodyLayer, this.tex);
     this.wind = new SpritePool(windLayer, this.tex);
-    this.under.addChild(this.zones, this.zoneFx, markerLayer);
+    this.under.addChild(this.zones, this.zoneFx);
     this.vesselArt.addChild(this.flames, this.hull);
     this.vessel.addChild(this.vesselArt);
-    this.over.addChild(bodyLayer, this.dynamic, this.heads, this.vessel, this.fx, windLayer);
+    this.over.addChild(markerLayer, bodyLayer, this.dynamic, this.heads, this.vessel, this.fx, windLayer);
   }
 
   /** `o` = view origin (world px of the view's top-left), for culling. */
@@ -116,7 +116,7 @@ export class FlightView {
 
     this.renderGravityZones(o, nowMs);
 
-    // beacon sites (markers, under terrain props) + planted beacons
+    // beacon sites (markers) + planted beacons
     for (const site of env.beacons.sites) {
       const e = site.entity;
       const n = Math.max(1, Math.round(e.w / 32));
@@ -124,6 +124,20 @@ export class FlightView {
       // unplanted: chevrons blink green; planted: dim pad with the beacon on it
       const f = site.planted ? 1 : Math.floor(nowMs / 400) % 2;
       for (let i = 0; i < n; i++) markers.next('obj.beaconSite', f, x0 + i * 32, e.y);
+      if (!site.planted) {
+        // landing zone: a faint pulsing column with corner brackets
+        const zh = env.tuning.beacon.zoneHeight;
+        const pulse = 0.5 + 0.5 * Math.sin(nowMs / 350);
+        const l = e.x - e.w / 2;
+        g.rect(l, e.y - zh, e.w, zh).fill({ color: 0x60ff90, alpha: 0.08 + 0.07 * pulse });
+        for (const [x, w] of [
+          [l, 6],
+          [l + e.w - 6, 6],
+        ] as const) {
+          g.rect(x, e.y - zh, w, 1).fill({ color: 0x60ff90, alpha: 0.7 });
+          g.rect(x === l ? l : l + e.w - 1, e.y - zh, 1, 6).fill({ color: 0x60ff90, alpha: 0.7 });
+        }
+      }
       if (site.planted) bodies.next('obj.beacon', anim, e.x, e.y);
       else if (site.hold > 0) {
         const k = Math.min(1, site.hold / Math.max(0.01, e.holdSec));
