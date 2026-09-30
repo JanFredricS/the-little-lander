@@ -73,6 +73,30 @@ describe('S7 render layer', () => {
     expect(closing).toBe(true);
   });
 
+  it('reduced motion: no keeper rumble through slam / stagger / dying (sprite sits exactly on the boss)', async () => {
+    const s = await LevelSession.create(keeper);
+    s.start();
+    const calm = new S7LevelFx(s, art, undefined, { reducedMotion: true });
+    const rumbly = new S7LevelFx(s, art);
+    const b = s.systems.keeper!.brain;
+    const pos = (fx: S7LevelFx) => (fx as unknown as { keeper: { position: { x: number; y: number } } }).keeper.position;
+    let moved = 0;
+    for (const mode of ['slamWindup', 'slamRecover', 'stagger', 'dying'] as const) {
+      b.mode = mode;
+      for (let t = 0; t < 600; t += 37) {
+        calm.render(1, t, null);
+        rumbly.render(1, t, null);
+        expect(pos(calm).x).toBe(b.pos.x);
+        expect(pos(calm).y).toBe(b.pos.y);
+        if (pos(rumbly).x !== b.pos.x || pos(rumbly).y !== b.pos.y) moved++;
+      }
+    }
+    expect(moved).toBeGreaterThan(0); // the default (motion on) does rumble
+    calm.destroy();
+    rumbly.destroy();
+    s.destroy();
+  });
+
   it('map 5 darkness deepens through Section B (overlay alpha start vs end)', async () => {
     const start = s7DarknessAt(vaults, VAULTS_SECTION_B);
     const mid = s7DarknessAt(vaults, (VAULTS_SECTION_B + 13300) / 2);

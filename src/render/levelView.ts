@@ -90,7 +90,7 @@ export class LevelView {
 
     this.world.addChild(this.flight.over);
     this.world.addChild(this.entities.front);
-    this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art, this.flight.tex) : null;
+    this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art, this.flight.tex, { reducedMotion: feel.reducedMotion }) : null;
     if (this.s7) {
       this.world.addChildAt(this.s7.under, 0);
       this.world.addChild(this.s7.over);

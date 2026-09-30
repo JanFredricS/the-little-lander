@@ -115,6 +115,8 @@ export class S7LevelFx {
     private readonly session: LevelSession,
     art: ArtApi,
     tex?: SpriteTextures,
+    /** Settings.reducedMotion: no rumble on the keeper, straining rocks or crumbling ledges. */
+    private readonly opts: { reducedMotion?: boolean } = {},
   ) {
     this.theme = session.spec.themeId;
     this.tex = tex ?? new SpriteTextures(art, this.theme);
@@ -352,8 +354,9 @@ export class S7LevelFx {
     return x1 >= this.cx0 && x0 <= this.cx1 && y1 >= this.cy0 && y0 <= this.cy1;
   }
 
-  /** Rumble offset (px) of amplitude `amp` for the frame being drawn. */
+  /** Rumble offset (px) of amplitude `amp` for the frame being drawn (0 with reduced motion). */
   private shake(amp: number): number {
+    if (this.opts.reducedMotion) return 0;
     return (Math.sin(this.nowMs * 0.09) + Math.sin(this.nowMs * 0.057)) * 0.5 * amp;
   }
 
