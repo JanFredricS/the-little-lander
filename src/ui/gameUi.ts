@@ -20,6 +20,7 @@ import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
 import { readSaveView, type SaveView } from './levelSelect';
 import { createMenu, keyToCommand, menuCommand, menuFocus, scrollBy, scrollToFocus, type MenuResult, type MenuState } from './menu';
+import { enterFullscreen } from './fullscreen';
 import { RotateHint } from './rotateHint';
 import { backAction, isUiCommand, itemAction, screenModel, type ScreenContext, type ScreenModel, type StoryContext } from './screens';
 import { ScreenView } from './screenView';
@@ -73,6 +74,8 @@ export class GameUi {
   private lastHull: number | null = null;
   private press: { id: number; x: number; y: number; index: number; dragged: boolean; scrollAnchor: number } | null = null;
   private readonly unbind: (() => void)[] = [];
+  /** A first touch tap already asked for fullscreen (once per page; never re-forced after the player leaves it). */
+  private fsTouchTried = false;
 
   constructor(private readonly o: GameUiOptions) {
     this.screenView = new ScreenView(o.art);
@@ -86,6 +89,7 @@ export class GameUi {
 
     const onKey = (e: KeyboardEvent) => this.onKey(e);
     const onAnyPointer = (e: PointerEvent) => this.onAnyPointer(e);
+    const onAnyPointerUp = (e: PointerEvent) => this.onAnyPointerUp(e);
     const cv = o.pixi.canvas;
     const onDown = (e: PointerEvent) => this.onCanvasDown(e);
     const onMove = (e: PointerEvent) => this.onCanvasMove(e);
@@ -93,6 +97,7 @@ export class GameUi {
     const onCancel = () => (this.press = null);
     window.addEventListener('keydown', onKey);
     window.addEventListener('pointerdown', onAnyPointer, true);
+    window.addEventListener('pointerup', onAnyPointerUp, true);
     cv.addEventListener('pointerdown', onDown);
     cv.addEventListener('pointermove', onMove);
     cv.addEventListener('pointerup', onUp);
@@ -100,6 +105,7 @@ export class GameUi {
     this.unbind.push(
       () => window.removeEventListener('keydown', onKey),
       () => window.removeEventListener('pointerdown', onAnyPointer, true),
+      () => window.removeEventListener('pointerup', onAnyPointerUp, true),
       () => cv.removeEventListener('pointerdown', onDown),
       () => cv.removeEventListener('pointermove', onMove),
       () => cv.removeEventListener('pointerup', onUp),
@@ -297,6 +303,8 @@ export class GameUi {
   }
 
   private activate(id: string): void {
+    // Title START / CONTINUE is a user gesture (key / tap / click): go fullscreen where the API exists.
+    if (this.state.id === 'title') enterFullscreen();
     const a = itemAction(this.state, id, this.ctx());
     if (!isUiCommand(a)) {
       this.o.dispatch(a);
@@ -361,6 +369,13 @@ export class GameUi {
       this.rotate.update();
       this.syncLayers();
     }
+  }
+
+  /** The first touch tap of the page (pointerup is a user-activation event for touch) asks for fullscreen. */
+  private onAnyPointerUp(e: PointerEvent): void {
+    if (e.pointerType !== 'touch' || this.fsTouchTried) return;
+    this.fsTouchTried = true;
+    enterFullscreen();
   }
 
   private toView(e: PointerEvent): { x: number; y: number } {

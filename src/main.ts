@@ -2,6 +2,7 @@ import { App } from './app';
 import { getAudio } from './audio';
 import { DEBUG_ROUTES } from './debugRoutes';
 import { bootActions } from './shell/boot';
+import { installSwipeToFullscreen } from './ui/fullscreen';
 
 const host = document.getElementById('app');
 if (!host) throw new Error('#app missing');
@@ -30,6 +31,7 @@ if (route) {
   // overrides it); `?debug` lists debug levels (testpad, physlab) in level
   // select; `?touch=on|off|auto` forces the on-screen touch controls (else the
   // saved preference applies).
+  installSwipeToFullscreen(); // iPhone Safari: swipe-up hint while the landscape toolbar shows
   const actions = bootActions(params);
   const touchParam = params.get('touch');
   const touchPref = touchParam === 'on' || touchParam === 'off' || touchParam === 'auto' ? touchParam : undefined;
