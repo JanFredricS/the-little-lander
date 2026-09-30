@@ -14,6 +14,7 @@
  * It is a competent pilot, not a perfect one: it pulses like a player.
  */
 
+import { emptyFrame } from '../../shell/input';
 import type { InputFrame, Vec2 } from '../../contracts';
 import type { LevelSession } from '../../game/session';
 import { mToPx, pxToM } from '../../physics/units';
@@ -73,20 +74,7 @@ export class Autopilot {
   }
 
   frame(s: LevelSession): InputFrame {
-    const f: InputFrame = {
-      thrust: false,
-      engineLeft: false,
-      engineRight: false,
-      rotateCW: false,
-      rotateCCW: false,
-      aim: { x: 0, y: 0 },
-      aimTarget: null,
-      fire: false,
-      release: false,
-      reelIn: false,
-      reelOut: false,
-      pause: false,
-    };
+    const f: InputFrame = emptyFrame();
     const st = s.state;
     if (st.crashed) return f;
     const node = this.route[this.i];

@@ -71,6 +71,7 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   density: POSITIVE,
   // engines / rates
   thrust: POSITIVE,
+  topThrust: POSITIVE,
   rotateAccel: POSITIVE,
   burnSeconds: POSITIVE,
   headSpeed: POSITIVE,
@@ -102,6 +103,7 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   damageSpeed: NON_NEGATIVE,
   landSettleSec: NON_NEGATIVE,
   engineOffset: NON_NEGATIVE,
+  topOffset: NON_NEGATIVE,
   mountHeight: NON_NEGATIVE,
   attachedDrag: NON_NEGATIVE,
   burnGraceSec: NON_NEGATIVE,

@@ -27,7 +27,17 @@ export const LANDER_TUNING = {
    * Left engine = clockwise (+), right = counter-clockwise.
    */
   engineOffset: 4,
-  /** Seconds of continuous BOTH-engine burn per full tank (one engine burns half as fast). */
+  /**
+   * S9 top thrusters: thrust of EACH top thruster as a multiple of the dry
+   * lander's weight at reference gravity. They sit on the top of the body
+   * (y = -height/2) at x = ±topOffset and push along the body's DOWN axis, so
+   * an inverted lander lifts with both (2 × 0.6 = 1.2 × weight) and flips
+   * with one. Upright, they push you down (a brake for climbs).
+   */
+  topThrust: 0.6,
+  /** Top thruster x offset from centre (px): the lever for flipping. Left top = counter-clockwise, right top = clockwise. */
+  topOffset: 7,
+  /** Seconds of continuous BOTH-engine burn per full tank (one engine burns half as fast; each top thruster burns like one main engine). */
   burnSeconds: 30,
   damageSpeed: 75,
   crashSpeed: 150,

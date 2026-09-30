@@ -13,14 +13,21 @@ export interface HelpCard {
 
 const KEYS: Record<VesselMode, readonly string[]> = {
   csm: ['A / ←   ROTATE LEFT', 'D / →   ROTATE RIGHT', 'W / ↑ / SPACE   THRUST', 'PULSE THE THRUSTER - IT IS STRONG!'],
-  lander: ['A / ← / J   LEFT ENGINE', 'D / → / L   RIGHT ENGINE', 'W / ↑ / K / SPACE   BOTH', 'ONE ENGINE TILTS YOU - PULSE TO STEER'],
+  lander: [
+    'A / ← / J   LEFT ENGINE',
+    'D / → / L   RIGHT ENGINE',
+    'W / ↑ / K / SPACE   BOTH',
+    'Q / U   TOP LEFT    E / O   TOP RIGHT',
+    'ONE ENGINE TILTS YOU - PULSE TO STEER',
+    'UPSIDE DOWN? TOP THRUSTERS FLIP YOU',
+  ],
   harpoon: ['MOUSE / ARROWS   AIM', 'CLICK / SPACE   FIRE HARPOON', 'RIGHT CLICK / X   RELEASE', 'W / R   REEL IN    S / F   REEL OUT'],
   harpoonThrust: ['MOUSE / ARROWS   AIM', 'CLICK / SPACE   FIRE    X   RELEASE', 'W   THRUST    A / D   ROTATE', 'R   REEL IN    F   REEL OUT'],
 };
 
 const TOUCH: Record<VesselMode, readonly string[]> = {
   csm: ['◀ ▶ (LEFT THUMB)   ROTATE', 'THRUST (RIGHT THUMB)', 'TAP IT - SHORT BURNS!'],
-  lander: ['L ENGINE: BOTTOM LEFT', 'R ENGINE: BOTTOM RIGHT', 'HOLD BOTH TO GO STRAIGHT UP'],
+  lander: ['L ENGINE: BOTTOM LEFT', 'R ENGINE: BOTTOM RIGHT', 'HOLD BOTH TO GO STRAIGHT UP', 'TOP L / TOP R: SMALL BUTTONS ABOVE', 'UPSIDE DOWN? TOP THRUSTERS FLIP YOU'],
   harpoon: ['DRAG ON THE LEFT TO AIM', 'FIRE / REL   HARPOON', '▲ IN  ▼ OUT   REEL THE ROPE'],
   harpoonThrust: ['DRAG ON THE LEFT TO AIM', 'FIRE / REL   HARPOON   ▲▼ REEL', '◀ ▶ ROTATE    THR   THRUST'],
 };
@@ -53,6 +60,6 @@ export function helpCard(mode: VesselMode, touch: boolean, start = true): HelpCa
  */
 export function frameHasInput(f: InputFrame): boolean {
   const aimed = (f.aim.x !== 0 || f.aim.y !== 0) && f.aimTarget === null;
-  return f.thrust || f.engineLeft || f.engineRight || f.rotateCW || f.rotateCCW || f.fire || f.release || f.reelIn || f.reelOut || aimed;
+  return f.thrust || f.engineLeft || f.engineRight || f.topLeft || f.topRight || f.rotateCW || f.rotateCCW || f.fire || f.release || f.reelIn || f.reelOut || aimed;
 }
 

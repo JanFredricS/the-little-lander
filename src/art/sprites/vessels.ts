@@ -12,7 +12,8 @@
  *
  * Every vessel exposes per-engine flame anchors (VESSEL_ANCHORS): where the
  * top-centre pivot of the flame sprite goes, plus the exhaust direction.
- * VesselState.engines.{main,left,right} decides which ones burn.
+ * VesselState.engines.{main,left,right} (+ the S9 lander top thrusters
+ * topLeft/topRight) decides which ones burn.
  */
 
 import { Pix, type Pt } from '../core/pix';
@@ -131,8 +132,12 @@ function mirroredLines(p: Pix, lines: readonly (readonly [number, number, number
 // ------------------------------------------------------------ anchors
 
 export interface EngineAnchor {
-  /** Which VesselState.engines flag drives this flame. */
-  engine: 'main' | 'left' | 'right';
+  /**
+   * Which VesselState.engines flag drives this flame. 'topLeft' / 'topRight'
+   * are the S9 lander top thrusters (extra flags beside the frozen
+   * main/left/right; see EngineName in src/physics/vessel/types.ts).
+   */
+  engine: 'main' | 'left' | 'right' | 'topLeft' | 'topRight';
   /** Flame attach point, px from the sprite's top-left (flame pivot goes here). */
   x: number;
   y: number;
@@ -216,6 +221,9 @@ export function buildLander(s: number, pose: 'flight' | 'contact', seed = 11): B
   // descent engine bells (two: left + right of centre)
   const bells = [8.5, 15.5];
   for (const bx of bells) m.poly(P([[bx - 0.8, 16], [bx + 0.8, 16], [bx + 1.5, 18], [bx - 1.5, 18]]), M.BELL);
+  // S9 top thrusters: small up-facing nozzles on the descent-stage shoulders, beside the cabin
+  const tops = [5.2, 18.8];
+  for (const bx of tops) m.poly(P([[bx - 0.6, 10], [bx + 0.6, 10], [bx + 1.1, 8.4], [bx - 1.1, 8.4]]), M.BELL);
 
   const p = finish(shade(m, { s, cx: W / 2, seed }));
   glintWindows(p, s, 0, dy, cx);
@@ -249,6 +257,8 @@ export function buildLander(s: number, pose: 'flight' | 'contact', seed = 11): B
   const engines: EngineAnchor[] = [
     { engine: 'left', x: bells[0]! * s, y: exitY, dir: { x: 0, y: 1 }, flame: 'fx.flameSmall' },
     { engine: 'right', x: bells[1]! * s, y: exitY, dir: { x: 0, y: 1 }, flame: 'fx.flameSmall' },
+    { engine: 'topLeft', x: tops[0]! * s, y: 8.4 * s + dy, dir: { x: 0, y: -1 }, flame: 'fx.flameSmall' },
+    { engine: 'topRight', x: tops[1]! * s, y: 8.4 * s + dy, dir: { x: 0, y: -1 }, flame: 'fx.flameSmall' },
   ];
   return { pix: p, engines };
 }

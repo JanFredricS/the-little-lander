@@ -38,7 +38,7 @@ the touch controls on, off or auto.
 | Vessel | Keyboard / mouse | Touch |
 |---|---|---|
 | **CSM** (maps 2-3) | **W / ↑ / Space** thrust (pulse it, it is strong) · **A / ←** rotate left · **D / →** rotate right | ◀ ▶ under the left thumb rotate · **THRUST** under the right thumb (short taps) |
-| **Lander** (maps 1, 3-4, 8) | **A / ← / J** left engine · **D / → / L** right engine · **W / ↑ / K / Space** both engines. One engine alone tilts you, so pulse to steer | **L ENGINE** bottom left · **R ENGINE** bottom right · hold both to go straight up |
+| **Lander** (maps 1, 3-4, 8) | **A / ← / J** left engine · **D / → / L** right engine · **W / ↑ / K / Space** both engines. One engine alone tilts you, so pulse to steer · **Q / U** top-left thruster · **E / O** top-right thruster (they push the other way: upside down, both lift you and one flips you back over) | **L ENG** bottom left · **R ENG** bottom right · hold both to go straight up · smaller **TOP L / TOP R** buttons above them fire the top thrusters |
 | **Harpoon pod** (map 5) | **Mouse / arrows** aim · **Click / Space** fire · **Right click / X** release · **W / R** reel in · **S / F** reel out | Drag on the left half to aim · **FIRE / REL** harpoon · **▲ IN / ▼ OUT** reel |
 | **Harpoon + thrust** (maps 6-7) | **Mouse / arrows** aim · **Click / Space** fire · **X** release · **W** thrust · **A / D** rotate · **R** reel in · **F** reel out | Drag on the left to aim · **FIRE / REL** · **▲▼** reel · **◀ ▶** rotate · **THR** thrust |
 

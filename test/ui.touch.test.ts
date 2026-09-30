@@ -60,7 +60,7 @@ describe('touch layout', () => {
   it('per-mode control sets', () => {
     const ids = (m: (typeof VESSEL_MODES)[number]) => touchLayout(m, 844, 390).buttons.map((b) => b.control).sort();
     expect(ids('csm')).toEqual(['pause', 'rotateCCW', 'rotateCW', 'thrust']);
-    expect(ids('lander')).toEqual(['engineLeft', 'engineRight', 'pause']);
+    expect(ids('lander')).toEqual(['engineLeft', 'engineRight', 'pause', 'topLeft', 'topRight']);
     expect(ids('harpoon')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release']);
     expect(ids('harpoonThrust')).toEqual(['fire', 'pause', 'reelIn', 'reelOut', 'release', 'rotateCCW', 'rotateCW', 'thrust']);
     expect(touchLayout('lander', 844, 390).aimZone).toBeNull();
@@ -74,6 +74,28 @@ describe('touch layout', () => {
     expect(left.x).toBeLessThan(40);
     expect(844 - (right.x + right.w)).toBeLessThan(40);
     expect(390 - (left.y + left.h)).toBeLessThan(40);
+  });
+});
+
+describe('S9 lander top-thruster buttons', () => {
+  it('sit above the engine buttons on the same side, ~0.7x their size, >= 48 CSS px', () => {
+    for (const [w, h] of SIZES) {
+      const l = touchLayout('lander', w, h);
+      const get = (c: string) => l.buttons.find((b) => b.control === c)!.rect;
+      for (const [top, eng] of [
+        ['topLeft', 'engineLeft'],
+        ['topRight', 'engineRight'],
+      ] as const) {
+        const t = get(top);
+        const e = get(eng);
+        expect(t.y + t.h, `${top} ${w}x${h}`).toBeLessThanOrEqual(e.y);
+        expect(t.w).toBeGreaterThanOrEqual(48);
+        expect(t.w).toBeLessThan(e.w);
+        expect(t.w).toBeGreaterThanOrEqual(Math.min(e.w * 0.7 - 1, 48) - 0);
+        // same side of the screen as its engine button
+        expect(Math.sign(t.x + t.w / 2 - w / 2)).toBe(Math.sign(e.x + e.w / 2 - w / 2));
+      }
+    }
   });
 });
 

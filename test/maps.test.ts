@@ -162,7 +162,7 @@ describe('maps 1-4: objectives are reachable', () => {
     expect(siteRidesIsland(specSite as never, isl)).toBe(true);
     const session = await LevelSession.create(s);
     const site = session.env.beacons.sites.find((x) => x.entity.id === 'site4')!;
-    const idle = { thrust: false, engineLeft: false, engineRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false };
+    const idle = { thrust: false, engineLeft: false, engineRight: false, topLeft: false, topRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false };
     const extremes: Vec2[] = [];
     for (let k = 0; k < Math.round((isl.periodSec / 2) * 60); k++) {
       // hover in place (bang-bang on vertical speed) so the session outlives half a period

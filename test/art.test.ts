@@ -165,7 +165,8 @@ describe('vessel contracts', () => {
           expect(e.y).toBeGreaterThanOrEqual(0);
           expect(e.y).toBeLessThanOrEqual(f.h);
           expect(Math.hypot(e.dir.x, e.dir.y)).toBeCloseTo(1, 5);
-          expect(['main', 'left', 'right']).toContain(e.engine);
+          expect(['main', 'left', 'right', 'topLeft', 'topRight']).toContain(e.engine);
+          if (e.engine === 'topLeft' || e.engine === 'topRight') expect(name).toBe('vessel.lander'); // S9: lander only
           expect(['fx.flameMain', 'fx.flameSmall']).toContain(e.flame);
         }
       });

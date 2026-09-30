@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). Persistent progress (localStorage key 'the-little-lander/save').
+ * FROZEN (S0; S9 amendment: Settings.swapEngineButtons). Persistent progress (localStorage key 'the-little-lander/save').
  * Readers must accept older/partial data: validate, then fill defaults.
  */
 
@@ -27,6 +27,13 @@ export interface Settings {
   touchControls: 'auto' | 'on' | 'off';
   /** Debug overlay (fps, physics shapes). */
   debugOverlay: boolean;
+  /**
+   * S9 amendment. On-screen touch controls only: the LEFT engine button fires
+   * the RIGHT engine and vice versa (tilt toward the button you press); the
+   * top-thruster buttons follow the same swap. Keyboard is unaffected.
+   * Default true; older saves without the field read as true.
+   */
+  swapEngineButtons: boolean;
 }
 
 export interface SaveState {

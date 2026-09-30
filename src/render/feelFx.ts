@@ -21,6 +21,7 @@
 import { Container } from 'pixi.js';
 import type { GameEvent, SpriteName, Vec2 } from '../contracts';
 import type { LevelSession } from '../game/session';
+import { engineOn } from '../physics/vessel/types';
 import { SpritePool, type SpriteTextures } from './spritePool';
 
 /** Largest shake offset (px) at full trauma. */
@@ -209,8 +210,8 @@ export class FeelFx {
   private exhaust(dt: number): void {
     const s = this.session;
     const vs = s.state;
-    const e = vs.engines;
-    if (vs.crashed || dt === 0 || !(e.main || e.left || e.right)) {
+    const e = s.vessel.engineFlags(); // incl. the S9 top thrusters
+    if (vs.crashed || dt === 0 || !(e.main || e.left || e.right || e.topLeft || e.topRight)) {
       this.exhaustClock = 0;
       return;
     }
@@ -220,14 +221,15 @@ export class FeelFx {
     const c = Math.cos(vs.angle);
     const sn = Math.sin(vs.angle);
     for (const n of s.vessel.geometry.nozzles) {
-      if (!e[n.engine]) continue;
+      if (!engineOn(e, n.engine)) continue;
       const main = n.engine === 'main';
-      const ly = n.y + (main ? 12 : 7); // just below the flame's hot core
+      const k = n.top ? -1 : 1; // top thrusters exhaust along body-up
+      const ly = n.y + k * (main ? 12 : 7); // just past the flame's hot core
       const x = vs.pos.x + n.x * c - ly * sn;
       const y = vs.pos.y + n.x * sn + ly * c;
       const j = hash(++this.seq) - 0.5;
-      // down the nozzle axis, plus the vessel's own drift
-      this.spawn('smoke', x, y, -sn * 70 + j * 30 + vs.vel.x * 0.3, c * 70 + vs.vel.y * 0.3, -30, 2.2, 0.65, (main ? 0.6 : 0.45) + 0.2 * hash(this.seq * 3));
+      // along the nozzle axis, plus the vessel's own drift
+      this.spawn('smoke', x, y, k * -sn * 70 + j * 30 + vs.vel.x * 0.3, k * c * 70 + vs.vel.y * 0.3, -30, 2.2, 0.65, (main ? 0.6 : 0.45) + 0.2 * hash(this.seq * 3));
     }
   }
 

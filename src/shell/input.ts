@@ -7,6 +7,7 @@
  *   all modes      pause: Escape, P
  *   csm            thrust: W / ArrowUp / Space · rotateCCW: A / ArrowLeft · rotateCW: D / ArrowRight
  *   lander         engineLeft: A / ArrowLeft / J · engineRight: D / ArrowRight / L · thrust (= both): W / ArrowUp / K / Space
+ *                  topLeft: Q / U · topRight: E / O (S9 top thrusters)
  *   harpoon        aim: arrow keys (8-way) · fire: Space · release: X / ShiftLeft · reelIn: W / R · reelOut: S / F
  *   harpoonThrust  aim: arrow keys · fire: Space · release: X / ShiftLeft · thrust: W · rotateCCW: A · rotateCW: D · reelIn: R · reelOut: F
  * Pointer (mouse): hover aims (vessel -> pointer), left button = fire, right button = release.
@@ -30,6 +31,8 @@ export const CONTROL_IDS: readonly ControlId[] = [
   'thrust',
   'engineLeft',
   'engineRight',
+  'topLeft',
+  'topRight',
   'rotateCW',
   'rotateCCW',
   'fire',
@@ -73,6 +76,10 @@ export const DEFAULT_BINDINGS: Readonly<Record<VesselMode, KeyBindings>> = {
     ArrowUp: ['thrust'],
     KeyK: ['thrust'],
     Space: ['thrust'],
+    KeyQ: ['topLeft'],
+    KeyU: ['topLeft'],
+    KeyE: ['topRight'],
+    KeyO: ['topRight'],
   },
   harpoon: {
     ...PAUSE,
@@ -105,6 +112,8 @@ export function emptyFrame(): InputFrame {
     thrust: false,
     engineLeft: false,
     engineRight: false,
+    topLeft: false,
+    topRight: false,
     rotateCW: false,
     rotateCCW: false,
     aim: { x: 0, y: 0 },

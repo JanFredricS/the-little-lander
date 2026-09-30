@@ -5,7 +5,8 @@
  * Every target is ≥ MIN_TOUCH_CSS (48 CSS px) in both dimensions.
  *
  *   csm            ◀ ▶ bottom-left (rotate) · THRUST bottom-right
- *   lander         L ENGINE bottom-left · R ENGINE bottom-right (thumb zones)
+ *   lander         L ENGINE bottom-left · R ENGINE bottom-right (thumb zones),
+ *                  TOP L / TOP R (S9 top thrusters, ~0.7× size) above them
  *   harpoon        aim drag zone left · FIRE / REL / ▲ IN / ▼ OUT bottom-right
  *   harpoonThrust  harpoon + THRUST (right) + ◀ ▶ rotate (bottom-left)
  *   all modes      II pause, top centre
@@ -82,12 +83,17 @@ export function touchLayout(mode: VesselMode, w: number, h: number): TouchLayout
       rotateLeft();
       buttons.push({ id: 'thrust', control: 'thrust', label: 'THRUST', kind: 'hold', rect: r(right - big, bottom - big, big, big) });
       break;
-    case 'lander':
+    case 'lander': {
+      const small = Math.max(MIN_TOUCH_CSS, Math.round(big * 0.7));
+      const topY = bottom - big - g - small;
       buttons.push(
         { id: 'engineLeft', control: 'engineLeft', label: 'L ENG', kind: 'hold', rect: r(m, bottom - big, big, big) },
         { id: 'engineRight', control: 'engineRight', label: 'R ENG', kind: 'hold', rect: r(right - big, bottom - big, big, big) },
+        { id: 'topLeft', control: 'topLeft', label: 'TOP L', kind: 'hold', rect: r(m, topY, small, small) },
+        { id: 'topRight', control: 'topRight', label: 'TOP R', kind: 'hold', rect: r(right - small, topY, small, small) },
       );
       break;
+    }
     case 'harpoon': {
       const c = harpoonCluster();
       const top = m + pauseSize + g;
