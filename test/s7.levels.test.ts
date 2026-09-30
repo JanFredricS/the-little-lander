@@ -2,10 +2,11 @@
  * LevelSpec design-rule tests for maps 5-8 (S7).
  */
 
+import { surfaceY } from '../src/levels/kit';
 import { describe, expect, it } from 'vitest';
 import type { Vec2 } from '../src/contracts';
 import { LEVELS } from '../src/levels/registry';
-import { s7YAt } from '../src/levels/s7Helpers';
+
 import { validateLevel } from '../src/levels/validate';
 import { HOLLOW_GRAVITY, HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS, HOLLOW_SUN, hollow } from '../src/levels/hollow';
 import { VAULTS_CEILING, VAULTS_GROUND, VAULTS_HOLES, VAULTS_ROUTE, VAULTS_SECTION_B, vaults } from '../src/levels/vaults';
@@ -33,7 +34,7 @@ import { vPxToM } from '../src/physics/units';
 /** Densely resampled polyline (every `step` px of x). */
 function sample(points: readonly Vec2[], step = 10): Vec2[] {
   const out: Vec2[] = [];
-  for (let x = points[0]!.x; x <= points[points.length - 1]!.x; x += step) out.push({ x, y: s7YAt(points, x) });
+  for (let x = points[0]!.x; x <= points[points.length - 1]!.x; x += step) out.push({ x, y: surfaceY(points, x) });
   return out;
 }
 
@@ -62,8 +63,8 @@ describe('map 5 — The Vaults', () => {
   it('anchorable roof ahead within harpoon range along the whole swing line', () => {
     const bad: number[] = [];
     for (let x = VAULTS_ROUTE.x0; x <= VAULTS_ROUTE.x1; x += 20) {
-      const floor = Math.min(s7YAt(VAULTS_GROUND, x), 700);
-      const roofHere = s7YAt(VAULTS_CEILING, x) > 100 ? s7YAt(VAULTS_CEILING, x) : 330;
+      const floor = Math.min(surfaceY(VAULTS_GROUND, x), 700);
+      const roofHere = surfaceY(VAULTS_CEILING, x) > 100 ? surfaceY(VAULTS_CEILING, x) : 330;
       const line = { x, y: (floor + roofHere) / 2 + 40 }; // swing line: a bit below mid-height
       if (nearestRoof(line, true) > reach) bad.push(x);
     }
@@ -73,7 +74,7 @@ describe('map 5 — The Vaults', () => {
   it('section A: from every floor point the roof is in reach (no soft-lock in a pit)', () => {
     const bad: number[] = [];
     for (let x = 300; x < VAULTS_SECTION_B; x += 20) {
-      const p = { x, y: s7YAt(VAULTS_GROUND, x) - 14 };
+      const p = { x, y: surfaceY(VAULTS_GROUND, x) - 14 };
       if (nearestRoof(p) > reach) bad.push(x);
     }
     expect(bad).toEqual([]);

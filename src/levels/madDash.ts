@@ -54,8 +54,9 @@
  *       burnSeconds 110 -> 95 (two 0.25 canisters on the way).
  */
 
+import { rectPoints } from './kit';
 import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
-import { s7Noise, s7Piece, s7Profile, s7Prop, s7Rect } from './s7Helpers';
+import { s7Noise, s7Piece, s7Profile, s7Prop } from './s7Helpers';
 
 const W = 1400;
 const H = 10400;
@@ -130,8 +131,8 @@ export const MADDASH_TOWERS: readonly { id: string; x: number; y: number; w: num
 const terrain: TerrainPiece[] = [
   s7Piece('wallLeft', 'polygon', leftWall, { material: 'ruin', decorDensity: 0.5 }),
   s7Piece('wallRight', 'polygon', rightWall, { material: 'ruin', decorDensity: 0.5 }),
-  s7Piece('floor', 'polygon', s7Rect(0, FLOOR_Y, W, H - FLOOR_Y), { material: 'ruin' }),
-  ...MADDASH_TOWERS.map((t) => s7Piece(t.id, 'polygon', s7Rect(t.x - t.w / 2, t.y, t.w, t.h), { material: 'ruin' })),
+  s7Piece('floor', 'polygon', rectPoints(0, FLOOR_Y, W, H - FLOOR_Y), { material: 'ruin' }),
+  ...MADDASH_TOWERS.map((t) => s7Piece(t.id, 'polygon', rectPoints(t.x - t.w / 2, t.y, t.w, t.h), { material: 'ruin' })),
 ];
 
 // ------------------------------------------------------------------ gates

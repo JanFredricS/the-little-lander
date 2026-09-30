@@ -2,8 +2,13 @@
  * Level-authoring helpers for maps 5-8 (S7). Deterministic noise bands for
  * ground / ceiling polylines, rectangle / blob polygons and prop scatter.
  *
- * NOTE(S8 dedup): S6 owns the shared level helpers for maps 1-4; these are
- * S7's own (s7-prefixed) versions written concurrently. Merge them at S8.
+ * Trivial overlaps with S6's kit.ts are gone (use kit's rectPoints for the
+ * old s7Rect and surfaceY for s7YAt).
+ * TODO(S8): fold the rest into kit.ts - s7Blob vs kit.blobPoints and
+ * s7Band/s7Noise vs kit.roughen use different seeding (string hash vs
+ * number), so merging them changes map geometry and needs re-verifying the
+ * map 5-8 design tests; s7Piece/s7Prop/s7Scatter/s7Notch/s7Profile have no
+ * kit equivalent yet.
  */
 
 import type { EntitySpec, SpriteName, StaticPropEntity, TerrainPiece, TerrainStyle, Vec2 } from '../contracts';
@@ -55,16 +60,6 @@ export function s7Band(x0: number, x1: number, step: number, profile: (x: number
   for (let x = x0; x < x1; x += step) pts.push({ x, y: Math.round(profile(x) + (noise ? amp * noise(x) : 0)) });
   pts.push({ x: x1, y: Math.round(profile(x1) + (noise ? amp * noise(x1) : 0)) });
   return pts;
-}
-
-/** Axis-aligned rectangle polygon (top-left x, y; size w × h). */
-export function s7Rect(x: number, y: number, w: number, h: number): Vec2[] {
-  return [
-    { x, y },
-    { x: x + w, y },
-    { x: x + w, y: y + h },
-    { x, y: y + h },
-  ];
 }
 
 /** A rounded rock blob polygon around (cx, cy): rx × ry radii, jitter 0..1, `n` vertices. */
@@ -132,15 +127,4 @@ export function s7Notch(points: readonly Vec2[], x0: number, x1: number, toY: nu
   const before = points.filter((p) => p.x < x0);
   const after = points.filter((p) => p.x > x1);
   return [...before, { x: x0, y: yAt(x0) }, { x: x0 + wall, y: toY }, { x: x1 - wall, y: toY }, { x: x1, y: yAt(x1) }, ...after];
-}
-
-/** y of a polyline (strictly increasing x) at x, linear; clamped at the ends. */
-export function s7YAt(points: readonly Vec2[], x: number): number {
-  if (x <= points[0]!.x) return points[0]!.y;
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1]!;
-    const b = points[i]!;
-    if (x <= b.x) return a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x);
-  }
-  return points[points.length - 1]!.y;
 }

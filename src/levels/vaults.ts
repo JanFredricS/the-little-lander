@@ -47,8 +47,9 @@
  * terrain; the winch crushed pods into rock) — see src/physics/vessel/harpoonRig.ts.
  */
 
+import { rectPoints, surfaceY } from './kit';
 import type { EntitySpec, LevelSpec, TerrainPiece, ZoneSpec } from '../contracts';
-import { s7Band, s7Notch, s7Noise, s7Piece, s7Profile, s7Prop, s7Rect, s7Scatter, s7YAt } from './s7Helpers';
+import { s7Band, s7Notch, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter } from './s7Helpers';
 
 const W = 14000;
 const H = 1400;
@@ -157,8 +158,8 @@ export const VAULTS_GROUND = groundPoints();
 const terrain: TerrainPiece[] = [
   s7Piece('roof', 'ceiling', VAULTS_CEILING, { material: 'rock', decorDensity: 0.3 }),
   s7Piece('floor', 'ground', VAULTS_GROUND, { material: 'rock', decorDensity: 0.35 }),
-  s7Piece('wallWest', 'polygon', s7Rect(0, 200, 30, 380), { material: 'rock' }),
-  s7Piece('wallEast', 'polygon', s7Rect(W - 30, 200, 30, 430), { material: 'rock' }),
+  s7Piece('wallWest', 'polygon', rectPoints(0, 200, 30, 380), { material: 'rock' }),
+  s7Piece('wallEast', 'polygon', rectPoints(W - 30, 200, 30, 430), { material: 'rock' }),
   // crystal outcrops on the chasm lips (visual landmarks; solid, anchorable)
   s7Piece('lip1', 'polygon', [{ x: 7270, y: 700 }, { x: 7350, y: 640 }, { x: 7360, y: 760 }], { material: 'crystal' }),
   s7Piece('lip2', 'polygon', [{ x: 9700, y: 660 }, { x: 9780, y: 700 }, { x: 9700, y: 760 }], { material: 'crystal' }),
@@ -166,8 +167,8 @@ const terrain: TerrainPiece[] = [
 
 // ------------------------------------------------------------------ entities
 
-const floorY = (x: number) => s7YAt(VAULTS_GROUND, x);
-const roofY = (x: number) => s7YAt(VAULTS_CEILING, x);
+const floorY = (x: number) => surfaceY(VAULTS_GROUND, x);
+const roofY = (x: number) => surfaceY(VAULTS_CEILING, x);
 const inChasm = (x: number) => VAULTS_CHASMS.some(([a, b]) => x > a - 30 && x < b + 30);
 const inHole = (x: number) => VAULTS_HOLES.some(([a, b]) => x > a - 20 && x < b + 20);
 

@@ -33,9 +33,10 @@
  *    map 5) let a player hang in the shade for free.
  */
 
+import { rectPoints, surfaceY } from './kit';
 import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
 import { rng, hashString } from '../physics/geom';
-import { s7Band, s7Blob, s7Noise, s7Piece, s7Profile, s7Prop, s7Rect, s7Scatter, s7YAt } from './s7Helpers';
+import { s7Band, s7Blob, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter } from './s7Helpers';
 
 const W = 16000;
 const H = 2400;
@@ -116,14 +117,14 @@ export const HOLLOW_SHELTERS: Vec2[] = HOLLOW_ROCKS.map((k) => {
 const terrain: TerrainPiece[] = [
   s7Piece('crust', 'ceiling', CEILING, { material: 'rock', decorDensity: 0.3 }),
   s7Piece('jungle', 'ground', GROUND, { material: 'organic', decorDensity: 0.5 }),
-  s7Piece('wallWest', 'polygon', s7Rect(0, 200, 40, 1600), { material: 'rock' }),
+  s7Piece('wallWest', 'polygon', rectPoints(0, 200, 40, 1600), { material: 'rock' }),
   // east wall with the tunnel mouth (a gap between y 1300 and 1560)
-  s7Piece('wallEastTop', 'polygon', s7Rect(W - 40, 150, 40, 1150), { material: 'rock' }),
-  s7Piece('wallEastBottom', 'polygon', s7Rect(W - 40, 1560, 40, 300), { material: 'rock' }),
-  s7Piece('tunnelRoof', 'polygon', s7Rect(W - 260, 1260, 220, 40), { material: 'rock' }),
-  s7Piece('tunnelFloor', 'polygon', s7Rect(W - 260, 1560, 220, 40), { material: 'rock' }),
+  s7Piece('wallEastTop', 'polygon', rectPoints(W - 40, 150, 40, 1150), { material: 'rock' }),
+  s7Piece('wallEastBottom', 'polygon', rectPoints(W - 40, 1560, 40, 300), { material: 'rock' }),
+  s7Piece('tunnelRoof', 'polygon', rectPoints(W - 260, 1260, 220, 40), { material: 'rock' }),
+  s7Piece('tunnelFloor', 'polygon', rectPoints(W - 260, 1560, 220, 40), { material: 'rock' }),
   // launch ledge at the spawn
-  s7Piece('ledge', 'polygon', s7Rect(40, 1500, 340, 40), { material: 'rock' }),
+  s7Piece('ledge', 'polygon', rectPoints(40, 1500, 340, 40), { material: 'rock' }),
   // the sun's mount: a rock stalk from the crust
   s7Piece('sunStalk', 'polygon', [{ x: 7960, y: 190 }, { x: 8040, y: 190 }, { x: 8020, y: 360 }, { x: 7980, y: 360 }], { material: 'rock' }),
   ...HOLLOW_ROCKS.map((k) => s7Piece(k.id, 'polygon', s7Blob(k.id, k.x, k.y, k.r * 1.25, k.r, 12, 0.14), { material: 'organic' })),
@@ -148,8 +149,8 @@ export const HOLLOW_ORBS: EntitySpec[] = (() => {
   return out;
 })();
 
-const floorY = (x: number) => s7YAt(GROUND, x);
-const ceilY = (x: number) => s7YAt(CEILING, x);
+const floorY = (x: number) => surfaceY(GROUND, x);
+const ceilY = (x: number) => surfaceY(CEILING, x);
 
 const decor: EntitySpec[] = [
   s7Prop('sun', 'prop.sunLarge', HOLLOW_SUN.x, HOLLOW_SUN.y, 128, 128),

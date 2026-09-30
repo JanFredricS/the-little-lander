@@ -53,8 +53,9 @@
  *       off the floor (a 1,100 px climb each way).
  */
 
+import { rectPoints, surfaceY } from './kit';
 import type { EntitySpec, LevelSpec, TerrainPiece } from '../contracts';
-import { s7Band, s7Noise, s7Piece, s7Profile, s7Prop, s7Rect, s7Scatter, s7YAt } from './s7Helpers';
+import { s7Band, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter } from './s7Helpers';
 
 const W = 4000;
 const H = 1400;
@@ -81,19 +82,19 @@ const ROCK_R = 16;
 const terrain: TerrainPiece[] = [
   s7Piece('roof', 'ceiling', ROOF, { material: 'rock', decorDensity: 0.4 }),
   s7Piece('floor', 'ground', FLOOR, { material: 'rock', decorDensity: 0.4 }),
-  s7Piece('wallWest', 'polygon', s7Rect(0, 40, 40, 1300), { material: 'rock' }),
-  s7Piece('wallEast', 'polygon', s7Rect(W - 40, 40, 40, 1300), { material: 'rock' }),
+  s7Piece('wallWest', 'polygon', rectPoints(0, 40, 40, 1300), { material: 'rock' }),
+  s7Piece('wallEast', 'polygon', rectPoints(W - 40, 40, 40, 1300), { material: 'rock' }),
   // two rubble mounds (cover from sweeps, perches)
   s7Piece('mound1', 'polygon', [{ x: 1180, y: FLOOR_Y + 5 }, { x: 1260, y: 1230 }, { x: 1340, y: 1215 }, { x: 1420, y: FLOOR_Y + 5 }], { material: 'rock' }),
   s7Piece('mound2', 'polygon', [{ x: 2600, y: FLOOR_Y + 5 }, { x: 2680, y: 1220 }, { x: 2770, y: 1230 }, { x: 2840, y: FLOOR_Y + 5 }], { material: 'rock' }),
 ];
 
-const floorY = (x: number) => s7YAt(FLOOR, x);
+const floorY = (x: number) => surfaceY(FLOOR, x);
 
 const entities: EntitySpec[] = [
   // decor
   ...KEEPER_ROCK_X.map((x, i) => s7Prop(`crack${i}`, 'prop.ceilingRockLarge', x, KEEPER_ROOF_Y + 8, 40, 16)),
-  ...s7Scatter('stalactite', 'prop.stalactite', 60, 3940, () => 5, (x) => (KEEPER_ROCK_X.some((r) => Math.abs(r - x) < 50) ? null : { y: s7YAt(ROOF, x) + 14, w: 12, h: 28 })),
+  ...s7Scatter('stalactite', 'prop.stalactite', 60, 3940, () => 5, (x) => (KEEPER_ROCK_X.some((r) => Math.abs(r - x) < 50) ? null : { y: surfaceY(ROOF, x) + 14, w: 12, h: 28 })),
   ...s7Scatter('spore', 'prop.spore', 300, 3700, () => 12, (x, r) => ({ y: 300 + r() * 900, w: 6, h: 6, foreground: r() < 0.2 })),
   ...s7Scatter('rubble', 'prop.rock', 450, 3600, () => 8, (x) => ({ y: floorY(x) - 6, w: 16, h: 12 })),
   // the loose rocks
