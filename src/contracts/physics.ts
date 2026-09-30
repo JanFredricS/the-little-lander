@@ -156,6 +156,25 @@ export interface WorldOptions {
   hitSpeedThreshold?: number;
 }
 
+/**
+ * A touching contact of a queried body (S8 amendment): manifold points with
+ * the solver impulses of the last step. Soft-landing (legs-down normals) and
+ * impulse-based hull damage are built on it.
+ */
+export interface BodyContactPoint {
+  /** World point (m). */
+  point: Vec2;
+  /** Total normal impulse (N·s) the solver applied at this point during the last step (all sub-steps). */
+  impulse: number;
+}
+
+export interface BodyContact {
+  other: BodyHandle;
+  /** Unit normal (world) pointing FROM the queried body TOWARD `other`. */
+  normal: Vec2;
+  points: BodyContactPoint[];
+}
+
 export interface PhysicsApi {
   /** Fixed steps taken. */
   readonly steps: number;
@@ -217,6 +236,8 @@ export interface PhysicsApi {
   localToWorld(h: BodyHandle, p: Vec2): Vec2;
   /** World point -> body-local (current pose). */
   worldToLocal(h: BodyHandle, p: Vec2): Vec2;
+  /** Current touching contacts of `h` (manifold points, impulses of the last step). S8 amendment. */
+  bodyContacts(h: BodyHandle): BodyContact[];
 
   // joints
   createDistanceJoint(def: DistanceJointDef): JointHandle;

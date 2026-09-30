@@ -318,10 +318,6 @@ export const PLACEHOLDER: ArtPalette = {
   outline: 2,
 };
 
-export function paletteFor(theme: ThemeId): Palette {
-  return PALETTES[theme];
-}
-
 const padded = new WeakMap<object, unknown>();
 
 /**

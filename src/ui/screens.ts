@@ -88,7 +88,8 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
         ...base,
         kind: 'title',
         heading: 'THE LITTLE LANDER',
-        info: ['A TALE OF ASTER'],
+        // landing copy (S8): the pitch, readable before the first click
+        info: ['A TALE OF ASTER', '', 'PILOT A TINY LANDER THROUGH A SHATTERED WORLD.', 'PLANT BEACONS. FIND THE LOST TEAM. GET HOME.'],
         items,
         footer: 'ENTER / CLICK / TAP',
       };

@@ -177,16 +177,12 @@ describe('csm', () => {
     }
   });
 
-  it('vessels require the physics contact-data extension (compile time + contract boundary)', async () => {
+  it('VESSEL_FACTORIES build vessels from the contract PhysicsApi (bodyContacts is part of it)', async () => {
     const r = await rig('csm');
-    const bare: PhysicsApi = new Proxy(r.physics, { get: (o, k) => (k === 'bodyContacts' ? undefined : Reflect.get(o, k, o)) });
-    const opts = { tuning: resolveTuning(), refGravity: 3.2, harpoonGuns: 1 as const };
-    // @ts-expect-error a plain PhysicsApi is not FlightPhysics
-    expect(() => createVessel('lander', bare, { pos: { x: 0, y: 0 } }, () => {}, opts)).toThrow(/ContactDataSource/);
-    // The frozen contract factory takes plain PhysicsApi and narrows at runtime.
-    expect(() => VESSEL_FACTORIES.lander(bare, { pos: { x: 0, y: 0 } }, () => {})).toThrow(/ContactDataSource/);
-    const ok = VESSEL_FACTORIES.csm(r.physics as PhysicsApi, { pos: { x: 0, y: -50 } }, () => {});
+    const physics: PhysicsApi = r.physics;
+    const ok = VESSEL_FACTORIES.csm(physics, { pos: { x: 0, y: -50 } }, () => {});
     expect(ok.state().mode).toBe('csm');
+    expect(Array.isArray(physics.bodyContacts(ok.body))).toBe(true);
     ok.destroy();
   });
 
@@ -398,6 +394,12 @@ describe('harpoon', () => {
     s = run(60, input({ reelIn: true }));
     expect(s.ropeState!.guns[0]!.length!).toBeCloseTo(l0 - resolveTuning().harpoon.reelInSpeed, -1);
     expect(s.pos.y).toBeLessThan(-40); // pulled up towards the anchor
+    // ropeReeling (S8 amendment): one edge on start, none while held
+    expect(ofType(events, 'ropeReeling')).toEqual([{ type: 'ropeReeling', gun: 0, dir: 'in' }]);
+    run(1);
+    expect(ofType(events, 'ropeReeling').at(-1)).toEqual({ type: 'ropeReeling', gun: 0, dir: null });
+    run(5, input({ reelOut: true }));
+    expect(ofType(events, 'ropeReeling').map((e) => e.dir)).toEqual(['in', null, 'out']);
     s = run(1, input({ release: true }));
     expect(ofType(events, 'ropeReleased')).toHaveLength(1);
     expect(s.ropeState?.guns[0]?.phase).toBe('idle');
@@ -776,15 +778,16 @@ describe('environment: pickups & beacons', () => {
       }),
     );
     run(240);
-    expect(s.state.pos.y).toBeLessThan(ceil + 20); // pressed against the ceiling
+    expect(s.state.pos.y).toBeLessThan(ceil + resolveTuning().csm.height / 2 + 2); // pressed against the ceiling
     expect(s.state.landed).toBe(false);
     expect(ofType(events, 'softLand')).toHaveLength(0);
     expect(ofType(events, 'beaconPlanted')).toHaveLength(0);
   });
 
   it('goo welded under the hull resting on a platform (legs clear) is not a landing', async () => {
-    // CSM bottom at y+18; two blobs (r 7) under it at y+25 touch the ground at y+32: the hull stays 14 px clear.
-    const r = await rig('csm', { ground: 100, pos: { x: 0, y: 100 - 32.5 } });
+    // CSM bottom at y+half; two blobs (r 7) under it at y+half+7 touch the ground at y+half+14: the hull stays 14 px clear.
+    const half = resolveTuning().csm.height / 2;
+    const r = await rig('csm', { ground: 100, pos: { x: 0, y: 100 - 14.5 - half } });
     r.vessel.hooks = { ...r.vessel.hooks, siteAt: () => 'site' };
     for (const x of [-7, 7]) {
       const goo = r.physics.createBody({ type: 'dynamic', position: { x: pxToM(x), y: pxToM(100 - 7.5) }, tag: 'goo' });
@@ -794,7 +797,7 @@ describe('environment: pickups & beacons', () => {
     }
     const s = r.run(120);
     expect(Math.hypot(s.vel.x, s.vel.y)).toBeLessThan(5); // at rest on the goo
-    expect(s.pos.y).toBeLessThan(100 - 18 - 8); // hull clear of the ground
+    expect(s.pos.y).toBeLessThan(100 - half - 8); // hull clear of the ground
     expect(s.landed).toBe(false);
     expect(ofType(r.events, 'softLand')).toHaveLength(0);
   });

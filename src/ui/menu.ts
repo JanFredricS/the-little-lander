@@ -40,12 +40,6 @@ export function createMenu(items: readonly MenuItem[], focus = 0): MenuState {
   return { items, focus: f, scroll: 0 };
 }
 
-/** First enabled item index (or 0). */
-export function firstEnabled(items: readonly MenuItem[]): number {
-  const i = items.findIndex((it) => it.enabled);
-  return i < 0 ? 0 : i;
-}
-
 export function keyToCommand(code: string): MenuCommand | null {
   switch (code) {
     case 'ArrowUp':

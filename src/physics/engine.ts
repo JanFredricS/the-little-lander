@@ -4,11 +4,8 @@
  * wrapper, with runtime-mutable world gravity, per-body gravity scale, weld
  * joints, rope-style distance joints, contact/hit events and ray casts.
  *
- * It ALSO implements the physics-local ContactDataSource extension
- * (bodyContacts(): touching contacts + solver impulses, src/physics/contactData.ts).
- * The interface the flight layer really builds on is
- * `PhysicsApi & ContactDataSource`; vessels refuse a PhysicsApi without it.
- * Proposed S8 contract amendment: fold bodyContacts into PhysicsApi.
+ * bodyContacts() (touching contacts + solver impulses) joined the contract
+ * as an S8 amendment; the vessels' soft-landing and hull damage use it.
  *
  * World convention: METRES, y-down, fixed 1/60 s step with 4 sub-steps.
  *
@@ -37,6 +34,7 @@ import type {
   JointHandle,
   MaterialDef,
   PhysicsApi,
+  BodyContact,
   Pose,
   RayHit,
   RevoluteJointDef,
@@ -45,7 +43,6 @@ import type {
   WeldJointDef,
   WorldOptions,
 } from '../contracts';
-import type { BodyContact, ContactDataSource } from './contactData';
 import { signedArea } from './units';
 
 let modulePromise: Promise<MainModule> | null = null;
@@ -77,7 +74,7 @@ interface JointRecord {
 
 const EPS_DT = 1e-9;
 
-export class PhysicsWorld implements PhysicsApi, ContactDataSource {
+export class PhysicsWorld implements PhysicsApi {
   private readonly worldId: b2WorldId;
   private readonly bodies = new Map<BodyHandle, BodyRecord>();
   private readonly joints = new Map<JointHandle, JointRecord>();
@@ -655,8 +652,7 @@ export class PhysicsWorld implements PhysicsApi, ContactDataSource {
   }
 
   /**
-   * Touching contacts of `h` with the last step's solver impulses (not part of
-   * the PhysicsApi contract, see src/physics/contactData.ts).
+   * Touching contacts of `h` with the last step's solver impulses.
    */
   bodyContacts(h: BodyHandle): BodyContact[] {
     const rec = this.body(h);

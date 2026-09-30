@@ -1,5 +1,19 @@
 # S8 — Integration, hardening, polish
 
+> orchestrator note: browser/mobile/live-deploy acceptance verified by orchestrator-run live playtest agents + post-merge live-site check, not by in-repo tests.
+>
+> orchestrator-pre-approved amendment: `PhysicsApi.bodyContacts(h): BodyContact[]`
+> (+ `BodyContact` / `BodyContactPoint` types) added to src/contracts/physics.ts.
+> It was a physics-local extension (src/physics/contactData.ts) with a
+> runtime narrowing adapter in VESSEL_FACTORIES; PhysicsWorld already
+> implemented it, so the adapter, `FlightPhysics` and contactData.ts are gone.
+>
+> orchestrator-pre-approved amendment: GameEvent
+> `{ type: 'ropeReeling'; gun; dir: 'in' | 'out' | null }` added to
+> src/contracts/events.ts. HarpoonRig emits it on reel-input edges of an
+> anchored rope; audio keys the winch ratchet (harpoonReel) to it, and
+> harpoonMissed now has its own cue (harpoonMiss).
+
 Runs alone on main, after S1–S7. Scope:
 
 1. Wire the full story flow end-to-end: title → briefing → map1 → … →

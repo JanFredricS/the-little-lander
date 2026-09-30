@@ -1,7 +1,8 @@
 /**
  * Minimal 5×7 bitmap pixel font (no external fonts). Pure data + measuring
  * + a canvas rasteriser; used by the HUD, menus, touch-button labels and the
- * rotate hint. S3 may consume (or duplicate) this until S8 merges them.
+ * rotate hint. The cutscene font (src/story/font.ts) builds on RAW
+ * (exported as UI_GLYPH_ROWS) and adds lower case with descenders.
  *
  * Glyph cell: 5×7 px, advance 6 px, line height 9 px (at scale 1).
  * Lower-case input is drawn upper-case. Unknown characters draw as '?'.
@@ -90,6 +91,9 @@ const RAW: Record<string, string> = {
   '·': '..... ..... ..... .##.. .##.. ..... .....',
   '…': '..... ..... ..... ..... ..... ..... #.#.#',
 };
+
+/** Raw glyph rows (shared with the cutscene font). Key 'x' is the multiplication sign ×. */
+export const UI_GLYPH_ROWS: Readonly<Record<string, string>> = RAW;
 
 /** Parsed glyph bitmaps: 7 rows × 5 booleans. */
 const GLYPHS = new Map<string, readonly boolean[][]>();

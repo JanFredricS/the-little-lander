@@ -21,9 +21,6 @@ import { VineSystem } from './vines';
 
 export type { RuntimeHost, EntitySystem } from './types';
 
-/** Entity kinds the runtime simulates. */
-export const RUNTIME_ENTITY_KINDS = ['blastDoor', 'movingIsland', 'vine', 'creature'] as const;
-
 export class LevelRuntime {
   readonly doors: DoorSystem;
   readonly islands: IslandSystem;

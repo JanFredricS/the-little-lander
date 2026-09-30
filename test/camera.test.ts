@@ -57,6 +57,18 @@ describe('Camera', () => {
     expect(o).toEqual({ x: Math.round(1000.4 - 320), y: 500 - 180 });
     expect(c.viewToWorld(c.position, { x: 320, y: 180 })).toEqual({ x: o.x + 320, y: o.y + 180 });
   });
+
+  it('writes into caller-owned scratch vectors when given one (render path: no allocation)', () => {
+    const c = new Camera({ ...world, smoothing: 1, lookAheadMax: 0 });
+    c.snap({ x: 1000, y: 500 });
+    c.step({ x: 1100, y: 500 });
+    const cam = { x: 0, y: 0 };
+    const o = { x: 0, y: 0 };
+    expect(c.interpolated(0.5, cam)).toBe(cam);
+    expect(cam).toEqual(c.interpolated(0.5));
+    expect(c.viewOrigin(cam, o)).toBe(o);
+    expect(o).toEqual(c.viewOrigin(cam));
+  });
 });
 
 describe('computeViewScale', () => {

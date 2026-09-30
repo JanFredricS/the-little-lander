@@ -9,8 +9,8 @@ export const LANDER_TUNING = {
   /** Body box (px). */
   width: 22,
   height: 18,
-  /** Legs: feet span (px, outer edge to outer edge) and how far below the body they reach (px). */
-  legSpan: 30,
+  /** Legs: feet span (px, outer edge to outer edge; = the vessel.lander pad span, S8) and how far below the body they reach (px). */
+  legSpan: 24,
   legDrop: 7,
   density: 4,
   friction: 0.8,

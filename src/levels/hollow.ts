@@ -80,7 +80,6 @@ export const HOLLOW_ROUTE: Vec2[] = Array.from({ length: Math.floor((15700 - 250
   const x = 250 + i * 150;
   return { x, y: Math.round(routeY(x)) };
 });
-export const hollowRouteY = routeY;
 
 // ------------------------------------------------------------------ terrain
 

@@ -5,25 +5,26 @@
  * implement control() (input -> forces, BEFORE step) and optionally
  * postStep() (once per physics step, AFTER step).
  *
- * Units: physics (FlightPhysics = PhysicsApi + contact data) in metres; everything reported (VesselState, events) in
+ * Units: physics (PhysicsApi, incl. bodyContacts) in metres; everything reported (VesselState, events) in
  * world px. Tuning speeds are px/s.
  */
 
 import { FIXED_DT } from '../../contracts';
 import type {
   BodyHandle,
+  BodyContact,
   CrashCause,
   FuelChangeReason,
   GameEventSink,
   HullChangeReason,
   InputFrame,
+  PhysicsApi,
   RopeState,
   Vec2,
   VesselMode,
   VesselSpawn,
   VesselState,
 } from '../../contracts';
-import { requireContactData, type BodyContact, type FlightPhysics } from '../contactData';
 import { bodyUp, type Cone } from '../geom';
 import { stepContacts } from '../stepEvents';
 import { PASS_THROUGH_TAGS, TAG_DEBRIS_BURNING, TAG_GOO, TAG_VESSEL, isDebrisTag } from '../tags';
@@ -88,7 +89,7 @@ export abstract class VesselBase implements FlightVessel {
   private linearDamping: number;
 
   constructor(
-    protected readonly physics: FlightPhysics,
+    protected readonly physics: PhysicsApi,
     spawn: VesselSpawn,
     protected readonly events: GameEventSink,
     readonly geometry: VesselGeometry,
@@ -96,7 +97,6 @@ export abstract class VesselBase implements FlightVessel {
     protected readonly options: VesselOptions,
     private readonly exhaust?: ExhaustTuning,
   ) {
-    requireContactData(physics); // runtime backstop: the type already demands it, but casts / untyped JS can lie
     const t = hullTuning;
     this.linearDamping = t.linearDamping;
     this.body = physics.createBody({

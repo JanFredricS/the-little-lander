@@ -22,7 +22,7 @@ const GROUPS: [string, (id: SfxId) => boolean][] = [
 const SAMPLE_EVENTS: GameEvent[] = [
   { type: 'softLand', pos: { x: 0, y: 0 } },
   { type: 'impact', pos: { x: 0, y: 0 }, speed: 250, with: 'terrain' },
-  { type: 'hullChanged', hull: 60, delta: -20, reason: 'impact' },
+  { type: 'hullChanged', hull: 0.6, delta: -0.2, reason: 'impact' },
   { type: 'crash', cause: 'impact', pos: { x: 0, y: 0 }, speed: 500 },
   { type: 'beaconPlanted', siteId: 'b', planted: 3, total: 5 },
   { type: 'orbCollected', entityId: 'o', points: 100, fuelRefill: 10 },
@@ -36,6 +36,8 @@ const SAMPLE_EVENTS: GameEvent[] = [
   { type: 'gooBurned', gooId: 1, attached: 0 },
   { type: 'harpoonFired', gun: 0, dir: { x: 0, y: -1 } },
   { type: 'harpoonMissed', gun: 0 },
+  { type: 'ropeReeling', gun: 0, dir: 'in' },
+  { type: 'ropeReeling', gun: 0, dir: 'out' },
   { type: 'ropeAttached', gun: 0, anchor: { x: 0, y: 0 }, brittle: true },
   { type: 'ropeBroken', gun: 0, reason: 'overload' },
   { type: 'ropeReleased', gun: 0 },

@@ -9,8 +9,10 @@
  * visual ground line (engine bell / leg pads) sits on the collision bottom
  * (geometry.h / 2: hull bottom, or the feet for the lander).
  *
- * TODO(S8): harmonize physics vessel dims with VESSEL_SIZES; the offset then
- * becomes (near) zero.
+ * S8: the physics dims were harmonized with the art (csm 20x44, lander legs
+ * 24 wide, pod 14 tall), so collision bounds sit within 3 px of the opaque
+ * art on every side (test/vesselFit.test.ts); the offset is now a small
+ * constant (0..5 px) rather than an overhang fix.
  */
 
 import type { SpriteName, VesselMode } from '../contracts';

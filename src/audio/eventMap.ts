@@ -19,6 +19,8 @@ type Mapper<T extends GameEventType> = (e: GameEventOf<T>) => SfxCue[];
 
 /** Impact speed (px/s) that counts as "full intensity". */
 const HARD_SPEED = 300;
+/** Hull loss (VesselState.hull is 0..1) that counts as "full intensity". */
+const HARD_HULL_LOSS = 0.3;
 
 export const EVENT_SFX: { [T in GameEventType]: Mapper<T> } = {
   levelStarted: () => [],
@@ -31,7 +33,7 @@ export const EVENT_SFX: { [T in GameEventType]: Mapper<T> } = {
     if (e.reason === 'repair') return [{ id: 'repair' }];
     if (e.reason === 'goo') return []; // gooAttached already voiced
     if (e.delta >= 0) return [];
-    const opts = { intensity: clamp01(-e.delta / 30) };
+    const opts = { intensity: clamp01(-e.delta / HARD_HULL_LOSS) };
     return e.reason === 'debris' ? [{ id: 'debris', opts }, { id: 'hullHit', opts }] : [{ id: 'hullHit', opts }];
   },
   radiationCharging: (e) => [{ id: 'radiationCharge', opts: { dur: e.inSec } }],
@@ -48,10 +50,11 @@ export const EVENT_SFX: { [T in GameEventType]: Mapper<T> } = {
   gooAttached: () => [{ id: 'gooAttach' }],
   gooBurned: () => [{ id: 'gooBurn' }],
   harpoonFired: (e) => [{ id: 'harpoonFire', opts: { variant: e.gun } }],
-  harpoonMissed: () => [{ id: 'harpoonReel' }],
+  harpoonMissed: () => [{ id: 'harpoonMiss' }],
   ropeAttached: (e) => [{ id: e.brittle ? 'harpoonHitBrittle' : 'harpoonHit' }],
   ropeBroken: () => [{ id: 'harpoonBreak' }],
   ropeReleased: () => [{ id: 'harpoonRelease' }],
+  ropeReeling: (e) => (e.dir === null ? [] : [{ id: 'harpoonReel', opts: { variant: e.dir === 'in' ? 0 : 1 } }]),
   vesselModeChanged: () => [{ id: 'modeChange' }],
   objectiveComplete: () => [{ id: 'objective' }],
   levelComplete: () => [{ id: 'levelComplete' }],

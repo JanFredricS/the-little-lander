@@ -7,6 +7,7 @@ import { podGeometry } from '../src/physics/vessel/harpoon';
 import { landerGeometry } from '../src/physics/vessel/lander';
 import type { VesselGeometry } from '../src/physics/vessel';
 import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from '../src/render/vesselFit';
+import { spriteRegistry } from '../src/art/sprites/registry';
 
 /** The REAL S1 collision geometry per mode (default tuning). */
 const GEOMETRY: Record<(typeof VESSEL_MODES)[number], VesselGeometry> = {
@@ -61,5 +62,34 @@ describe('vessel art ↔ S1 collision geometry fit', () => {
       const anchors = getVesselAnchors(MODE_SPRITES[mode]).engines[0]!;
       for (const n of GEOMETRY[mode].nozzles) expect(anchors.some((a) => a.engine === n.engine)).toBe(true);
     }
+  });
+
+  // S8 harmonization (RESIDUALS): the physics hull matches what the player sees.
+  // Allowed gap per side: CSM nose tip 2 px (a 4 px wide cone), lander top 3 px
+  // (a shorter body changes the lander's inertia / handling that maps 1-4 are tuned for).
+  it.each([...VESSEL_MODES])('%s: collision bounds match the opaque art bounds (≤ 3 px per side)', (mode) => {
+    const name = MODE_SPRITES[mode];
+    const geo = GEOMETRY[mode];
+    const frame = vesselFrame(mode, false);
+    const pix = spriteRegistry()[name]!.gen('hangar').frames[frame]!;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (let y = 0; y < pix.h; y++)
+      for (let x = 0; x < pix.w; x++)
+        if (pix.get(x, y) !== 0) {
+          x0 = Math.min(x0, x);
+          x1 = Math.max(x1, x + 1);
+          y0 = Math.min(y0, y);
+          y1 = Math.max(y1, y + 1);
+        }
+    const piv = VESSEL_PIVOTS[name];
+    const dy = vesselArtOffsetY(name, geo.h, frame);
+    const art = { x0: x0 - piv.x, x1: x1 - piv.x, y0: y0 - piv.y + dy, y1: y1 - piv.y + dy };
+    const col = {
+      x0: Math.min(...geo.boxes.map((b) => b.x - b.w / 2)),
+      x1: Math.max(...geo.boxes.map((b) => b.x + b.w / 2)),
+      y0: Math.min(...geo.boxes.map((b) => b.y - b.h / 2)),
+      y1: Math.max(...geo.boxes.map((b) => b.y + b.h / 2)),
+    };
+    for (const k of ['x0', 'x1', 'y0', 'y1'] as const) expect(Math.abs(art[k] - col[k]), `${mode} ${k}`).toBeLessThanOrEqual(3);
   });
 });

@@ -2,17 +2,19 @@
  * Level-authoring helpers for maps 5-8 (S7). Deterministic noise bands for
  * ground / ceiling polylines, rectangle / blob polygons and prop scatter.
  *
- * Trivial overlaps with S6's kit.ts are gone (use kit's rectPoints for the
- * old s7Rect and surfaceY for s7YAt).
- * TODO(S8): fold the rest into kit.ts - s7Blob vs kit.blobPoints and
- * s7Band/s7Noise vs kit.roughen use different seeding (string hash vs
- * number), so merging them changes map geometry and needs re-verifying the
- * map 5-8 design tests; s7Piece/s7Prop/s7Scatter/s7Notch/s7Profile have no
- * kit equivalent yet.
+ * Overlaps with S6's kit.ts are gone (kit's rectPoints replaced s7Rect,
+ * surfaceY replaced s7YAt and s7Notch's own interpolation — S8, verified
+ * byte-identical level specs for all 8 maps).
+ * Kept deliberately (S8, see RESIDUALS.md): s7Blob vs kit.blobPoints and
+ * s7Band/s7Noise vs kit.roughen seed differently (string hash vs number)
+ * and sample differently, so folding them changes map 5-8 geometry that the
+ * S7 pilots, fuel budgets and design tests were tuned on; the rest
+ * (s7Piece/s7Prop/s7Scatter/s7Notch/s7Profile) has no kit equivalent.
  */
 
 import type { EntitySpec, SpriteName, StaticPropEntity, TerrainPiece, TerrainStyle, Vec2 } from '../contracts';
 import { hashString, rng } from '../physics/geom';
+import { surfaceY } from './kit';
 
 /** Smooth deterministic 1D value noise in [-1, 1] with feature size `scale` px. */
 export function s7Noise(seed: string, scale: number): (x: number) => number {
@@ -116,14 +118,7 @@ export function s7Scatter(
  * to the surface; ground + large toY = a chasm. Keeps x strictly increasing.
  */
 export function s7Notch(points: readonly Vec2[], x0: number, x1: number, toY: number, wall = 10): Vec2[] {
-  const yAt = (x: number) => {
-    for (let i = 1; i < points.length; i++) {
-      const a = points[i - 1]!;
-      const b = points[i]!;
-      if (x <= b.x) return Math.round(a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x));
-    }
-    return points[points.length - 1]!.y;
-  };
+  const yAt = (x: number) => Math.round(surfaceY(points, x));
   const before = points.filter((p) => p.x < x0);
   const after = points.filter((p) => p.x > x1);
   return [...before, { x: x0, y: yAt(x0) }, { x: x0 + wall, y: toY }, { x: x1 - wall, y: toY }, { x: x1, y: yAt(x1) }, ...after];

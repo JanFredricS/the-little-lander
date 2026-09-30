@@ -106,11 +106,6 @@ export function polyMask(w: number, h: number, pts: readonly Pt[]): Pix {
   return new Pix(w, h).poly(pts, 1);
 }
 
-/** Draw `scene` into p only where mask is set. */
-export function blitMasked(p: Pix, scene: Pix, mask: Pix, dx = 0, dy = 0): void {
-  p.blit(scene, dx, dy, { map: (c, x, y) => (mask.get(x, y) ? c : -1) });
-}
-
 /** Thick frame around a polygon: draws the polygon grown by `t` px in `c` first; caller draws the inside after. */
 export function frameAround(p: Pix, pts: readonly Pt[], t: number, ramp: readonly number[]): void {
   const cx = pts.reduce((a, q) => a + q[0], 0) / pts.length;
@@ -149,12 +144,6 @@ export function pool(p: Pix, cx: number, cy: number, rx: number, ry: number, tab
 export function beam(p: Pix, pts: readonly Pt[], table: ArrayLike<number>, density: (x: number, y: number) => number): void {
   const m = polyMask(p.w, p.h, pts);
   p.apply((x, y, cur) => (cur !== 0 && m.get(x, y) && band(density(x, y)) > bayer(x, y) ? (table[cur] ?? cur) : -1));
-}
-
-/** Blit a CRAFT-palette buffer into a still palette (nearest colour). */
-export function blitCraft(p: Pix, src: Pix, pal: ArtPalette, x: number, y: number, opts: { flipX?: boolean; overrides?: Record<number, number> } = {}): void {
-  const map = crossMap(CRAFT, pal, opts.overrides);
-  p.blit(src, x, y, { map, flipX: opts.flipX });
 }
 
 /** Blit any palette's buffer into a still palette (nearest colour). */
@@ -443,13 +432,6 @@ export function glowDisc(p: Pix, cx: number, cy: number, r: number, ramp: readon
     r * 2 + 2,
     r * 2 + 2,
   );
-}
-
-/** Nearest-neighbour integer upscale. */
-export function scalePix(src: Pix, k: number): Pix {
-  const out = new Pix(src.w * k, src.h * k);
-  for (let y = 0; y < out.h; y++) for (let x = 0; x < out.w; x++) out.data[y * out.w + x] = src.data[Math.floor(y / k) * src.w + Math.floor(x / k)]!;
-  return out;
 }
 
 /** Rotate `src` (centre-aligned) into a new w×h buffer by `angle` radians (nearest sampling). */

@@ -13,6 +13,7 @@ export const SFX_IDS = [
   'harpoonHit',
   'harpoonHitBrittle',
   'harpoonReel',
+  'harpoonMiss',
   'harpoonRelease',
   'harpoonBreak',
   // impacts
@@ -89,12 +90,18 @@ export const SFX: Record<SfxId, Recipe> = {
       d.noise({ bus: S, start: t + 0.06 + i * 0.045 + r() * 0.02, dur: 0.015, gain: 0.18, filter: { type: 'highpass', freq: 3000 + r() * 2000 } });
     }
   },
-  harpoonReel(d, t) {
-    // ratchet winding the line back in
+  harpoonReel(d, t, o) {
+    // ratchet winding the line (variant 0 = in: rising, 1 = out: falling)
+    const out = (o.variant ?? 0) === 1;
     for (let i = 0; i < 8; i++) {
-      d.tone({ bus: S, wave: 'square', freq: 520 + i * 40, start: t + i * 0.035, dur: 0.012, gain: 0.08, filter: { type: 'bandpass', freq: 1200, q: 3 } });
+      d.tone({ bus: S, wave: 'square', freq: out ? 800 - i * 40 : 520 + i * 40, start: t + i * 0.035, dur: 0.012, gain: 0.08, filter: { type: 'bandpass', freq: 1200, q: 3 } });
     }
-    d.tone({ bus: S, wave: 'triangle', freq: 300, freqEnd: 600, start: t, dur: 0.28, gain: 0.08 });
+    d.tone({ bus: S, wave: 'triangle', freq: out ? 600 : 300, freqEnd: out ? 300 : 600, start: t, dur: 0.28, gain: 0.08 });
+  },
+  harpoonMiss(d, t) {
+    // the line runs out to full range and goes slack: a dull flap + low thunk
+    d.noise({ bus: S, start: t, dur: 0.16, gain: 0.12, filter: { type: 'bandpass', freq: 900, q: 2, freqEnd: 300 } });
+    d.tone({ bus: S, wave: 'triangle', freq: 220, freqEnd: 110, start: t + 0.04, dur: 0.12, gain: 0.1 });
   },
   harpoonRelease(d, t) {
     d.tone({ bus: S, wave: 'square', freq: 700, freqEnd: 1400, start: t, dur: 0.05, gain: 0.14 });

@@ -13,8 +13,8 @@ const STATE_ONLY: GameEventType[] = ['levelStarted', 'enginesChanged', 'cutscene
 /** Extra variants that reach SFX the base samples don't. */
 const VARIANTS: GameEvent[] = [
   { type: 'ropeAttached', gun: 1, anchor: { x: 0, y: 0 }, brittle: true },
-  { type: 'hullChanged', hull: 50, delta: -20, reason: 'debris' },
-  { type: 'hullChanged', hull: 100, delta: 30, reason: 'repair' },
+  { type: 'hullChanged', hull: 0.5, delta: -0.2, reason: 'debris' },
+  { type: 'hullChanged', hull: 1, delta: 0.3, reason: 'repair' },
   { type: 'windGust', zoneId: 'w', phase: 'warning', accel: { x: -5, y: 0 } },
   { type: 'impact', pos: { x: 0, y: 0 }, speed: 200, with: 'debris:3' },
   { type: 'fuelChanged', fuel: 100, delta: 100, reason: 'refill' },
@@ -45,11 +45,19 @@ describe('event -> sfx mapping', () => {
     for (const id of SFX_IDS) if (!apiOnly.includes(id)) expect(reached.has(id), id).toBe(true);
   });
 
+  it('hull hits scale with the 0..1 hull loss', () => {
+    const small = cuesFor({ type: 'hullChanged', hull: 0.95, delta: -0.05, reason: 'impact' })[0]!.opts!.intensity!;
+    const big = cuesFor({ type: 'hullChanged', hull: 0.6, delta: -0.4, reason: 'impact' })[0]!.opts!.intensity!;
+    expect(small).toBeGreaterThan(0.1);
+    expect(big).toBe(1);
+  });
+
   it('continuous/negative-only events stay quiet where they should', () => {
     expect(cuesFor({ type: 'fuelChanged', fuel: 50, delta: -0.1, reason: 'burn' })).toEqual([]);
     expect(cuesFor({ type: 'gravityChanged', gravity: { x: 0, y: 9 }, rampProgress: 0.4 })).toEqual([]);
     expect(cuesFor({ type: 'windGust', zoneId: 'w', phase: 'end', accel: { x: 0, y: 0 } })).toEqual([]);
-    expect(cuesFor({ type: 'hullChanged', hull: 90, delta: -5, reason: 'goo' })).toEqual([]);
+    expect(cuesFor({ type: 'hullChanged', hull: 0.9, delta: -0.05, reason: 'goo' })).toEqual([]);
+    expect(cuesFor({ type: 'ropeReeling', gun: 0, dir: null })).toEqual([]);
   });
 
   it('every SFX recipe schedules at least one voice with sane params', () => {

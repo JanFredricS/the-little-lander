@@ -102,8 +102,6 @@ const halfWidth = s7Profile([
   [10000, 600],
   [H, 620],
 ]);
-export const madDashCentre = centre;
-export const madDashHalfWidth = halfWidth;
 
 const wallNoiseL = s7Noise('madDash.wallL', 140);
 const wallNoiseR = s7Noise('madDash.wallR', 140);

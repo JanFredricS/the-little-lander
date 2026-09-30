@@ -9,9 +9,9 @@
  */
 
 export const CSM_TUNING = {
-  /** Hull box (px). */
+  /** Hull box (px): matches the vessel.csm art (engine bell to CM nose, S8). */
   width: 20,
-  height: 36,
+  height: 44,
   /** kg/m² of the hull box. */
   density: 4,
   friction: 0.7,
