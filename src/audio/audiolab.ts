@@ -22,7 +22,7 @@ const GROUPS: [string, (id: SfxId) => boolean][] = [
 const SAMPLE_EVENTS: GameEvent[] = [
   { type: 'softLand', pos: { x: 0, y: 0 } },
   { type: 'impact', pos: { x: 0, y: 0 }, speed: 250, with: 'terrain' },
-  { type: 'hullChanged', hull: 60, delta: -20, reason: 'impact' },
+  { type: 'hullChanged', hull: 0.6, delta: -0.2, reason: 'impact' },
   { type: 'crash', cause: 'impact', pos: { x: 0, y: 0 }, speed: 500 },
   { type: 'beaconPlanted', siteId: 'b', planted: 3, total: 5 },
   { type: 'orbCollected', entityId: 'o', points: 100, fuelRefill: 10 },

@@ -70,6 +70,8 @@ export class FlightView {
   private readonly fx = new Graphics();
   private readonly theme: ThemeId;
   private hullKey = '';
+  /** Hull hit tint on (set per frame by LevelView from FeelFx, S8). */
+  hitFlash = false;
   /** Shared texture cache (LevelView / S7LevelFx reuse it). */
   readonly tex: SpriteTextures;
   /** Markers in front of terrain (decor tiles would hide them), behind bodies: beacon sites. */
@@ -230,6 +232,7 @@ export class FlightView {
     this.vessel.position.set(mToPx(vt.x), mToPx(vt.y));
     this.vessel.rotation = vt.angle;
     this.vessel.alpha = vs.crashed ? 0.4 : 1;
+    this.hull.tint = this.hitFlash && !vs.crashed ? 0xff9a8a : 0xffffff;
     const flameFrame = Math.floor(nowMs / FLAME_FRAME_MS);
     for (const { anchor, sprite } of this.flameSprites) {
       sprite.visible = !vs.crashed && !!vs.engines[anchor.engine];

@@ -17,6 +17,7 @@ import type { ArtApi, BackdropLayer, BodyHandle, LevelSpec } from '../contracts'
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import { EntityView } from './entityView';
+import { FeelFx, type FeelOptions } from './feelFx';
 import { FlightView } from './flightView';
 import { S7LevelFx } from './s7LevelFx';
 import { TerrainView } from './terrainView';
@@ -29,6 +30,8 @@ export class LevelView {
   private readonly entities: EntityView;
   /** S7 hook: level-owned systems (boss, rocks, ledges, collapse front, S7 gates). */
   private readonly s7: S7LevelFx | null;
+  /** S8 feel layer: particles, shake, hit flash. */
+  private readonly feel: FeelFx;
   private readonly backdrop: { layer: BackdropLayer; view: Sprite | TilingSprite }[] = [];
   private readonly props = new Map<string, Sprite>();
   /** Dynamic props: sprite follows its body. */
@@ -44,6 +47,7 @@ export class LevelView {
   constructor(
     private readonly session: LevelSession,
     private readonly art: ArtApi,
+    feel: FeelOptions = {},
   ) {
     const spec = session.spec;
     const bg = new Graphics().rect(0, 0, VIEW_WIDTH, VIEW_HEIGHT).fill(art.palettes[spec.themeId].background);
@@ -91,6 +95,8 @@ export class LevelView {
       this.world.addChildAt(this.s7.under, 0);
       this.world.addChild(this.s7.over);
     }
+    this.feel = new FeelFx(session, this.flight.tex, feel);
+    this.world.addChild(this.feel.layer);
 
     for (const [id, { entity, body }] of session.built.props) {
       const sprite = this.props.get(id);
@@ -110,7 +116,9 @@ export class LevelView {
     const s = this.session;
     const cam = s.camera.interpolated(alpha);
     const o = s.camera.viewOrigin(cam);
-    this.world.position.set(-o.x, -o.y);
+    this.feel.update(nowMs, paused);
+    const sh = this.feel.shake;
+    this.world.position.set(-o.x + sh.x, -o.y + sh.y);
     this.terrain.update(o);
     this.entities.render(alpha, o, nowMs);
     // parallax: 0 = fixed to the screen, 1 = moves with the world
@@ -133,6 +141,7 @@ export class LevelView {
     const vy1 = o.y + VIEW_HEIGHT;
     for (const p of this.staticProps) p.sprite.visible = p.x1 > o.x && p.x0 < vx1 && p.y1 > o.y && p.y0 < vy1;
 
+    this.flight.hitFlash = this.feel.flashing;
     this.flight.render(alpha, nowMs, o);
     this.s7?.render(alpha, nowMs, o);
     if (!this.hud) return;
@@ -156,6 +165,7 @@ export class LevelView {
   }
 
   destroy(): void {
+    this.feel.destroy();
     this.terrain.destroy();
     this.entities.destroy();
     this.root.destroy({ children: true });

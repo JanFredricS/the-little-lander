@@ -199,7 +199,7 @@ export class App {
         this.playInlineCutscene(midCutscene, session);
       });
     }
-    this.view = new LevelView(session, this.art);
+    this.view = new LevelView(session, this.art, { reducedMotion: this.save.state.settings.reducedMotion });
     this.pixi.app.stage.addChildAt(this.view.root, 0);
     this.ui.levelStarted(spec);
     session.start();

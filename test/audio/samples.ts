@@ -8,7 +8,7 @@ export const SAMPLE_EVENTS: { [T in GameEventType]: GameEventOf<T> } = {
   beaconPlanted: { type: 'beaconPlanted', siteId: 'b1', planted: 2, total: 5 },
   orbCollected: { type: 'orbCollected', entityId: 'o1', points: 100, fuelRefill: 10 },
   fuelChanged: { type: 'fuelChanged', fuel: 80, delta: 20, reason: 'pickup' },
-  hullChanged: { type: 'hullChanged', hull: 70, delta: -10, reason: 'impact' },
+  hullChanged: { type: 'hullChanged', hull: 0.7, delta: -0.1, reason: 'impact' },
   radiationCharging: { type: 'radiationCharging', emitterId: 'sun', inSec: 1.5 },
   radiationHit: { type: 'radiationHit', emitterId: 'sun', fuelLost: 30 },
   windGust: { type: 'windGust', zoneId: 'w1', phase: 'start', accel: { x: 8, y: 0 } },
