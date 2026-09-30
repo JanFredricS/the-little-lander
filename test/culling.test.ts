@@ -5,20 +5,39 @@
  * same frame is rendered twice: once with the real view origin and once
  * with an origin far from everything, which must draw nothing. Textures are
  * stubbed as in s7.render.test.ts, since Pixi Graphics works headless.
+ * EntityView (doors, islands, vines, creatures) is culled the same way, and
+ * LevelView puts `foreground` props above the vessel layer.
  */
 
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { Graphics, Texture } from 'pixi.js';
+import { Container, Graphics, Texture } from 'pixi.js';
 import type { ArtApi, Vec2 } from '../src/contracts';
 import { LevelSession } from '../src/game/session';
 import { floatingIsles } from '../src/levels/floatingIsles';
+import { hangarRun } from '../src/levels/hangarRun';
 import { hollow } from '../src/levels/hollow';
 import { keeper } from '../src/levels/keeper';
 import { vaults } from '../src/levels/vaults';
+import { EntityView } from '../src/render/entityView';
 import { FlightView } from '../src/render/flightView';
+import { LevelView } from '../src/render/levelView';
 import { ropePolyline, ropePolylineInto } from '../src/render/ropeLine';
 import { S7LevelFx } from '../src/render/s7LevelFx';
 import { harpoonPilot } from './support/s7Pilots';
+
+// Terrain painting needs a real 2D canvas; stub it (not under test here).
+vi.mock('../src/render/terrainView', async (orig) => {
+  const { Container: C } = await import('pixi.js');
+  return {
+    ...(await orig<typeof import('../src/render/terrainView')>()),
+    paintOutline: () => ({ canvas: { width: 200, height: 100 }, offset: { x: -100, y: -50 } }),
+    TerrainView: class {
+      readonly root = new C();
+      update(): void {}
+      destroy(): void {}
+    },
+  };
+});
 
 const art = { getSprite: () => ({ canvas: {}, width: 8, height: 8, pivot: { x: 4, y: 4 } }), getSpriteFrameCount: () => 1 } as unknown as ArtApi;
 const FAR: Vec2 = { x: -100_000, y: -100_000 };
@@ -127,5 +146,83 @@ describe('render culling', () => {
     expect(b).toBe(out);
     expect(out[3]).toBe(first); // same objects, no new points
     expect(out).toEqual(ropePolyline({ x: 0, y: 0 }, { x: 50, y: 20 }, 60));
+  });
+
+  it('EntityView: vines, doors, islands and creatures are culled for a far view', async () => {
+    for (const spec of [floatingIsles, hangarRun]) {
+      const s = await LevelSession.create(spec);
+      s.start();
+      const ev = new EntityView(s, art);
+      const priv = ev as unknown as {
+        doors: { visible: boolean }[];
+        islands: { sprite: { visible: boolean } }[];
+        creatures: { sprite: { visible: boolean } | null }[];
+      };
+      const rt = s.runtime;
+      const counts = { moveTo: 0, circle: 0 };
+      const spies = (Object.keys(counts) as (keyof typeof counts)[]).map((k) =>
+        vi.spyOn(Graphics.prototype, k).mockImplementation(function (this: Graphics) {
+          counts[k]++;
+          return this;
+        }),
+      );
+      try {
+        // near each kind of entity it is drawn
+        if (rt.vines.vines.length) {
+          ev.render(1, viewAround(rt.vines.vines[0]!.entity), 0);
+          expect(counts.moveTo, spec.id).toBeGreaterThan(0);
+        }
+        if (rt.doors.doors.length) {
+          ev.render(1, viewAround(rt.doors.doors[0]!.pos), 0);
+          expect(priv.doors[0]!.visible, spec.id).toBe(true);
+        }
+        if (rt.islands.islands.length) {
+          ev.render(1, viewAround(rt.islands.islands[0]!.pos), 0);
+          expect(priv.islands[0]!.sprite.visible, spec.id).toBe(true);
+        }
+        // far away: no vine link draws, every sprite hidden
+        counts.moveTo = 0;
+        counts.circle = 0;
+        ev.render(1, FAR, 0);
+        expect(counts, spec.id).toEqual({ moveTo: 0, circle: 0 });
+        for (const d of priv.doors) expect(d.visible).toBe(false);
+        for (const i of priv.islands) expect(i.sprite.visible).toBe(false);
+        for (const c of priv.creatures) if (c.sprite) expect(c.sprite.visible).toBe(false);
+      } finally {
+        for (const sp of spies) sp.mockRestore();
+      }
+      expect(rt.vines.vines.length + rt.doors.doors.length + rt.islands.islands.length, spec.id).toBeGreaterThan(0);
+      ev.destroy();
+      s.destroy();
+    }
+  });
+
+  it('LevelView: foreground props render above the vessel layer, normal props below it', async () => {
+    const s = await LevelSession.create(vaults);
+    s.start();
+    const levelArt = {
+      ...art,
+      palettes: new Proxy({}, { get: () => ({ background: 0 }) }),
+      getBackdropLayers: () => [],
+    } as unknown as ArtApi;
+    const lv = new LevelView(s, levelArt);
+    const priv = lv as unknown as { world: Container; props: Map<string, Container>; flight: { over: Container } };
+    const fgSpec = vaults.entities.find((e) => e.kind === 'staticProp' && e.foreground)!;
+    const bgSpec = vaults.entities.find((e) => e.kind === 'staticProp' && !e.foreground && !e.dynamic)!;
+    const layerIndex = (id: string): number => {
+      let c: Container = priv.props.get(id)!;
+      while (c.parent !== priv.world) c = c.parent!;
+      return priv.world.getChildIndex(c);
+    };
+    const vessel = priv.world.getChildIndex(priv.flight.over);
+    expect(layerIndex(fgSpec.id)).toBeGreaterThan(vessel);
+    expect(layerIndex(bgSpec.id)).toBeLessThan(vessel);
+    // both layers stay culled per frame
+    lv.render(1, 0, false);
+    const fg = priv.props.get(fgSpec.id)!;
+    const staticProps = (lv as unknown as { staticProps: { sprite: Container }[] }).staticProps;
+    expect(staticProps.some((p) => p.sprite === fg)).toBe(true);
+    lv.destroy();
+    s.destroy();
   });
 });

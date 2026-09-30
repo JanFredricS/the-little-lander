@@ -92,14 +92,24 @@ export class Camera {
   }
 
   /** Render-time view centre between the last two steps. */
-  interpolated(alpha: number): Vec2 {
+  interpolated(alpha: number, out?: Vec2): Vec2 {
     const a = clamp(alpha, 0, 1);
-    return { x: this.prev.x + (this.curr.x - this.prev.x) * a, y: this.prev.y + (this.curr.y - this.prev.y) * a };
+    const x = this.prev.x + (this.curr.x - this.prev.x) * a;
+    const y = this.prev.y + (this.curr.y - this.prev.y) * a;
+    if (!out) return { x, y };
+    out.x = x;
+    out.y = y;
+    return out;
   }
 
   /** Top-left world px of the view for a given centre, rounded to whole pixels (pixel-art stability). */
-  viewOrigin(center: Vec2): Vec2 {
-    return { x: Math.round(center.x - this.viewW / 2), y: Math.round(center.y - this.viewH / 2) };
+  viewOrigin(center: Vec2, out?: Vec2): Vec2 {
+    const x = Math.round(center.x - this.viewW / 2);
+    const y = Math.round(center.y - this.viewH / 2);
+    if (!out) return { x, y };
+    out.x = x;
+    out.y = y;
+    return out;
   }
 
   /** Virtual-view px (0..viewW, 0..viewH) -> world px, for a given centre. */

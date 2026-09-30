@@ -8,7 +8,9 @@
  * in the URL, a dim telemetry line (the player HUD is src/ui, S4).
  * Everything is in virtual px; the world container is offset by the
  * interpolated camera. Static props share cached textures and are culled
- * to the view each frame (maps 5/6 have ~400).
+ * to the view each frame (maps 5/6 have ~400). Props flagged `foreground`
+ * (god rays, drifting spores) go in `propsFront`, just above the vessel /
+ * rope layer (flight.over); the rest sit between terrain and the vessel.
  */
 
 import { Container, Graphics, Sprite, Text, Texture, TilingSprite } from 'pixi.js';
@@ -25,6 +27,13 @@ import { TerrainView } from './terrainView';
 export class LevelView {
   readonly root = new Container();
   private readonly world = new Container();
+  /** Static props behind the vessel (the default). */
+  private readonly propsBack = new Container();
+  /** Props with `foreground: true`: drawn in front of the vessel and rope. */
+  private readonly propsFront = new Container();
+  /** Per-frame camera scratch (interpolated centre, view origin): no allocation per frame. */
+  private readonly camScratch = { x: 0, y: 0 };
+  private readonly originScratch = { x: 0, y: 0 };
   private readonly flight: FlightView;
   private readonly terrain: TerrainView;
   private readonly entities: EntityView;
@@ -71,6 +80,7 @@ export class LevelView {
     this.world.addChild(this.terrain.root);
     this.world.addChild(this.entities.mid);
     this.world.addChild(this.drawExits(spec));
+    this.world.addChild(this.propsBack);
 
     for (const e of spec.entities) {
       if (e.kind !== 'staticProp') continue;
@@ -81,7 +91,7 @@ export class LevelView {
       s.position.set(e.x, e.y);
       s.rotation = e.angle ?? 0;
       this.props.set(e.id, s);
-      this.world.addChild(s);
+      (e.foreground ? this.propsFront : this.propsBack).addChild(s);
       if (!e.dynamic) {
         const r = Math.hypot(e.w, e.h) / 2;
         this.staticProps.push({ sprite: s, x0: e.x - r, y0: e.y - r, x1: e.x + r, y1: e.y + r });
@@ -89,6 +99,7 @@ export class LevelView {
     }
 
     this.world.addChild(this.flight.over);
+    this.world.addChild(this.propsFront);
     this.world.addChild(this.entities.front);
     this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art, this.flight.tex, { reducedMotion: feel.reducedMotion }) : null;
     if (this.s7) {
@@ -114,8 +125,8 @@ export class LevelView {
 
   render(alpha: number, nowMs: number, paused: boolean): void {
     const s = this.session;
-    const cam = s.camera.interpolated(alpha);
-    const o = s.camera.viewOrigin(cam);
+    const cam = s.camera.interpolated(alpha, this.camScratch);
+    const o = s.camera.viewOrigin(cam, this.originScratch);
     this.feel.update(nowMs, paused);
     const sh = this.feel.shake;
     this.world.position.set(-o.x + sh.x, -o.y + sh.y);

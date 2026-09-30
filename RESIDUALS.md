@@ -52,3 +52,8 @@ Format: slice · severity · finding · why parked.
 - S8 (found here) · medium · Hull-hit SFX intensity divided the 0..1 hull
   delta by 30 (percent units), so hits were almost silent. It now scales
   by HARD_HULL_LOSS, with a regression test (ccc58bd).
+- S8 · low · Remaining per-frame allocations (InputFrame per fixed step,
+  input source snapshots per fixed step, Box2D interpolated-transform
+  results per vine link / mover, Pixi stroke/fill style normalisation) ·
+  left after fixer round: small, short-lived objects; restructuring risks
+  outweigh GC benefit at 60 Hz.
