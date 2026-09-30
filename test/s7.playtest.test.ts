@@ -7,9 +7,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS, hollow } from '../src/levels/hollow';
+import { keeper } from '../src/levels/keeper';
 import { vaults } from '../src/levels/vaults';
 import { runPilot } from './support/s7Harness';
-import { harpoonPilot, thrustPilot } from './support/s7Pilots';
+import { harpoonPilot, keeperPilot, thrustPilot } from './support/s7Pilots';
 
 describe('S7 playtests (autopilot completes the map)', () => {
   it('map 5 — The Vaults: hand-over-hand to the camp', { timeout: 120_000 }, async () => {
@@ -33,6 +34,27 @@ describe('S7 playtests (autopilot completes the map)', () => {
     expect(r.counts.radiationHit ?? 0).toBeLessThanOrEqual(3);
     expect(r.counts.radiationCharging).toBeGreaterThanOrEqual(20);
     expect(Math.min(...r.trace.map((t) => t.fuel))).toBeGreaterThan(0.3);
+  });
+
+  it('map 7 — The Keeper: lure it under rocks, drop them, burn off tendrils, dodge sweeps', { timeout: 300_000 }, async () => {
+    // the fight is chaotic (sweeps, grabs, debris): a reference pilot of fixed
+    // skill must win at least 2 of 3 slightly different lure spots
+    const wins: number[] = [];
+    for (const [offset, below] of [
+      [130, 190],
+      [140, 170],
+      [125, 175],
+    ] as const) {
+      const log = { attempts: 0, drops: 0 };
+      const r = await runPilot(keeper, () => keeperPilot(log, { offset, below }), 420);
+      if (r.outcome?.kind !== 'complete') continue;
+      expect(r.counts.bossPhase).toBe(3);
+      expect(r.counts.bossDefeated).toBe(1);
+      expect(r.events.filter((e) => e.type === 'bossHit' && e.source === 'rock').length).toBeGreaterThanOrEqual(5);
+      wins.push(r.last.hull);
+    }
+    expect(wins.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...wins)).toBeGreaterThan(0.4);
   });
 });
 

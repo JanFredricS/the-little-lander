@@ -99,7 +99,10 @@ export class KeeperBrain {
   private attackIndex = 0;
   private cooldown: number;
   private contactCd = 0;
-  private sweepDir: Vec2 = { x: 1, y: 0 };
+  /** Sweep aim (unit): tracks the vessel during the windup, then locks (render: telegraph line). */
+  sweepDir: Vec2 = { x: 1, y: 0 };
+  /** true once the sweep aim is locked (last sweepLock s of the windup). */
+  sweepLocked = false;
   private sweepLeft = 0;
   private announced = false;
   private defeatedEmitted = false;
@@ -187,18 +190,25 @@ export class KeeperBrain {
         this.integrate(dt);
         if (this.modeTime >= t.staggerSec) this.setMode('idle');
         break;
-      case 'idle':
-        this.moveToward(this.hoverTarget(v.pos), t.followSpeed[pi]!, dt);
+      case 'idle': {
+        // drift after the vessel; climb back to the hover band briskly after a low sweep
+        const target = this.hoverTarget(v.pos);
+        this.moveToward(target, Math.abs(target.y - this.pos.y) > 60 ? Math.max(t.returnSpeed, t.followSpeed[pi]!) : t.followSpeed[pi]!, dt);
         if (inArena) this.cooldown -= dt;
         if (this.cooldown <= 0 && inArena) this.startAttack(v.pos);
         break;
+      }
       case 'sweepWindup': {
-        // shiver in place, facing the vessel
+        // shiver in place, tracking the vessel — then the aim locks for the
+        // last sweepLock seconds (the telegraph line the player dodges)
         this.vel = { x: 0, y: 0 };
-        if (this.modeTime >= t.sweepWindup[pi]!) {
+        if (this.modeTime < t.sweepWindup[pi]! - t.sweepLock[pi]!) {
           const d = { x: v.pos.x - this.pos.x, y: v.pos.y - this.pos.y };
           const l = Math.hypot(d.x, d.y) || 1;
           this.sweepDir = { x: d.x / l, y: d.y / l };
+          this.sweepLocked = false;
+        } else this.sweepLocked = true;
+        if (this.modeTime >= t.sweepWindup[pi]!) {
           this.sweepLeft = t.sweepDistance;
           this.setMode('sweep');
         }
@@ -239,9 +249,13 @@ export class KeeperBrain {
       const l = Math.hypot(d.x, d.y);
       if (l < t.bodyRadius + 10 && this.contactCd <= 0) {
         this.contactCd = t.contactCooldown;
-        out.vesselDamage += this.mode === 'sweep' ? t.sweepDamage : t.contactDamage;
+        // a sweep hits hard; a bump hurts a little; while it is stunned or
+        // between phases the body only shoves
+        const passive = this.mode === 'stagger' || this.mode === 'transition';
+        out.vesselDamage += this.mode === 'sweep' ? t.sweepDamage : passive ? 0 : t.contactDamage;
         const n = l > 1e-6 ? { x: d.x / l, y: d.y / l } : { x: 0, y: -1 };
-        out.knockback = { x: n.x * t.knockback, y: n.y * t.knockback };
+        const kb = this.mode === 'sweep' ? t.knockback : t.knockback * 0.6;
+        out.knockback = { x: n.x * kb, y: n.y * kb };
         if (this.mode === 'sweep') this.endAttack();
       }
     }
@@ -307,9 +321,14 @@ export class KeeperBrain {
   /** Start a specific attack (tests / scripted). */
   beginAttack(a: KeeperAttack, target: Vec2): void {
     switch (a) {
-      case 'sweep':
+      case 'sweep': {
+        const d = { x: target.x - this.pos.x, y: target.y - this.pos.y };
+        const l = Math.hypot(d.x, d.y) || 1;
+        this.sweepDir = { x: d.x / l, y: d.y / l };
+        this.sweepLocked = false;
         this.setMode('sweepWindup');
         break;
+      }
       case 'grab': {
         const n = this.t.grabTendrils[this.phase - 1]!;
         this.tendrils = [];
@@ -379,11 +398,14 @@ export class KeeperBrain {
         d.tip = { ...v.pos };
         d.held += inp.dt;
         out.vesselDamage += t.grabDamagePerSec * inp.dt;
-        // pull towards the boss
+        // reel the vessel in to the hold distance (no closer: no contact
+        // damage on top), damping its motion so it hangs instead of orbiting
         const to = { x: this.pos.x - v.pos.x, y: this.pos.y - v.pos.y };
         const l = Math.hypot(to.x, to.y) || 1;
+        const reel = Math.max(-1, Math.min(1, (l - t.grabHoldDistance) / 40)) * t.grabPull;
+        const damp = t.grabDamping / 30; // px/s -> m/s² per 1/s
         const pull = out.pull ?? { x: 0, y: 0 };
-        out.pull = { x: pull.x + (to.x / l) * t.grabPull, y: pull.y + (to.y / l) * t.grabPull };
+        out.pull = { x: pull.x + (to.x / l) * reel - v.vel.x * damp, y: pull.y + (to.y / l) * reel - v.vel.y * damp };
         // burn: exhaust on the tendril near the vessel
         if (this.tendrilBurning(d, inp.exhaust)) d.burn += inp.dt;
         else d.burn = Math.max(0, d.burn - t.burnDecay * inp.dt);
@@ -424,7 +446,10 @@ export class KeeperBrain {
   private hoverTarget(vesselPos: Vec2): Vec2 {
     const a = this.arena;
     const m = this.t.bodyRadius + 40;
-    const x = Math.min(a.x + a.w - m, Math.max(a.x + m, vesselPos.x));
+    const dx = vesselPos.x - this.pos.x;
+    const dz = this.t.followDeadzone;
+    const want = Math.abs(dx) <= dz ? this.pos.x : vesselPos.x - Math.sign(dx) * dz;
+    const x = Math.min(a.x + a.w - m, Math.max(a.x + m, want));
     const y = a.y + this.t.hoverY + Math.sin((this.time / this.t.bobSec) * Math.PI * 2) * this.t.bobAmp;
     return { x, y };
   }

@@ -22,6 +22,8 @@ interface SlamPiece {
   bornAt: number;
 }
 
+/** Grab damage is applied in chunks of this much hull. */
+const DAMAGE_BATCH = 0.01;
 const PIECE_LIFE_SEC = 6;
 
 export class KeeperSystem implements LevelSystem {
@@ -75,8 +77,11 @@ export class KeeperSystem implements LevelSystem {
 
   afterStep(): void {
     const v = this.host.vessel;
-    // damage is applied after the step so a crash lands in this step's state
-    if (this.pendingDamage > 0) {
+    // damage is applied after the step so a crash lands in this step's state;
+    // the slow squeeze of a grab is batched (one hullChanged per ~0.01 hull,
+    // not one per step), hits apply at once
+    const batching = this.brain.grabbing && this.pendingDamage < DAMAGE_BATCH && this.host.state.hull - this.pendingDamage > 0.02;
+    if (this.pendingDamage > 0 && !batching) {
       const s = v.state();
       if (!s.crashed) {
         if (s.hull - this.pendingDamage <= 1e-9) v.crash('boss');

@@ -192,8 +192,44 @@ export interface ThrustPilotOptions {
   hover?: boolean;
 }
 
+/**
+ * Thruster steering (harpoonThrust / CSM controls): fly at velocity `vd`
+ * (px/s). Desired acceleration = velocity error minus local gravity (as the
+ * HUD shows it: vessel.hooks.gravityAt); rotate the nose to it (tilt capped
+ * at maxTilt from "against gravity"), burn while aligned.
+ */
+export function steer(s: LevelSession, f: InputFrame, vd: Vec2, maxTilt = 0.8, gain = 1.6): void {
+  const st = s.state;
+  const g = s.vessel.hooks.gravityAt?.(st.pos) ?? s.spec.gravity; // m/s²
+  const req = { x: ((vd.x - st.vel.x) * gain) / 30 - g.x, y: ((vd.y - st.vel.y) * gain) / 30 - g.y };
+  const gUp = Math.atan2(-g.x, g.y);
+  const raw = wrap(Math.atan2(req.x, -req.y) - gUp);
+  const want = gUp + Math.max(-maxTilt, Math.min(maxTilt, raw));
+  const err = wrap(want - st.angle);
+  const u = err * 4 - st.angularVel * 1.2;
+  f.rotateCW = u > 0.15;
+  f.rotateCCW = u < -0.15;
+  const thrustAcc = s.tuning.harpoonThrust.thrust * Math.max(1.6, Math.hypot(s.spec.gravity.x, s.spec.gravity.y));
+  const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
+  const along = req.x * upNow.x + req.y * upNow.y;
+  // on the ground a pod cannot pivot: lift off straight first
+  f.thrust = (Math.abs(err) < 0.5 || st.landed) && along > thrustAcc * 0.45;
+}
+
+/** Velocity command towards `target`: cruise at vmax, slow down on arrival. */
+export function approach(s: LevelSession, target: Vec2, vmax: number, brake = 1.5): Vec2 {
+  const st = s.state;
+  const d = { x: target.x - st.pos.x, y: target.y - st.pos.y };
+  const dist = Math.hypot(d.x, d.y);
+  if (dist < 1e-6) return { x: 0, y: 0 };
+  const sp = Math.min(vmax, dist * brake);
+  return { x: (d.x / dist) * sp, y: (d.y / dist) * sp };
+}
+
 /** Angle wrap to (-pi, pi]. */
-const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+function wrap(a: number): number {
+  return Math.atan2(Math.sin(a), Math.cos(a));
+}
 
 /**
  * Thruster autopilot (harpoonThrust / CSM-style controls: thrust + rotate):
@@ -268,22 +304,7 @@ export function thrustPilot(o: ThrustPilotOptions) {
       vd.x = 0;
       vd.y = 0;
     }
-    const g = s.vessel.hooks.gravityAt(st.pos); // m/s²
-    const k = 1.6; // 1/s
-    const req = { x: ((vd.x - st.vel.x) * k) / 30 - g.x, y: ((vd.y - st.vel.y) * k) / 30 - g.y };
-    // never tilt more than maxTilt away from "against gravity" (keep lift)
-    const gUp = Math.atan2(-g.x, g.y);
-    const raw = wrap(Math.atan2(req.x, -req.y) - gUp);
-    const want = gUp + Math.max(-maxTilt, Math.min(maxTilt, raw));
-    const err = wrap(want - st.angle);
-    const u = err * 4 - st.angularVel * 1.2;
-    f.rotateCW = u > 0.15;
-    f.rotateCCW = u < -0.15;
-    const thrustAcc = s.tuning.harpoonThrust.thrust * Math.max(1.6, Math.hypot(s.spec.gravity.x, s.spec.gravity.y));
-    const upNow = { x: Math.sin(st.angle), y: -Math.cos(st.angle) };
-    const along = req.x * upNow.x + req.y * upNow.y;
-    // on the ground a pod cannot pivot: lift off straight first
-    f.thrust = (Math.abs(err) < 0.5 || st.landed) && along > thrustAcc * 0.45;
+    steer(s, f, vd, maxTilt);
     return f;
   };
   return pilot;
@@ -304,3 +325,191 @@ export function describeFrame(f: InputFrame): string {
 }
 
 export { mToPx };
+
+export interface KeeperPilotLog {
+  attempts: number;
+  drops: number;
+  why?: string[];
+  branches?: Record<string, number>;
+  last?: string;
+}
+
+/**
+ * Boss pilot (map 7): lure the Keeper under a loose rock (it idles while you
+ * stay within its follow dead zone), hover beside-and-below the rock, harpoon
+ * it and winch it loose; burn free of tendril grabs (nose away from the
+ * Keeper + thrust); refuel from canisters when low.
+ */
+export function keeperPilot(log: KeeperPilotLog = { attempts: 0, drops: 0 }, o: { offset?: number; below?: number } = {}): Pilot {
+  const offset = o.offset ?? 140;
+  const below = o.below ?? 200;
+  let rockId: string | null = null;
+  let side: 1 | -1 = 1;
+  let fired = 0;
+  let wasAnchored = false;
+  let dodge = 0; // 0 = none, else chosen escape direction index + 1
+  let stuck = 0;
+  const mark = (b: string) => {
+    if (log.branches) log.branches[b] = (log.branches[b] ?? 0) + 1 / 60;
+    log.last = b;
+  };
+  return (s) => {
+    const st = s.state;
+    const f = frame();
+    // 0. knocked over on the floor: roll back upright (the ground righting kick)
+    const tilt = wrap(st.angle);
+    stuck = Math.hypot(st.vel.x, st.vel.y) < 8 && Math.abs(tilt) > 0.85 ? stuck + 1 : 0;
+    // resting tilted on rubble (too steep to count as landed): hop off it
+    const resting = Math.hypot(st.vel.x, st.vel.y) < 10 && s.physics.bodyContacts(s.vessel.body).length > 0 && !st.landed;
+    if (resting && Math.abs(tilt) > 0.3 && Math.abs(tilt) <= 0.85) {
+      f.thrust = true;
+      f.rotateCW = tilt < 0;
+      f.rotateCCW = tilt > 0;
+      mark('hop');
+      return f;
+    }
+    if (stuck > 30) {
+      f.rotateCW = tilt < 0;
+      f.rotateCCW = tilt > 0;
+      mark('stuck');
+      return f;
+    }
+    const keeper = s.systems.keeper;
+    const rocks = s.systems.rocks;
+    if (!keeper || !rocks) return f;
+    const boss = keeper.brain;
+    const gun = st.ropeState?.guns[0];
+    fired--;
+    const hanging = rocks.rocks.filter((r) => r.body !== null);
+    const fire = (e: { x: number; y: number }) => {
+      const h = s.tuning.harpoonThrust.mountHeight;
+      const m = { x: st.pos.x + Math.sin(st.angle) * h, y: st.pos.y - Math.cos(st.angle) * h };
+      const l = Math.hypot(e.x - m.x, e.y - m.y);
+      f.aim = { x: (e.x - m.x) / l, y: (e.y - m.y) / l };
+      f.fire = true;
+      fired = 40;
+      log.attempts++;
+    };
+    // 1. grabbed: burn the tendril (exhaust towards the Keeper)
+    if (boss.grabbing) {
+      const away = { x: st.pos.x - boss.pos.x, y: st.pos.y - boss.pos.y };
+      const l = Math.hypot(away.x, away.y) || 1;
+      // nose straight away from the Keeper: the exhaust plays along the tendril
+      const want = Math.atan2(away.x / l, -away.y / l);
+      const err = wrap(want - st.angle);
+      const u = err * 4 - st.angularVel * 1.2;
+      f.rotateCW = u > 0.15;
+      f.rotateCCW = u < -0.15;
+      f.thrust = Math.abs(err) < 0.7;
+      if (gun && gun.phase !== 'idle') f.release = true;
+      mark('grab');
+      return f;
+    }
+    // 2. sweep telegraph / lunge: keep moving across the line of attack
+    if (boss.mode === 'sweepWindup' || boss.mode === 'sweep') {
+      const to = boss.sweepDir; // the (locking) line of attack
+      const a = boss.arena;
+      if (boss.mode === 'sweepWindup' && !boss.sweepLocked) {
+        steer(s, f, { x: 0, y: 0 }); // hold: moving now only drags the aim along
+        // it stands still while it winds up: a rock now still lands on it
+        const r = hanging.find((h) => Math.abs(h.entity.x - boss.pos.x) < 40 && Math.hypot(h.entity.x - st.pos.x, h.entity.y - st.pos.y) < 290);
+        if (r && fired <= 0 && gun?.phase === 'idle') fire(r.entity);
+        if (gun?.phase === 'anchored') f.reelIn = true;
+        mark('windupHold');
+        return f;
+      }
+      if (gun && gun.phase !== 'idle') f.release = true;
+      // off the locked line: keep to the side we are already on; dead on it -> the lower side (gravity helps)
+      const perp = { x: -to.y, y: to.x };
+      if (dodge === 0) {
+        const rel = { x: st.pos.x - boss.pos.x, y: st.pos.y - boss.pos.y };
+        const off = rel.x * perp.x + rel.y * perp.y;
+        const vOff = st.vel.x * perp.x + st.vel.y * perp.y;
+        const lead = off + vOff * 0.4;
+        dodge = Math.abs(lead) > 30 ? Math.sign(lead) : perp.y > 0 ? 1 : -1;
+        const end = { x: st.pos.x + perp.x * dodge * 150, y: st.pos.y + perp.y * dodge * 150 };
+        if (end.x < a.x + 20 || end.x > a.x + a.w - 20 || end.y < a.y + 20 || end.y > a.y + a.h - 60) dodge = -dodge;
+      }
+      const rel = { x: st.pos.x - boss.pos.x, y: st.pos.y - boss.pos.y };
+      const clear = (rel.x * perp.x + rel.y * perp.y) * dodge > 95; // far enough off the line: stop there
+      // never dive fast: braking a fall costs far more than it gains (thrust is only 1.5 g)
+      const dv = { x: perp.x * dodge * 200, y: Math.min(140, perp.y * dodge * 200) };
+      steer(s, f, clear ? { x: 0, y: 0 } : dv, 1.2, 3);
+      mark('dodge');
+      return f;
+    }
+    dodge = 0;
+    // 2b. thrown / dropped: get upright and kill the fall first
+    const speed = Math.hypot(st.vel.x, st.vel.y);
+    if (gun?.phase !== 'anchored' && (st.vel.y > 110 || (speed > 60 && Math.abs(wrap(st.angle)) > 1.2))) {
+      steer(s, f, { x: 0, y: -20 }, 0.6, 2);
+      mark('recover');
+      return f;
+    }
+    // 2c. keep clear of the Keeper's body
+    const away = { x: st.pos.x - boss.pos.x, y: st.pos.y - boss.pos.y };
+    const dBoss = Math.hypot(away.x, away.y) || 1;
+    if (dBoss < 125 && gun?.phase !== 'anchored') {
+      steer(s, f, { x: (away.x / dBoss) * 150, y: (away.y / dBoss) * 150 });
+      mark('clear');
+      return f;
+    }
+    // 3. low on fuel: nearest canister
+    if (st.fuel < 0.3) {
+      const cans = s.env.pickups.pickups.filter((p) => !p.collected && p.entity.kind === 'fuelPickup');
+      cans.sort((a, b) => Math.hypot(a.entity.x - st.pos.x, a.entity.y - st.pos.y) - Math.hypot(b.entity.x - st.pos.x, b.entity.y - st.pos.y));
+      const c = cans[0];
+      if (c) {
+        if (gun && gun.phase !== 'idle') f.release = true;
+        steer(s, f, approach(s, { x: c.entity.x, y: c.entity.y - 10 }, 170, 1.2));
+        mark('fuel');
+        return f;
+      }
+    }
+    // 4. rock drop: pick the hanging rock nearest the Keeper
+    let rock = hanging.find((r) => r.entity.id === rockId) ?? null;
+    if (!rock || (gun?.phase !== 'anchored' && Math.abs(rock.entity.x - boss.pos.x) > 200)) {
+      hanging.sort((a, b) => Math.abs(a.entity.x - boss.pos.x) - Math.abs(b.entity.x - boss.pos.x));
+      rock = hanging[0] ?? null;
+      rockId = rock?.entity.id ?? null;
+      if (rock) {
+        side = st.pos.x >= rock.entity.x ? 1 : -1;
+        const a = boss.arena;
+        if (rock.entity.x + side * offset > a.x + a.w - 60 || rock.entity.x + side * offset < a.x + 60) side = side === 1 ? -1 : 1;
+      }
+    }
+    if (!rock) {
+      steer(s, f, approach(s, { x: boss.pos.x + 250, y: boss.pos.y - 150 }, 150));
+      mark('norock');
+      return f;
+    }
+    // lure: wait on the far side of the rock from the Keeper, one dead zone
+    // away — it drifts over and stops right under the rock
+    if (gun?.phase !== 'anchored' && Math.abs(boss.pos.x - rock.entity.x) > 40) side = boss.pos.x < rock.entity.x ? 1 : -1;
+    const a = boss.arena;
+    const sx = Math.min(a.x + a.w - 40, Math.max(a.x + 40, rock.entity.x + side * offset));
+    const spot = { x: sx, y: rock.entity.y + below };
+    const anchored = gun?.phase === 'anchored';
+    if (wasAnchored && !anchored) log.drops += rocks.isHanging(rock.entity.id) ? 0 : 1;
+    wasAnchored = anchored;
+    if (anchored) {
+      steer(s, f, { x: 0, y: 0 });
+      f.reelIn = true;
+      mark('anchored');
+      return f;
+    }
+    // pass over the Keeper, never through it
+    const seg = { x: spot.x - st.pos.x, y: spot.y - st.pos.y };
+    const sl = Math.hypot(seg.x, seg.y) || 1;
+    const u = Math.max(0, Math.min(1, ((boss.pos.x - st.pos.x) * seg.x + (boss.pos.y - st.pos.y) * seg.y) / (sl * sl)));
+    const near = Math.hypot(st.pos.x + seg.x * u - boss.pos.x, st.pos.y + seg.y * u - boss.pos.y);
+    const over = { x: boss.pos.x + Math.sign(seg.x || 1) * 30, y: Math.max(boss.arena.y + 45, boss.pos.y - 125) };
+    steer(s, f, approach(s, near < 105 && u > 0 && u < 1 && sl > 60 ? over : spot, 170, 1.4));
+    const d = Math.hypot(spot.x - st.pos.x, spot.y - st.pos.y);
+    const ready = d < 45 && speed < 70 && Math.abs(boss.pos.x - rock.entity.x) < 40;
+    if (log.why && s.simTime % 1 < 1 / 60) log.why.push(`${s.simTime.toFixed(0)} ${rock.entity.id} d${d.toFixed(0)} v${speed.toFixed(0)} bx${(boss.pos.x - rock.entity.x).toFixed(0)} ${boss.mode} ${gun?.phase}`);
+    if (ready && fired <= 0 && (!gun || gun.phase === 'idle')) fire(rock.entity);
+    mark('approach');
+    return f;
+  };
+}

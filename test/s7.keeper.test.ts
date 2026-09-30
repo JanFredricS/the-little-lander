@@ -123,17 +123,19 @@ describe('Keeper brain — rock drops', () => {
     expect(brain.hp).toBe(1);
   });
 
-  it('three well-aimed rocks reach phase 2, six reach phase 3, eight defeat it', () => {
+  it('three well-aimed rocks reach phase 2, five reach phase 3, seven defeat it', () => {
     const { brain, events } = make();
     brain.update(inp({ x: 1500, y: 900 }));
     let n = 0;
     while (!brain.defeated && n < 20) {
       brain.update(inp({ x: 1500, y: 900 }, { rocks: [rockOn(brain, n)] }));
       n++;
+      if (n === 2) expect(brain.phase).toBe(1);
       if (n === 3) expect(brain.phase).toBe(2);
-      if (n === 6) expect(brain.phase).toBe(3);
+      if (n === 4) expect(brain.phase).toBe(2);
+      if (n === 5) expect(brain.phase).toBe(3);
     }
-    expect(n).toBe(8);
+    expect(n).toBe(7);
     expect(of(events, 'bossDefeated')).toHaveLength(1);
   });
 });
@@ -148,7 +150,7 @@ describe('Keeper brain — grab, burn, crush, release', () => {
     expect(m.brain.tendrils).toHaveLength(T.grabTendrils[0]!);
     return m;
   }
-  const V = { x: 1500, y: 700 }; // ~200 px below the boss (hoverY 420 + arena.y 100 = 520)
+  const V = { x: 1500, y: 700 }; // ~350 px below the boss (arena.y 100 + hoverY 250)
 
   it('the tendril reaches the vessel and holds it: pull towards the boss + hull damage', () => {
     const { brain } = grabbing(V);
@@ -159,6 +161,21 @@ describe('Keeper brain — grab, burn, crush, release', () => {
     expect(Math.hypot(out.pull!.x, out.pull!.y)).toBeCloseTo(T.grabPull);
     expect(out.pull!.y).toBeLessThan(0); // up, towards the boss
     expect(out.vesselDamage).toBeCloseTo(T.grabDamagePerSec * DT);
+  });
+
+  it('a held vessel is reeled in only to the hold distance, and its motion is damped (no orbiting)', () => {
+    const { brain } = grabbing(V);
+    runUntil(brain, () => inp(V), () => brain.grabbing, 3);
+    // at the hold distance, still: no pull
+    const hold = { x: brain.pos.x, y: brain.pos.y + T.grabHoldDistance };
+    let out = brain.update(inp(hold));
+    expect(Math.hypot(out.pull!.x, out.pull!.y)).toBeLessThan(0.05);
+    // closer than that: pushed back out (away from the body)
+    out = brain.update(inp({ x: brain.pos.x, y: brain.pos.y + T.grabHoldDistance - 30 }));
+    expect(out.pull!.y).toBeGreaterThan(0);
+    // swinging sideways at the hold distance: the pull opposes the motion
+    out = brain.update({ ...inp(hold), vessel: { pos: hold, vel: { x: 200, y: 0 }, crashed: false } });
+    expect(out.pull!.x).toBeLessThan(0);
   });
 
   it('burning the tendril with exhaust releases it and damages the boss', () => {
@@ -280,6 +297,52 @@ describe('Keeper brain — attacks', () => {
     expect(kb!.y).toBeGreaterThan(0); // pushed away (down)
   });
 
+  it('the sweep aim tracks the vessel, then locks sweepLock s before the lunge (the dodge window)', () => {
+    const { brain } = make();
+    const v0 = { x: 1500, y: 800 };
+    brain.update(inp(v0));
+    runUntil(brain, () => inp(v0), () => brain.mode !== 'intro');
+    brain.beginAttack('sweep', v0);
+    brain.update(inp(v0));
+    expect(brain.sweepLocked).toBe(false);
+    expect(brain.sweepDir.y).toBeCloseTo(1); // straight down at the vessel
+    // wait for the lock, then move away sideways: the lunge keeps the locked line
+    runUntil(brain, () => inp(v0), () => brain.sweepLocked, 3);
+    const lockedAt = brain.modeTime;
+    expect(lockedAt).toBeCloseTo(T.sweepWindup[0]! - T.sweepLock[0]!, 1);
+    const moved = { x: 1500 + 120, y: 800 };
+    let dmg = 0;
+    runUntil(brain, () => inp(moved), () => brain.mode === 'sweep', 3);
+    expect(brain.sweepDir.y).toBeCloseTo(1);
+    for (let i = 0; i < 180 && brain.mode === 'sweep'; i++) dmg += brain.update(inp(moved)).vesselDamage;
+    expect(dmg).toBe(0); // dodged
+  });
+
+  it('bumping it while it is stunned or changing phase only shoves; an idle bump chips', () => {
+    const { brain } = make();
+    const v = { x: 1500, y: 2000 };
+    brain.update(inp(v));
+    runUntil(brain, () => inp(v), () => brain.mode !== 'intro');
+    brain.update(inp(v, { rocks: [rockOn(brain)] }));
+    expect(brain.mode).toBe('stagger');
+    const out = brain.update(inp({ ...brain.pos }));
+    expect(out.vesselDamage).toBe(0);
+    expect(out.knockback).not.toBeNull();
+    runUntil(brain, () => inp(v), () => brain.mode === 'idle', 3);
+    const out2 = brain.update(inp({ x: brain.pos.x, y: brain.pos.y + 20 }));
+    expect(out2.vesselDamage).toBeCloseTo(T.contactDamage);
+  });
+
+  it('after a low sweep it climbs back to its hover band briskly', () => {
+    const { brain } = make();
+    const v = { x: 1500, y: 2000 }; // outside the arena: no attacks
+    brain.update(inp(v));
+    runUntil(brain, () => inp(v), () => brain.mode !== 'intro');
+    (brain as unknown as { pos: Vec2 }).pos = { x: 1500, y: 1000 };
+    runUntil(brain, () => inp(v), () => false, 1);
+    expect(1000 - brain.pos.y).toBeGreaterThan(T.returnSpeed * 0.9);
+  });
+
   it('phase 2 slams: debris + rock regrowth signal after the windup', () => {
     const { brain } = make();
     const v = { x: 1500, y: 900 };
@@ -292,6 +355,16 @@ describe('Keeper brain — attacks', () => {
     expect(slam).toEqual({ debris: T.slamDebris[1] });
     expect(brain.mode).toBe('slamRecover');
     expect(brain.pos.y).toBeLessThan(ARENA.y + T.bodyRadius + 40); // rose to the roof
+  });
+
+  it('idles in place while the vessel stays within the follow dead zone, then drifts after it', () => {
+    const { brain } = make();
+    const near = { x: 1500 + T.followDeadzone - 20, y: 2000 }; // below the arena: no attacks
+    runUntil(brain, () => inp(near), () => false, 6);
+    expect(brain.pos.x).toBeCloseTo(1500, 0);
+    const far = { x: 2400, y: 2000 };
+    runUntil(brain, () => inp(far), () => false, 20);
+    expect(brain.pos.x).toBeCloseTo(2400 - T.followDeadzone, 0);
   });
 
   it('stays inside its arena', () => {

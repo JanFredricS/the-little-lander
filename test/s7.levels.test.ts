@@ -10,6 +10,9 @@ import { validateLevel } from '../src/levels/validate';
 import { HOLLOW_GRAVITY, HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS, HOLLOW_SUN, hollow } from '../src/levels/hollow';
 import { VAULTS_CEILING, VAULTS_GROUND, VAULTS_HOLES, VAULTS_ROUTE, VAULTS_SECTION_B, vaults } from '../src/levels/vaults';
 import { LevelSession } from '../src/game/session';
+import { KEEPER_ARENA, KEEPER_ROCK_X, keeper } from '../src/levels/keeper';
+import { KEEPER_TUNING } from '../src/levels/boss/keeperTuning';
+import { LEVEL_SYSTEM_OPTIONS } from '../src/levels/systems';
 import { castSolid } from '../src/physics/tags';
 import { resolveTuning } from '../src/physics/tuning';
 import { vPxToM } from '../src/physics/units';
@@ -22,7 +25,7 @@ function sample(points: readonly Vec2[], step = 10): Vec2[] {
 }
 
 describe('S7 levels are registered and valid', () => {
-  it.each(['vaults', 'hollow'] as const)('%s', (id) => {
+  it.each(['vaults', 'hollow', 'keeper'] as const)('%s', (id) => {
     const spec = LEVELS[id];
     expect(spec).toBeDefined();
     expect(validateLevel(spec!)).toEqual([]);
@@ -141,5 +144,65 @@ describe('map 6 — The Hollow', () => {
     }
     const zones = hollow.zones.filter((z) => z.kind === 'gravityZone');
     expect(zones).toHaveLength(HOLLOW_GRAVITY.length);
+  });
+});
+
+describe('map 7 — The Keeper', () => {
+  const t = resolveTuning(keeper.physicsOverrides);
+  const g = Math.hypot(keeper.gravity.x, keeper.gravity.y);
+  const rocks = keeper.entities.filter((e) => e.kind === 'looseRock');
+  const hoverY = KEEPER_ARENA.y + KEEPER_TUNING.hoverY;
+
+  it('a row of loose rocks across the arena, each breakable by the winch but not by a pod just hanging on it', async () => {
+    expect(rocks.length).toBe(KEEPER_ROCK_X.length);
+    const s = await LevelSession.create(keeper);
+    const mass = s.physics.getMass(s.vessel.body);
+    s.destroy();
+    const winch = (LEVEL_SYSTEM_OPTIONS.keeper?.looseRocks?.winchPull ?? 2.6) * mass * g;
+    for (const r of rocks) {
+      if (r.kind !== 'looseRock') continue;
+      expect(r.breakForce).toBeGreaterThan(mass * g * 1.3); // hanging (and swinging a bit) holds
+      expect(r.breakForce).toBeLessThan(winch * 0.9); // reeling in breaks it
+      expect(r.x).toBeGreaterThan(KEEPER_ARENA.x);
+      expect(r.x).toBeLessThan(KEEPER_ARENA.x + KEEPER_ARENA.w);
+    }
+    // neighbours closer than the Keeper's follow dead zone x 2: there is always a rock to lure it under
+    for (let i = 1; i < KEEPER_ROCK_X.length; i++) expect(KEEPER_ROCK_X[i]! - KEEPER_ROCK_X[i - 1]!).toBeLessThanOrEqual(KEEPER_TUNING.followDeadzone * 2);
+  });
+
+  it('the lure spot (one dead zone beside a rock, above the Keeper) has the rock in rope range', () => {
+    for (const x of KEEPER_ROCK_X) {
+      const spot = { x: x + KEEPER_TUNING.followDeadzone, y: hoverY - 50 };
+      const d = Math.hypot(spot.x - x, spot.y - (160 + 16));
+      expect(d).toBeLessThan(t.harpoonThrust.ropeRange - 40);
+      // and a dropped rock clears the vessel's hover line: it falls onto the Keeper, not the pod
+      expect(spot.y).toBeLessThan(hoverY);
+    }
+  });
+
+  it('the arena sits inside the world with room above and below the hover band; spawn outside it (no attacks before you enter)', () => {
+    const a = KEEPER_ARENA;
+    expect(a.x).toBeGreaterThan(0);
+    expect(a.x + a.w).toBeLessThan(keeper.worldSize.w);
+    expect(a.y + a.h).toBeLessThan(keeper.worldSize.h);
+    expect(hoverY - a.y).toBeGreaterThan(KEEPER_TUNING.bodyRadius + 150);
+    expect(keeper.spawn.x).toBeLessThan(a.x);
+    const boss = keeper.entities.find((e) => e.kind === 'bossSpawn');
+    expect(boss && boss.kind === 'bossSpawn' && boss.arena).toEqual(a);
+    expect(keeper.objectives).toEqual([{ kind: 'surviveBoss', id: 'keeper', bossEntityId: 'keeper' }]);
+  });
+
+  it('fuel canisters float in open air, spread over the arena', async () => {
+    const s = await LevelSession.create(keeper);
+    const cans = keeper.entities.filter((e) => e.kind === 'fuelPickup');
+    expect(cans.length).toBeGreaterThanOrEqual(6);
+    const blocked = (a: Vec2, b: Vec2) => castSolid(s.physics, vPxToM(a), vPxToM(b)) !== null;
+    for (const c of cans) {
+      const p = { x: c.x, y: c.y };
+      expect([{ x: p.x - 14, y: p.y }, { x: p.x + 14, y: p.y }, { x: p.x, y: p.y - 14 }, { x: p.x, y: p.y + 14 }].some((q) => blocked(p, q))).toBe(false);
+    }
+    const xs = cans.map((c) => c.x).sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) expect(xs[i]! - xs[i - 1]!).toBeLessThan(800);
+    s.destroy();
   });
 });
