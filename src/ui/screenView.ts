@@ -151,9 +151,9 @@ export class ScreenView {
 
     if (m.kind === 'title') {
       this.heading.setText(m.heading, { scale: 4, color: UI.accent });
-      center(this.heading, 56);
+      center(this.heading, 42);
       this.info.setText(m.info.join('\n'), { color: UI.wind });
-      center(this.info, 56 + this.heading.height + 10);
+      center(this.info, 42 + this.heading.height + 10);
       rowsTop = 210;
       rowsBottom = 290;
       rowW = 180;

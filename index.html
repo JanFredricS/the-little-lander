@@ -4,6 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
     <title>The Little Lander</title>
+    <meta name="description" content="A pixel-art physics side-scroller. Pilot a tiny lander through the shattered floating world of Aster: plant beacons, find the lost research team, escape the hollow. Plays in the browser, keyboard or touch." />
+    <meta property="og:title" content="The Little Lander" />
+    <meta property="og:description" content="Pilot a tiny lander through a shattered world. Plant beacons. Find the lost team. Get home." />
+    <meta property="og:type" content="website" />
     <meta name="theme-color" content="#0b0d14" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -28,6 +32,13 @@
   </head>
   <body>
     <div id="app"></div>
+    <noscript>
+      <p style="max-width: 36em; margin: 3em auto; padding: 0 1em; line-height: 1.5">
+        <b>The Little Lander</b> is a pixel-art physics game that runs in your browser.
+        Pilot a tiny lander through the shattered world of Aster, plant beacons, find the
+        lost research team and get home. It needs JavaScript (and WebGL) to play.
+      </p>
+    </noscript>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
