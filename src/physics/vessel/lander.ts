@@ -17,6 +17,7 @@ import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../c
 import type { LanderTuning, VesselOptions } from '../tuning';
 import { VesselBase } from './base';
 import type { VesselGeometry } from './types';
+import type { BrakeTuning } from './brakeAssist';
 
 export function landerGeometry(t: LanderTuning): VesselGeometry {
   const footW = 4;
@@ -45,6 +46,10 @@ export class LanderController extends VesselBase {
   constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     const t = options.tuning.lander;
     super(physics, spawn, events, landerGeometry(t), t, options, t);
+  }
+
+  protected override brakeTuning(): BrakeTuning {
+    return this.options.tuning.lander;
   }
 
   protected control(frame: InputFrame, dt: number): void {

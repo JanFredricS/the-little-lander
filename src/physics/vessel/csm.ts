@@ -8,6 +8,7 @@ import type { GameEventSink, InputFrame, PhysicsApi, VesselSpawn } from '../../c
 import type { VesselOptions } from '../tuning';
 import { VesselBase } from './base';
 import type { VesselGeometry } from './types';
+import type { BrakeTuning } from './brakeAssist';
 
 export function csmGeometry(t: { width: number; height: number }): VesselGeometry {
   return {
@@ -24,6 +25,10 @@ export class CsmController extends VesselBase {
   constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     const t = options.tuning.csm;
     super(physics, spawn, events, csmGeometry(t), t, options, t);
+  }
+
+  protected override brakeTuning(): BrakeTuning {
+    return this.options.tuning.csm;
   }
 
   protected control(frame: InputFrame, dt: number): void {

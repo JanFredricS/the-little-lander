@@ -9,6 +9,7 @@ import type { HarpoonThrustTuning, HarpoonTuning, VesselOptions } from '../tunin
 import { VesselBase } from './base';
 import { HarpoonRig, type RigHost } from './harpoonRig';
 import type { VesselGeometry } from './types';
+import type { BrakeTuning } from './brakeAssist';
 
 export function podGeometry(t: HarpoonTuning | HarpoonThrustTuning, withEngine: boolean): VesselGeometry {
   return {
@@ -81,6 +82,10 @@ export class HarpoonThrustController extends RopeVessel {
 
   constructor(physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options: VesselOptions) {
     super(physics, spawn, events, options, options.tuning.harpoonThrust, true);
+  }
+
+  protected override brakeTuning(): BrakeTuning {
+    return this.options.tuning.harpoonThrust;
   }
 
   protected control(frame: InputFrame, dt: number): void {

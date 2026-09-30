@@ -31,6 +31,7 @@ import { PASS_THROUGH_TAGS, TAG_DEBRIS_BURNING, TAG_GOO, TAG_VESSEL, isDebrisTag
 import type { VesselOptions } from '../tuning';
 import { mToPx, pxToM, vMToPx, vPxToM } from '../units';
 import type { EngineFlagsExt, FlightVessel, VesselGeometry, VesselHooks } from './types';
+import { brakeBoostMultiplier, type BrakeTuning } from './brakeAssist';
 
 /** The hull fields every mode tuning module provides. */
 export interface HullTuning {
@@ -299,10 +300,26 @@ export abstract class VesselBase implements FlightVessel {
     this.thrustAt(-force, localPx);
   }
 
-  /** Force (N) along the body's nose direction, applied at a body-local px point (torque from the offset). */
+  /**
+   * Force (N) along the body's nose direction, applied at a body-local px point (torque from the offset).
+   * Every engine goes through here, so the S10 brake assist (brakeTuning()) is applied per engine:
+   * a force opposing the hull velocity is scaled up by brakeBoostMultiplier. Fuel is billed by the
+   * callers at the un-boosted rate.
+   */
   protected thrustAt(force: number, localPx: Vec2): void {
     const up = bodyUp(this.physics.getTransform(this.body).angle);
-    this.physics.applyForce(this.body, { x: up.x * force, y: up.y * force }, this.worldPoint(localPx));
+    let f = force;
+    const brake = this.brakeTuning();
+    if (brake && force !== 0) {
+      const s = Math.sign(force);
+      f *= brakeBoostMultiplier({ x: up.x * s, y: up.y * s }, vMToPx(this.physics.getLinearVelocity(this.body)), brake);
+    }
+    this.physics.applyForce(this.body, { x: up.x * f, y: up.y * f }, this.worldPoint(localPx));
+  }
+
+  /** S10 brake-assist tuning of this mode (undefined = no assist). */
+  protected brakeTuning(): BrakeTuning | undefined {
+    return undefined;
   }
 
   /** Mount point in world metres from a body-local px point. */
