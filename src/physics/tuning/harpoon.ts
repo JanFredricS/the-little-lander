@@ -7,9 +7,9 @@
  */
 
 export const HARPOON_TUNING = {
-  /** Pod box (px). */
+  /** Pod box (px): matches the vessel.pod art (S8). */
   width: 16,
-  height: 16,
+  height: 14,
   density: 4,
   friction: 0.6,
   restitution: 0.05,

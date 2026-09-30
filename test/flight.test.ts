@@ -776,15 +776,16 @@ describe('environment: pickups & beacons', () => {
       }),
     );
     run(240);
-    expect(s.state.pos.y).toBeLessThan(ceil + 20); // pressed against the ceiling
+    expect(s.state.pos.y).toBeLessThan(ceil + resolveTuning().csm.height / 2 + 2); // pressed against the ceiling
     expect(s.state.landed).toBe(false);
     expect(ofType(events, 'softLand')).toHaveLength(0);
     expect(ofType(events, 'beaconPlanted')).toHaveLength(0);
   });
 
   it('goo welded under the hull resting on a platform (legs clear) is not a landing', async () => {
-    // CSM bottom at y+18; two blobs (r 7) under it at y+25 touch the ground at y+32: the hull stays 14 px clear.
-    const r = await rig('csm', { ground: 100, pos: { x: 0, y: 100 - 32.5 } });
+    // CSM bottom at y+half; two blobs (r 7) under it at y+half+7 touch the ground at y+half+14: the hull stays 14 px clear.
+    const half = resolveTuning().csm.height / 2;
+    const r = await rig('csm', { ground: 100, pos: { x: 0, y: 100 - 14.5 - half } });
     r.vessel.hooks = { ...r.vessel.hooks, siteAt: () => 'site' };
     for (const x of [-7, 7]) {
       const goo = r.physics.createBody({ type: 'dynamic', position: { x: pxToM(x), y: pxToM(100 - 7.5) }, tag: 'goo' });
@@ -794,7 +795,7 @@ describe('environment: pickups & beacons', () => {
     }
     const s = r.run(120);
     expect(Math.hypot(s.vel.x, s.vel.y)).toBeLessThan(5); // at rest on the goo
-    expect(s.pos.y).toBeLessThan(100 - 18 - 8); // hull clear of the ground
+    expect(s.pos.y).toBeLessThan(100 - half - 8); // hull clear of the ground
     expect(s.landed).toBe(false);
     expect(ofType(r.events, 'softLand')).toHaveLength(0);
   });
