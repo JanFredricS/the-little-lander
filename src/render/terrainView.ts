@@ -9,7 +9,7 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, LevelSpec, PixelCanvas, TerrainPiece, TerrainStyle, Vec2 } from '../contracts';
-import { paintPieces, preparePiece, TileSource, type PreparedPiece } from './terrainTiles';
+import { paintPieces, preparePiece, TileSource, type PaintRect, type PreparedPiece } from './terrainTiles';
 
 const CHUNK = 256;
 /** Chunks kept around the visible ones (pre-painted before they scroll in). */
@@ -26,14 +26,21 @@ function makeCanvas(w: number, h: number): PixelCanvas {
 }
 
 interface Chunk {
+  i: number;
+  j: number;
   sprite: Sprite | null;
 }
+
+/** Numeric chunk key (no per-frame string building); chunk indices stay well inside ±2^15. */
+const chunkKey = (i: number, j: number) => (i + 0x8000) * 0x10000 + (j + 0x8000);
 
 export class TerrainView {
   readonly root = new Container();
   private readonly pieces: PreparedPiece[];
   private readonly tiles: TileSource;
-  private readonly chunks = new Map<string, Chunk>();
+  private readonly chunks = new Map<number, Chunk>();
+  /** Brittle regions: their rock gets crack art. */
+  private readonly cracks: PaintRect[];
 
   constructor(
     private readonly spec: LevelSpec,
@@ -41,6 +48,7 @@ export class TerrainView {
   ) {
     this.tiles = new TileSource(art, spec.themeId, makeCanvas);
     this.pieces = spec.terrain.pieces.map((p) => preparePiece(p, spec.worldSize.h));
+    this.cracks = spec.zones.flatMap((z) => (z.kind === 'brittleRegion' ? [z.rect] : []));
   }
 
   /** Paint/cull chunks for a view whose top-left world point is `o`. */
@@ -51,12 +59,12 @@ export class TerrainView {
     const j1 = Math.floor((o.y + VIEW_HEIGHT) / CHUNK) + MARGIN;
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
-        const key = `${i},${j}`;
+        const key = chunkKey(i, j);
         if (!this.chunks.has(key)) this.chunks.set(key, this.paint(i, j));
       }
     }
     for (const [key, c] of this.chunks) {
-      const [i, j] = key.split(',').map(Number) as [number, number];
+      const { i, j } = c;
       if (i >= i0 - 1 && i <= i1 + 1 && j >= j0 - 1 && j <= j1 + 1) continue;
       c.sprite?.destroy({ texture: true, textureSource: true });
       this.chunks.delete(key);
@@ -71,15 +79,15 @@ export class TerrainView {
 
   private paint(i: number, j: number): Chunk {
     const r = { x: i * CHUNK, y: j * CHUNK, w: CHUNK, h: CHUNK };
-    if (r.x >= this.spec.worldSize.w || r.y >= this.spec.worldSize.h || r.x + CHUNK <= 0 || r.y + CHUNK <= 0) return { sprite: null };
+    if (r.x >= this.spec.worldSize.w || r.y >= this.spec.worldSize.h || r.x + CHUNK <= 0 || r.y + CHUNK <= 0) return { i, j, sprite: null };
     const canvas = makeCanvas(CHUNK, CHUNK);
     const ctx = canvas.getContext('2d') as CanvasRenderingContext2D;
     ctx.translate(-r.x, -r.y);
-    if (!paintPieces(ctx, this.pieces, this.tiles, r)) return { sprite: null };
+    if (!paintPieces(ctx, this.pieces, this.tiles, r, this.cracks)) return { i, j, sprite: null };
     const sprite = new Sprite(Texture.from(canvas as HTMLCanvasElement));
     sprite.position.set(r.x, r.y);
     this.root.addChild(sprite);
-    return { sprite };
+    return { i, j, sprite };
   }
 }
 

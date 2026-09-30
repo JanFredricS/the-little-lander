@@ -2,9 +2,9 @@
  * Level renderer: the theme's palette background + parallax backdrop layers
  * (S2 ArtApi), tiled terrain (terrainView.ts: S2 tiles painted into culled
  * chunks), level-runtime entities (entityView.ts: doors, moving islands,
- * vines, creatures), prop sprites, the flight systems (src/render/flightView.ts: pixel-art
- * vessel per mode with anchored flames and harpoon heads; zones, goo,
- * debris, pickups, beacons, radiation still placeholder shapes) and a dim
+ * vines, creatures), prop sprites, exit docks, the flight systems
+ * (src/render/flightView.ts: vessel, flames, rope, pickups, beacons, goo,
+ * debris, zones — pooled sprites) and a dim
  * debug telemetry line (the player HUD is src/ui, S4). Everything is in
  * virtual px; the world container is offset by the interpolated camera.
  */
@@ -113,7 +113,7 @@ export class LevelView {
       sprite.rotation = t.angle;
     }
 
-    this.flight.render(alpha, nowMs);
+    this.flight.render(alpha, nowMs, o);
     this.s7?.render(alpha, nowMs);
     const st = s.state;
 
@@ -138,13 +138,34 @@ export class LevelView {
     this.root.destroy({ children: true });
   }
 
-  private drawExits(spec: LevelSpec): Graphics {
+  /**
+   * Exit docks: the landing strip, bracket markers at both ends of the zone
+   * (full zone height, faint) and the obj.exitDock beacon standing on the
+   * strip's centre.
+   */
+  private drawExits(spec: LevelSpec): Container {
+    const c = new Container();
     const g = new Graphics();
+    c.addChild(g);
+    const f = this.art.getSprite('obj.exitDock', 0, spec.themeId);
     for (const e of spec.entities) {
       if (e.kind !== 'exitDock') continue;
-      g.rect(e.x - e.w / 2, e.y - e.h, e.w, e.h).fill({ color: 0x40d080, alpha: 0.18 });
-      g.rect(e.x - e.w / 2, e.y - 3, e.w, 3).fill(0x40d080);
+      const x0 = e.x - e.w / 2;
+      const x1 = e.x + e.w / 2;
+      g.rect(x0, e.y - 3, e.w, 3).fill(0x40d080);
+      for (let x = x0 + 4; x < x1 - 4; x += 8) g.rect(x, e.y - 3, 4, 1).fill(0xb0ffd0);
+      for (const [x, dir] of [
+        [x0, 1],
+        [x1, -1],
+      ] as const) {
+        g.rect(x - (dir > 0 ? 0 : 2), e.y - e.h, 2, e.h).fill({ color: 0x40d080, alpha: 0.35 });
+        g.rect(x - (dir > 0 ? 0 : 6), e.y - e.h, 6, 2).fill({ color: 0x40d080, alpha: 0.6 });
+      }
+      const s = new Sprite(Texture.from(f.canvas as HTMLCanvasElement));
+      s.anchor.set(f.pivot.x / f.width, 1);
+      s.position.set(e.x, e.y - 3);
+      c.addChild(s);
     }
-    return g;
+    return c;
   }
 }

@@ -18,7 +18,7 @@
  */
 
 import { TILE_SIZE } from '../contracts';
-import type { ArtApi, PixelCanvas, TerrainPiece, TerrainStyle, ThemeId, TileKind, Vec2 } from '../contracts';
+import type { ArtApi, PixelCanvas, RampName, TerrainPiece, TerrainStyle, ThemeId, TileKind, Vec2 } from '../contracts';
 
 const T = TILE_SIZE;
 
@@ -39,6 +39,9 @@ export interface PreparedPiece {
   bbox: { x0: number; y0: number; x1: number; y1: number };
   seed: number;
 }
+
+/** 4x4 ordered-dither thresholds (0..1). */
+const BAYER = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5].map((v) => (v + 0.5) / 16);
 
 function hash(...n: number[]): number {
   let h = 0x811c9dc5;
@@ -130,6 +133,14 @@ export class TileSource {
     this.outline = '#' + (pal.colors[pal.outline] ?? 0x000000).toString(16).padStart(6, '0');
   }
 
+  /** CSS colour of shade `i` (clamped, dark -> light) of the theme's `ramp`. */
+  rampColor(ramp: RampName, i: number): string {
+    const pal = this.art.palettes[this.theme];
+    const r = pal.ramps[ramp];
+    const idx = r[Math.max(0, Math.min(r.length - 1, i))] ?? pal.outline;
+    return '#' + (pal.colors[idx] ?? 0x000000).toString(16).padStart(6, '0');
+  }
+
   tile(kind: TileKind, v: number): Img {
     return this.art.getTile(this.theme, kind, v) as Img;
   }
@@ -163,9 +174,11 @@ function overlaps(p: PreparedPiece, r: PaintRect, pad: number): boolean {
 
 /**
  * Paint `pieces` into `ctx` (already translated so world coords draw in
- * place), limited to `r`. Returns whether anything was drawn.
+ * place), limited to `r`. Returns whether anything was drawn. `cracks`:
+ * world rects (brittle regions) whose rock surfaces get crack art, painted
+ * inside the piece clip so it never spills into open air.
  */
-export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: TileSource, r: PaintRect): boolean {
+export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: TileSource, r: PaintRect, cracks: readonly PaintRect[] = []): boolean {
   let drew = false;
   ctx.imageSmoothingEnabled = false;
   for (const p of pieces) {
@@ -185,6 +198,7 @@ export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: T
     const fillKind = `${mat}:fill` as TileKind;
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) ctx.drawImage(tiles.tile(fillKind, hash(gx, gy, p.seed) & 3), gx * T, gy * T);
     if (p.style.surface !== false) for (const e of p.surfaces) paintStrip(ctx, e, mat, p.seed, tiles, r);
+    for (const z of cracks) for (const e of p.surfaces) paintCracks(ctx, e, z, p.seed, tiles, r);
     ctx.restore();
     if (p.style.surface !== false) {
       ctx.fillStyle = tiles.outline;
@@ -261,6 +275,91 @@ function paintDecor(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, density
     const x = c * T;
     const y = Math.floor(Math.max(lerpAt(e.a, e.b, x + 1, 'x'), lerpAt(e.a, e.b, x + T - 1, 'x')));
     ctx.drawImage(tiles.tile(kind, (h >>> 10) & 3), x, y - T + 1);
+  }
+}
+
+/**
+ * Brittle rock (S8): along the part of surface `e` inside zone `z`, a
+ * crumbling rim (a warm dithered band + glints just inside the surface)
+ * and hashed pixel cracks running 8-19 px into the solid, some
+ * with a short branch. Deterministic per edge / seed; clipped by the caller.
+ */
+function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles: TileSource, r: PaintRect): void {
+  const horiz = e.role !== 'side';
+  const axis = horiz ? 'x' : 'y';
+  const ea = horiz ? e.a.x : e.a.y;
+  const eb = horiz ? e.b.x : e.b.y;
+  const za = horiz ? z.x : z.y;
+  const zb = horiz ? z.x + z.w : z.y + z.h;
+  const ra = (horiz ? r.x : r.y) - 16;
+  const rb = (horiz ? r.x + r.w : r.y + r.h) + 16;
+  const lo = Math.max(Math.min(ea, eb), za, ra);
+  const hi = Math.min(Math.max(ea, eb), zb, rb);
+  if (!(lo < hi)) return;
+  const ix = -e.n.x; // into the solid
+  const iy = -e.n.y;
+  const inZone = (x: number, y: number) => x >= z.x && x < z.x + z.w && y >= z.y && y < z.y + z.h;
+  const at = (u: number): Vec2 => {
+    const o = lerpAt(e.a, e.b, u, axis);
+    return horiz ? { x: u, y: o } : { x: o, y: u };
+  };
+  const dark = tiles.outline;
+  const shade = tiles.rampColor('shadow', 2);
+  const warm = tiles.rampColor('light', 0);
+  const glint = tiles.rampColor('light', 2);
+  const hilite = tiles.rampColor('primary', 3);
+  // crumbling rim: a warm dithered band fading 5 px into the rock, dark
+  // speckles on the surface row, and sparse glints
+  for (let u = Math.floor(lo); u < hi; u++) {
+    const q = at(u + 0.5);
+    const h = hash(u, seed, 31);
+    for (let k = 1; k <= 5; k++) {
+      const x = Math.floor(q.x + ix * k);
+      const y = Math.floor(q.y + iy * k);
+      if (!inZone(x, y)) continue;
+      const b = BAYER[(y & 3) * 4 + (x & 3)]!;
+      if (k === 1 && (u & 1) === 0) {
+        ctx.fillStyle = shade;
+        ctx.fillRect(x, y, 1, 1);
+      } else if (b < 0.6 * (1 - k / 6)) {
+        ctx.fillStyle = warm;
+        ctx.fillRect(x, y, 1, 1);
+      }
+    }
+    if ((h & 7) === 0) {
+      ctx.fillStyle = glint;
+      ctx.fillRect(Math.floor(q.x + ix * (2 + (h >>> 3) % 4)), Math.floor(q.y + iy * (2 + (h >>> 3) % 4)), 1, 1);
+    }
+  }
+  // cracks
+  const px = -iy; // along the surface
+  const py = ix;
+  let u = Math.floor(lo) + (hash(seed, Math.floor(za), 41) % 6);
+  while (u < hi) {
+    const h = hash(u, seed, 37);
+    const q = at(u + 0.5);
+    if (inZone(q.x, q.y)) {
+      const depth = 8 + (h % 12);
+      let x = q.x + ix;
+      let y = q.y + iy;
+      for (let k = 0; k < depth; k++) {
+        ctx.fillStyle = dark;
+        ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+        ctx.fillStyle = hilite;
+        ctx.fillRect(Math.floor(x + px), Math.floor(y + py), 1, 1);
+        const j = (h >>> (4 + k)) & 3; // jitter sideways now and then
+        const side = j === 1 ? 1 : j === 2 ? -1 : 0;
+        x += ix + px * side;
+        y += iy + py * side;
+        if (k === (depth >> 1) && (h & 0x40000) !== 0) {
+          // short branch
+          const bs = h & 0x80000 ? 1 : -1;
+          ctx.fillStyle = dark;
+          for (let b = 1; b <= 3; b++) ctx.fillRect(Math.floor(x + (ix + px * bs) * b), Math.floor(y + (iy + py * bs) * b), 1, 1);
+        }
+      }
+    }
+    u += 6 + ((h >>> 12) % 8);
   }
 }
 

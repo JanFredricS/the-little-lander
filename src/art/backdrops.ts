@@ -327,18 +327,30 @@ function core(pal: Palette): BackdropLayerPix[] {
   // the artificial sun's glow (fixed on screen)
   halo(sky, W * 0.7, 120, 90, [13, 14], { core: 1.1 });
   sky.ellipse(W * 0.7, 120, 20, 20, (x, y, nx, ny) => (Math.hypot(nx, ny) > 0.85 ? 15 : 14));
-  // L1: far jungle cliffs with waterfalls
-  const far = new Pix(W, H);
+  // L1: far jungle cliffs with waterfalls. S8: the layer is 2 screens tall
+  // (the cliffs continue down) so its bottom edge never scrolls into view in
+  // the 2400 px hollow (parallax 0.15); the last rows still dissolve into
+  // mist (ordered dither) in case a taller level uses the theme.
+  const FH = H * 2;
+  const far = new Pix(W, FH);
   const prof = ridgeProfile(W, H - 60, 120, 52, 80);
   for (let x = 0; x < W; x++)
-    for (let y = Math.round(prof[x]!); y < H; y++) far.set(x, y, rampAt([5, 6], 0.3 + (fbm(x, y, 53, { scale: 16, tileW: W }) - 0.5) * 0.8, x, y, 0.5));
+    for (let y = Math.round(prof[x]!); y < FH; y++) far.set(x, y, rampAt([5, 6], 0.3 + (fbm(x, y, 53, { scale: 16, tileW: W }) - 0.5) * 0.8, x, y, 0.5));
   const r = mulberry32(54);
   for (let i = 0; i < 5; i++) {
     const x = r.range(0, W);
     const top = Math.round(prof[Math.floor(x) % W]!) + 4;
-    wrapped((dx) => waterfall(far, x + dx, top, 5, H - top, [9, 10, 14], 0, 55 + i));
+    wrapped((dx) => waterfall(far, x + dx, top, 5, FH - top, [9, 10, 14], 0, 55 + i));
   }
   far.apply((x, y, c) => (c !== 0 && bayer(x, y) < 0.3 - (y / H) * 0.2 ? 12 : -1));
+  const MIST = 110;
+  far.apply((x, y, c) => {
+    if (c === 0 || y < FH - MIST) return -1;
+    const k = (FH - y) / MIST; // 1 at the top of the band -> 0 at the bottom
+    const b = bayer(x, y);
+    if (b >= k) return 0;
+    return b >= k * 0.6 ? 13 : -1;
+  });
   // L2: floating rocks with jungle tops + palms
   const mid = new Pix(W, H);
   const r2 = mulberry32(56);
