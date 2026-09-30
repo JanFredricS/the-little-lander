@@ -8,9 +8,13 @@ import type { LevelId, LevelSpec } from '../contracts';
 import { descent } from './descent';
 import { floatingIsles } from './floatingIsles';
 import { hangarRun } from './hangarRun';
+import { hollow } from './hollow';
+import { keeper } from './keeper';
+import { madDash } from './madDash';
 import { physlab } from './physlab';
 import { testpad } from './testpad';
 import { theThroat } from './theThroat';
+import { vaults } from './vaults';
 
 export const LEVELS: Partial<Record<LevelId, LevelSpec>> = {
   testpad,
@@ -19,6 +23,10 @@ export const LEVELS: Partial<Record<LevelId, LevelSpec>> = {
   descent,
   floatingIsles,
   throat: theThroat,
+  vaults,
+  hollow,
+  keeper,
+  madDash,
 };
 
 export function getLevel(id: LevelId): LevelSpec | undefined {

@@ -16,6 +16,7 @@ import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import { EntityView } from './entityView';
 import { FlightView } from './flightView';
+import { S7LevelFx } from './s7LevelFx';
 import { TerrainView } from './terrainView';
 
 export class LevelView {
@@ -24,6 +25,8 @@ export class LevelView {
   private readonly flight: FlightView;
   private readonly terrain: TerrainView;
   private readonly entities: EntityView;
+  /** S7 hook: level-owned systems (boss, rocks, ledges, collapse front, S7 gates). */
+  private readonly s7: S7LevelFx | null;
   private readonly backdrop: { layer: BackdropLayer; view: Sprite | TilingSprite }[] = [];
   private readonly props = new Map<string, Sprite>();
   private readonly hud: Text;
@@ -72,6 +75,11 @@ export class LevelView {
 
     this.world.addChild(this.flight.over);
     this.world.addChild(this.entities.front);
+    this.s7 = S7LevelFx.wanted(session) ? new S7LevelFx(session, art) : null;
+    if (this.s7) {
+      this.world.addChildAt(this.s7.under, 0);
+      this.world.addChild(this.s7.over);
+    }
 
     // S0 debug line; the player HUD is src/ui (S4), so this sits at the bottom, dimmed.
     this.hud = new Text({ text: '', style: { fontFamily: 'ui-monospace, Menlo, monospace', fontSize: 8, fill: 0x8a92a8 } });
@@ -106,6 +114,7 @@ export class LevelView {
     }
 
     this.flight.render(alpha, nowMs);
+    this.s7?.render(alpha, nowMs);
     const st = s.state;
 
     this.fpsFrames++;

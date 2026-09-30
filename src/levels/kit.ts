@@ -37,9 +37,14 @@ function piece(id: string, kind: TerrainPiece['kind'], points: Vec2[], material:
 
 const round = (p: Vec2): Vec2 => ({ x: Math.round(p.x), y: Math.round(p.y) });
 
+/** Axis-aligned rectangle outline, top-left (x, y), size w×h (clockwise in y-down). */
+export function rectPoints(x: number, y: number, w: number, h: number): Vec2[] {
+  return [P(x, y), P(x + w, y), P(x + w, y + h), P(x, y + h)];
+}
+
 /** Rectangle polygon, top-left (x, y), size w×h. */
 export function box(id: string, x: number, y: number, w: number, h: number, material: TerrainMaterial, o: PieceOpts = {}): TerrainPiece {
-  return piece(id, 'polygon', [P(x, y), P(x + w, y), P(x + w, y + h), P(x, y + h)], material, o);
+  return piece(id, 'polygon', rectPoints(x, y, w, h), material, o);
 }
 
 /** Open ground polyline (solid below). Points must have increasing x. */

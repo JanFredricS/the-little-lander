@@ -24,7 +24,7 @@ import type { VesselHooks } from './types';
 
 export type RigTuning = Pick<
   HarpoonTuning,
-  'mountHeight' | 'ropeRange' | 'ropeMin' | 'reelInSpeed' | 'reelOutSpeed' | 'headSpeed' | 'ropeBreakAccel'
+  'width' | 'height' | 'mountHeight' | 'ropeRange' | 'ropeMin' | 'reelInSpeed' | 'reelOutSpeed' | 'headSpeed' | 'ropeBreakAccel'
 >;
 
 export interface RigHost {
@@ -54,6 +54,10 @@ interface Gun {
 
 /** Tension low-pass factor per step (spikes of a single step never snap the rope). */
 const TENSION_SMOOTHING = 0.25;
+/** Reel-in stalls while the pod is this far (px) short of the rope length. */
+const STALL_SLACK_PX = 3;
+/** Reel-in stalls when rock is within this many px of the pod's leading side (towards the anchor). */
+const STALL_PROBE_PX = 4;
 
 export class HarpoonRig {
   private readonly guns: Gun[];
@@ -91,8 +95,13 @@ export class HarpoonRig {
     const reel = (frame.reelIn ? -this.t.reelInSpeed : 0) + (frame.reelOut ? this.t.reelOutSpeed : 0);
     if (reel !== 0) {
       for (const g of this.guns) {
-        if (g.phase !== 'anchored' || g.joint === null) continue;
+        // the anchor body may have vanished since the last step (postStep reports the snap)
+        if (g.phase !== 'anchored' || g.joint === null || !this.host.physics.hasJoint(g.joint)) continue;
         const next = Math.min(pxToM(this.t.ropeRange), Math.max(pxToM(this.t.ropeMin), g.length + pxToM(reel) * dt));
+        // Winch stall (S7 fix): never reel in while the pod lags behind the rope length
+        // (pinned against rock / the rope bent over a corner) — an unlimited winch would
+        // crush the pod into terrain now that roped pods collide with it.
+        if (next < g.length && (this.host.physics.getJointCurrentLength(g.joint) > g.length + pxToM(STALL_SLACK_PX) || this.blockedTowardAnchor(g))) continue;
         if (next !== g.length) {
           g.length = next;
           this.host.physics.setJointLength(g.joint, next);
@@ -152,6 +161,29 @@ export class HarpoonRig {
 
   // ------------------------------------------------------------ internals
 
+  /**
+   * S7 winch stall: rock right at the pod's side facing the anchor (the rope
+   * would drag the pod into it). A rigid rope limit fighting a contact reads
+   * as a fatal impact, so the winch must stop before that happens.
+   */
+  private blockedTowardAnchor(g: Gun): boolean {
+    const p = this.host.physics;
+    if (g.joint === null) return false;
+    const { a, b } = p.getJointAnchors(g.joint);
+    const d = normalize({ x: a.x - b.x, y: a.y - b.y });
+    const c = p.localToWorld(this.host.body, { x: 0, y: 0 });
+    const hw = pxToM(this.t.width / 2);
+    const hh = pxToM(this.t.height / 2);
+    const probe = pxToM(STALL_PROBE_PX);
+    const ignore = [...this.host.parts];
+    for (const [lx, ly] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh], [0, -hh]] as const) {
+      const w = p.localToWorld(this.host.body, { x: lx, y: ly });
+      if ((w.x - c.x) * d.x + (w.y - c.y) * d.y <= 0) continue;
+      if (castSolid(p, c, { x: w.x + d.x * probe, y: w.y + d.y * probe }, ignore)) return true;
+    }
+    return false;
+  }
+
   private fire(): void {
     let g = this.guns.find((x) => x.phase === 'idle');
     if (!g) {
@@ -188,7 +220,9 @@ export class HarpoonRig {
     const mount = p.localToWorld(this.host.body, vPxToM(this.mountLocal));
     const dist = Math.hypot(point.x - mount.x, point.y - mount.y);
     const length = Math.min(pxToM(this.t.ropeRange), Math.max(pxToM(this.t.ropeMin), dist));
-    g.joint = p.createDistanceJoint({ bodyA: anchorBody, bodyB: this.host.body, anchorA: point, anchorB: mount, rope: true, length, maxLength: length });
+    // collideConnected: the anchor body is usually the level's single terrain body; without it
+    // the roped pod would stop colliding with ALL terrain (fix by S7, see RESIDUALS/S7 report).
+    g.joint = p.createDistanceJoint({ bodyA: anchorBody, bodyB: this.host.body, anchorA: point, anchorB: mount, rope: true, length, maxLength: length, collideConnected: true });
     g.length = length;
     g.phase = 'anchored';
     g.tension = 0;
