@@ -18,6 +18,7 @@ import { emptyFrame } from '../../shell/input';
 import type { InputFrame, Vec2 } from '../../contracts';
 import type { LevelSession } from '../../game/session';
 import { mToPx, pxToM } from '../../physics/units';
+import { brakeBoostMultiplier } from '../../physics/vessel/brakeAssist';
 
 export interface RouteNode {
   x: number;
@@ -163,15 +164,17 @@ export class Autopilot {
 
     if (st.mode === 'lander') {
       const lt = t.lander;
-      const aEng = lt.thrust * refG * massRatio; // one engine, px/s²
+      const up = { x: Math.sin(angle), y: -Math.cos(angle) };
+      // S10: the pilot knows its engines' brake assist (same multiplier the physics applies)
+      const boost = brakeBoostMultiplier(up, vel, lt);
+      const aEng = lt.thrust * refG * massRatio * boost; // one engine, px/s²
       let target = Math.atan2(Tx, -Ty);
       target = clamp(target, -0.5, 0.5);
-      const up = { x: Math.sin(angle), y: -Math.cos(angle) };
       const along = Tx * up.x + Ty * up.y;
       const base = clamp(along / (2 * aEng), 0, 1);
       // angular accel of one engine alone (rad/s²)
       const inertia = landerInertia(lt);
-      const alphaEng = (lt.thrust * pxToM(refG) * dryMass * pxToM(lt.engineOffset)) / inertia;
+      const alphaEng = (boost * lt.thrust * pxToM(refG) * dryMass * pxToM(lt.engineOffset)) / inertia;
       const alphaDes = 14 * (target - angle) - 7 * w;
       const diff = clamp(alphaDes / alphaEng, -1, 1);
       let dl = base + diff / 2;
@@ -222,7 +225,8 @@ export class Autopilot {
         }
         return f;
       }
-      const aMain = ct.thrust * refG * massRatio;
+      const up = { x: Math.sin(angle), y: -Math.cos(angle) };
+      const aMain = ct.thrust * refG * massRatio * brakeBoostMultiplier(up, vel, ct);
       const Tm = Math.hypot(Tx, Ty);
       let target = Math.atan2(Tx, -Ty);
       if (Tm < 0.05 * aMain) target = 0;
@@ -231,7 +235,6 @@ export class Autopilot {
       const sw = err * 5 - w * 1.2;
       if (sw > 0.35) f.rotateCW = true;
       else if (sw < -0.35) f.rotateCCW = true;
-      const up = { x: Math.sin(angle), y: -Math.cos(angle) };
       const along = Tx * up.x + Ty * up.y;
       const duty = Math.abs(err) < G_ALIGN ? clamp(along / aMain, 0, 1) : 0;
       this.accM += duty;

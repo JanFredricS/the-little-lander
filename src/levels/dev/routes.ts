@@ -29,6 +29,8 @@ export const hangarRunRoute: RouteNode[] = [
   { x: 5700, y: 500, speed: 120, tol: 25 },
   { x: 6120, y: 500, speed: 90, tol: 30 },
   { x: 6120, y: 1150, speed: 110, tol: 30 },
+  // S10: grab the final-bay canister on purpose (the pre-assist pilot only sagged into it)
+  { x: 6400, y: 1225, speed: 110, tol: 25 },
   { x: 6800, y: 1100, speed: 120 },
   { x: 7600, y: 1080, speed: 110 },
   { x: 7800, y: 1060, speed: 40, tol: 12, stop: true },
