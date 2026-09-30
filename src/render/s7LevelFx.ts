@@ -38,7 +38,7 @@ export const S7_DARKNESS: Record<string, { x0: number; x1: number; max: number; 
   vaults: {
     x0: 6600,
     x1: 13000,
-    max: 0.5,
+    max: 0.6,
     color: 0x02040a,
     glowSprites: ['prop.bioParticle', 'prop.glowPlant', 'prop.glowMushroom', 'prop.crystalCluster'],
   },
@@ -268,7 +268,7 @@ export class S7LevelFx {
     const k = this.darkness / d.max;
     for (const e of this.glowProps) {
       if (Math.abs(e.x - vx) > GLOW_RANGE) continue;
-      const r = Math.max(e.w, e.h) * (e.sprite === 'prop.bioParticle' ? 2.2 : 1.4);
+      const r = Math.max(e.w, e.h) * (e.sprite === 'prop.bioParticle' ? 1.5 : 1.4);
       const pulse = 0.8 + 0.2 * Math.sin(nowMs * 0.003 + e.x * 0.05);
       gl.circle(e.x, e.y, r).fill({ color: GLOW, alpha: 0.10 * k * pulse });
       gl.circle(e.x, e.y, r * 0.5).fill({ color: GLOW, alpha: 0.22 * k * pulse });

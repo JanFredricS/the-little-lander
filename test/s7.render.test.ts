@@ -81,8 +81,8 @@ describe('S7 render layer', () => {
     expect(start).toBeLessThan(0.02);
     expect(mid).toBeGreaterThan(start);
     expect(end).toBeGreaterThan(mid);
-    expect(end).toBeGreaterThanOrEqual(0.4);
-    expect(end).toBeLessThanOrEqual(0.55); // subtle: the route stays readable
+    expect(end).toBeGreaterThanOrEqual(0.5);
+    expect(end).toBeLessThanOrEqual(0.65); // browser-playtested cap: route stays readable
     // the live layer follows the vessel and draws glow halos
     const s = await LevelSession.create(vaults);
     expect(S7LevelFx.wanted(s)).toBe(true);
