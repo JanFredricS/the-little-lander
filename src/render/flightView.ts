@@ -10,7 +10,10 @@
  * boulders / collapse rubble / obj.debris*), rope (obj.ropeSegment tiled
  * along the sagging polyline), wind (fx.windStreak) are pooled sprites
  * (spritePool.ts: no per-frame allocation). Gravity zones are a faint tint
- * with chevrons drifting along the zone's gravity (culled to the view).
+ * with chevrons drifting along the zone's gravity. Every per-frame element
+ * (chevrons, beacon sites, pickups, radiation glow + pulse lines, debris,
+ * goo, rope segments) is culled to the view rect (+CULL_MARGIN) before it
+ * touches a pool or Graphics; the rope polyline is a reused scratch array.
  * Brittle rock is painted as cracks INTO the terrain chunks
  * (terrainTiles.ts), not here. Everything in world px; added to the
  * LevelView's world container.
@@ -23,7 +26,7 @@ import { getVesselAnchors, type EngineAnchor } from '../art/sprites/vessels';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
-import { ropePolyline } from './ropeLine';
+import { ropePolylineInto } from './ropeLine';
 import { SpritePool, SpriteTextures } from './spritePool';
 import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from './vesselFit';
 
@@ -35,6 +38,8 @@ const ANIM_MS = 140;
 const ROPE_STEP = 4;
 /** Gravity-zone chevron grid spacing (px). */
 const CHEVRON_GRID = 48;
+/** Off-view margin (px) kept when culling bodies, markers and rope. */
+const CULL_MARGIN = 32;
 
 function spriteOf(frame: SpriteFrame): Sprite {
   const s = new Sprite(Texture.from(frame.canvas as HTMLCanvasElement));
@@ -81,6 +86,13 @@ export class FlightView {
   private readonly wind: SpritePool;
   private readonly gravityZones: GravityZone[];
   private readonly debrisSprites: { small: [SpriteName, number]; large: [SpriteName, number] };
+  /** Rope polyline scratch (reused every frame). */
+  private readonly ropePts: Vec2[] = [];
+  /** This frame's cull rect in world px (view + CULL_MARGIN; infinite without a view origin). */
+  private cx0 = -Infinity;
+  private cy0 = -Infinity;
+  private cx1 = Infinity;
+  private cy1 = Infinity;
 
   constructor(
     private readonly session: LevelSession,
@@ -103,8 +115,17 @@ export class FlightView {
     this.over.addChild(markerLayer, bodyLayer, this.dynamic, this.heads, this.vessel, this.fx, windLayer);
   }
 
-  /** `o` = view origin (world px of the view's top-left), for culling. */
-  render(alpha: number, nowMs: number, o: Vec2 = { x: -1e9, y: -1e9 }): void {
+  /** `o` = view origin (world px of the view's top-left), for culling; null draws everything. */
+  render(alpha: number, nowMs: number, o: Vec2 | null = null): void {
+    if (o) {
+      this.cx0 = o.x - CULL_MARGIN;
+      this.cy0 = o.y - CULL_MARGIN;
+      this.cx1 = o.x + VIEW_WIDTH + CULL_MARGIN;
+      this.cy1 = o.y + VIEW_HEIGHT + CULL_MARGIN;
+    } else {
+      this.cx0 = this.cy0 = -Infinity;
+      this.cx1 = this.cy1 = Infinity;
+    }
     const s = this.session;
     const p = s.physics;
     const env = s.env;
@@ -117,11 +138,13 @@ export class FlightView {
     markers.begin();
     bodies.begin();
 
-    this.renderGravityZones(o, nowMs);
+    this.renderGravityZones(nowMs);
 
     // beacon sites (markers) + planted beacons
+    const zh = env.tuning.beacon.zoneHeight;
     for (const site of env.beacons.sites) {
       const e = site.entity;
+      if (!this.boxVisible(e.x - e.w / 2 - 16, e.y - zh - 12, e.x + e.w / 2 + 16, e.y + 16)) continue;
       const n = Math.max(1, Math.round(e.w / 32));
       const x0 = e.x - (n * 32) / 2 + 16;
       // unplanted: chevrons blink green; planted: dim pad with the beacon on it
@@ -129,17 +152,16 @@ export class FlightView {
       for (let i = 0; i < n; i++) markers.next('obj.beaconSite', f, x0 + i * 32, e.y);
       if (!site.planted) {
         // landing zone: a faint pulsing column with corner brackets
-        const zh = env.tuning.beacon.zoneHeight;
         const pulse = 0.5 + 0.5 * Math.sin(nowMs / 350);
         const l = e.x - e.w / 2;
-        g.rect(l, e.y - zh, e.w, zh).fill({ color: 0x60ff90, alpha: 0.08 + 0.07 * pulse });
-        for (const [x, w] of [
-          [l, 6],
-          [l + e.w - 6, 6],
-        ] as const) {
-          g.rect(x, e.y - zh, w, 1).fill({ color: 0x60ff90, alpha: 0.7 });
-          g.rect(x === l ? l : l + e.w - 1, e.y - zh, 1, 6).fill({ color: 0x60ff90, alpha: 0.7 });
-        }
+        const r = l + e.w;
+        const top = e.y - zh;
+        g.rect(l, top, e.w, zh).fill({ color: 0x60ff90, alpha: 0.08 + 0.07 * pulse });
+        // corner brackets (left, right)
+        g.rect(l, top, 6, 1).fill({ color: 0x60ff90, alpha: 0.7 });
+        g.rect(l, top, 1, 6).fill({ color: 0x60ff90, alpha: 0.7 });
+        g.rect(r - 6, top, 6, 1).fill({ color: 0x60ff90, alpha: 0.7 });
+        g.rect(r - 1, top, 1, 6).fill({ color: 0x60ff90, alpha: 0.7 });
       }
       if (site.planted) bodies.next('obj.beacon', anim, e.x, e.y);
       else if (site.hold > 0) {
@@ -151,6 +173,7 @@ export class FlightView {
     for (const pk of env.pickups.pickups) {
       if (pk.collected) continue;
       const e = pk.entity;
+      if (!this.visible(e.x, e.y, 24)) continue;
       const bob = Math.round(Math.sin(nowMs / 300 + e.x * 0.01) * 2);
       if (e.kind === 'orb') bodies.next('obj.orb', anim + (e.x | 0), e.x, e.y + bob);
       else {
@@ -166,6 +189,7 @@ export class FlightView {
       const c = env.radiation.charge(em, t);
       if (c <= 0.01) continue;
       const r = 24 + 60 * c;
+      if (!this.visible(em.spec.x, em.spec.y, r * 1.6 + 4)) continue;
       g.circle(em.spec.x, em.spec.y, r * 1.6).fill({ color: 0xfff0a0, alpha: 0.12 * c });
       g.circle(em.spec.x, em.spec.y, r).fill({ color: 0xfff0a0, alpha: 0.25 * c });
       const pulse = bodies.next('fx.radiationPulse', Math.floor(c * 3.99), em.spec.x, em.spec.y);
@@ -179,6 +203,7 @@ export class FlightView {
       const tr = p.getInterpolatedTransform(d.body, alpha);
       const x = mToPx(tr.x);
       const y = mToPx(tr.y);
+      if (!this.visible(x, y, d.radius * 2 + 4)) continue;
       if (d.burning) {
         const sp = bodies.next('obj.debrisBurning', anim, x, y);
         sp.scale.set(Math.max(0.6, (d.radius * 2) / 12));
@@ -192,7 +217,10 @@ export class FlightView {
     for (const b of env.goo.balls) {
       if (!p.hasBody(b.body)) continue;
       const tr = p.getInterpolatedTransform(b.body, alpha);
-      const sp = bodies.next('obj.goo', anim + (b.attached ? 2 : 0), mToPx(tr.x), mToPx(tr.y));
+      const gx = mToPx(tr.x);
+      const gy = mToPx(tr.y);
+      if (!this.visible(gx, gy, env.tuning.goo.radius * 2 + 4)) continue;
+      const sp = bodies.next('obj.goo', anim + (b.attached ? 2 : 0), gx, gy);
       sp.scale.set((env.tuning.goo.radius * 2) / 12);
       if (b.burn > 0) sp.tint = flicker ? 0xffb0a0 : 0xff7060;
       else if (b.attached) sp.tint = 0xd0b0e0;
@@ -214,15 +242,16 @@ export class FlightView {
         // Anchored: sags when reeled out past the chord, straight under tension.
         // Flying: paid out as it goes (taut).
         const len = gun.phase === 'anchored' ? (gun.length ?? 0) : 0;
-        const pts = ropePolyline({ x: mx, y: my }, gun.head, len);
+        const pts = ropePolylineInto(this.ropePts, mx, my, gun.head, len);
         this.rope(pts, tint);
         const head = this.headSprite(headCount++);
         head.position.set(gun.head.x, gun.head.y);
-        const prev = pts[pts.length - 2] ?? { x: mx, y: my };
+        const prev = pts[pts.length - 2]!; // ROPE_SEGMENTS + 1 >= 2 points
         head.rotation = Math.atan2(gun.head.x - prev.x, -(gun.head.y - prev.y));
       }
     }
-    this.heads.children.forEach((h, i) => (h.visible = i < headCount));
+    const heads = this.heads.children;
+    for (let i = 0; i < heads.length; i++) heads[i]!.visible = i < headCount;
     markers.end();
     bodies.end();
 
@@ -245,6 +274,9 @@ export class FlightView {
       const last = em.last;
       if (!last || t - last.at > PULSE_FLASH || !last.inRange) continue;
       const end = last.blockedAt ?? last.target;
+      const ex = em.spec.x;
+      const ey = em.spec.y;
+      if (!this.boxVisible(Math.min(ex, end.x), Math.min(ey, end.y), Math.max(ex, end.x), Math.max(ey, end.y))) continue;
       fx.moveTo(em.spec.x, em.spec.y).lineTo(end.x, end.y).stroke({ width: last.hit ? 3 : 1, color: last.hit ? 0xff4040 : 0x909090 });
     }
     // wind telegraph / gust streaks around the vessel
@@ -270,7 +302,21 @@ export class FlightView {
     this.over.destroy({ children: true });
   }
 
-  /** Tile obj.ropeSegment along the polyline (one sprite per 4 px). */
+  /** Is the circle (x, y, r) inside this frame's cull rect? */
+  private visible(x: number, y: number, r: number): boolean {
+    return x + r >= this.cx0 && x - r <= this.cx1 && y + r >= this.cy0 && y - r <= this.cy1;
+  }
+
+  /** Does the box [x0, x1] x [y0, y1] overlap this frame's cull rect? */
+  private boxVisible(x0: number, y0: number, x1: number, y1: number): boolean {
+    return x1 >= this.cx0 && x0 <= this.cx1 && y1 >= this.cy0 && y0 <= this.cy1;
+  }
+
+  /**
+   * Tile obj.ropeSegment along the polyline (one sprite per 4 px). Segments
+   * fully outside the cull rect are skipped (the sprite spacing carries on,
+   * so the visible part never shifts).
+   */
   private rope(pts: readonly Vec2[], tint: number): void {
     let carry = 0; // distance into the current segment where the next sprite starts
     for (let i = 1; i < pts.length; i++) {
@@ -280,6 +326,10 @@ export class FlightView {
       const dy = b.y - a.y;
       const l = Math.hypot(dx, dy);
       if (l < 1e-6) continue;
+      if (!this.boxVisible(Math.min(a.x, b.x), Math.min(a.y, b.y), Math.max(a.x, b.x), Math.max(a.y, b.y))) {
+        carry = carry < l ? carry + Math.ceil((l - carry) / ROPE_STEP) * ROPE_STEP - l : carry - l;
+        continue;
+      }
       const rot = Math.atan2(-dx, dy);
       let d = carry;
       for (; d < l; d += ROPE_STEP) {
@@ -291,15 +341,15 @@ export class FlightView {
     }
   }
 
-  /** Chevrons drifting along each gravity zone's pull, only in zones overlapping the view. */
-  private renderGravityZones(o: Vec2, nowMs: number): void {
+  /** Chevrons drifting along each gravity zone's pull, only where a zone overlaps the cull rect. */
+  private renderGravityZones(nowMs: number): void {
     const g = this.zoneFx.clear();
     for (const z of this.gravityZones) {
       const r = z.rect;
-      const vx0 = Math.max(r.x, o.x);
-      const vy0 = Math.max(r.y, o.y);
-      const vx1 = Math.min(r.x + r.w, o.x + VIEW_WIDTH);
-      const vy1 = Math.min(r.y + r.h, o.y + VIEW_HEIGHT);
+      const vx0 = Math.max(r.x, this.cx0);
+      const vy0 = Math.max(r.y, this.cy0);
+      const vx1 = Math.min(r.x + r.w, this.cx1);
+      const vy1 = Math.min(r.y + r.h, this.cy1);
       if (vx0 >= vx1 || vy0 >= vy1) continue;
       const gl = Math.hypot(z.gravity.x, z.gravity.y);
       if (gl < 1e-6) continue;

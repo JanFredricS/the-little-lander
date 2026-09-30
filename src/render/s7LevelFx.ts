@@ -61,9 +61,20 @@ const GLOW_RANGE = 1400;
 /** Keeper body frame period (ms) while idle. */
 const IDLE_FRAME_MS = 320;
 
-/** Boulder sprite for a rock of radius r (px), by nearest size. */
-function boulderFor(r: number): { name: SpriteName; size: number } {
-  return r <= 8 ? { name: 'prop.boulderSmall', size: 12 } : r <= 16 ? { name: 'prop.boulderMedium', size: 24 } : { name: 'prop.boulderLarge', size: 48 };
+/** Off-view margin (px) kept when culling rocks, chunks and ledges. */
+const CULL_MARGIN = 32;
+
+interface BoulderSprite {
+  readonly name: SpriteName;
+  readonly size: number;
+}
+const BOULDER_SMALL: BoulderSprite = { name: 'prop.boulderSmall', size: 12 };
+const BOULDER_MEDIUM: BoulderSprite = { name: 'prop.boulderMedium', size: 24 };
+const BOULDER_LARGE: BoulderSprite = { name: 'prop.boulderLarge', size: 48 };
+
+/** Boulder sprite for a rock of radius r (px), by nearest size (shared constants: no allocation). */
+function boulderFor(r: number): BoulderSprite {
+  return r <= 8 ? BOULDER_SMALL : r <= 16 ? BOULDER_MEDIUM : BOULDER_LARGE;
 }
 
 /** Scratch pose (px) reused by S7LevelFx.at(): no per-body allocation per frame. */
@@ -92,6 +103,13 @@ export class S7LevelFx {
   private readonly glowProps: StaticPropEntity[];
   /** Current darkness overlay alpha (0 = none). */
   darkness = 0;
+  /** This frame's cull rect in world px (view + CULL_MARGIN; infinite without a view origin). */
+  private cx0 = -Infinity;
+  private cy0 = -Infinity;
+  private cx1 = Infinity;
+  private cy1 = Infinity;
+  /** Wall-clock ms of the frame being drawn (drives shake()). */
+  private nowMs = 0;
 
   constructor(
     private readonly session: LevelSession,
@@ -118,14 +136,25 @@ export class S7LevelFx {
     return !!(s.rocks || s.crumble || s.killFront || s.keeper || S7_DARKNESS[session.spec.id]);
   }
 
-  /** `o` = view origin (world px of the view's top-left), for culling. */
-  render(alpha: number, nowMs: number, o: Vec2 = { x: 0, y: 0 }): void {
+  /** `o` = view origin (world px of the view's top-left), for culling; null draws everything. */
+  render(alpha: number, nowMs: number, o: Vec2 | null = null): void {
     const s = this.session;
     const sys = s.systems;
     const p = s.physics;
     const g = this.g.clear();
     this.pool.begin();
-    const shake = (amp: number) => (Math.sin(nowMs * 0.09) + Math.sin(nowMs * 0.057)) * 0.5 * amp;
+    this.nowMs = nowMs;
+    if (o) {
+      this.cx0 = o.x - CULL_MARGIN;
+      this.cy0 = o.y - CULL_MARGIN;
+      this.cx1 = o.x + VIEW_WIDTH + CULL_MARGIN;
+      this.cy1 = o.y + VIEW_HEIGHT + CULL_MARGIN;
+    } else {
+      this.cx0 = this.cy0 = -Infinity;
+      this.cx1 = this.cy1 = Infinity;
+    }
+    const ox = this.cx0 + CULL_MARGIN; // view left / top (for the collapse-front teeth + embers)
+    const oy = this.cy0 + CULL_MARGIN;
 
     this.renderDarkness(nowMs);
 
@@ -134,9 +163,10 @@ export class S7LevelFx {
       for (const c of sys.crumble.platforms) {
         if (c.gone || !c.body || !p.hasBody(c.body)) continue;
         const e = c.entity;
+        if (!this.boxVisible(e.x - e.w / 2 - 4, e.y - e.h / 2, e.x + e.w / 2 + 4, e.y + e.h / 2)) continue;
         const touched = c.touchedAt !== null;
         const k = touched ? Math.min(1, (s.simTime - c.touchedAt!) / Math.max(0.05, e.delaySec)) : 0;
-        const dx = touched ? shake(1 + 2 * k) : 0;
+        const dx = touched ? this.shake(1 + 2 * k) : 0;
         const x = e.x - e.w / 2 + dx;
         const y = e.y - e.h / 2;
         g.rect(x, y, e.w, e.h).fill(RUIN);
@@ -152,6 +182,7 @@ export class S7LevelFx {
       for (const ch of sys.crumble.chunks) {
         if (!p.hasBody(ch.body)) continue;
         const t = this.at(ch.body, alpha);
+        if (!this.visible(t.x, t.y, ch.size)) continue;
         const big = ch.size > 10;
         const sp = this.pool.next(big ? 'obj.debrisLarge' : 'obj.debrisSmall', 0, t.x, t.y);
         sp.scale.set(ch.size / (big ? 16 : 8));
@@ -166,13 +197,15 @@ export class S7LevelFx {
         const e = r.entity;
         const strain = Math.min(1, r.pull / Math.max(0.01, e.breakForce));
         const t = this.at(r.body, alpha);
-        const x = t.x + (strain > 0.3 ? shake(2 * strain) : 0);
+        if (!this.visible(t.x, t.y, e.radius + 4)) continue;
+        const x = t.x + (strain > 0.3 ? this.shake(2 * strain) : 0);
         this.rock(x, t.y, e.radius, t.angle);
         if (strain > 0.5) g.moveTo(x - e.radius * 0.6, t.y - e.radius).lineTo(x + e.radius * 0.6, t.y - e.radius).stroke({ width: 1, color: 0xffe0a0, alpha: strain - 0.4 });
       }
       for (const f of sys.rocks.falling) {
         if (!p.hasBody(f.body)) continue;
         const t = this.at(f.body, alpha);
+        if (!this.visible(t.x, t.y, f.radius)) continue;
         this.rock(t.x, t.y, f.radius, t.angle);
       }
     }
@@ -184,6 +217,7 @@ export class S7LevelFx {
       for (const piece of kp.pieces) {
         if (!p.hasBody(piece.body)) continue;
         const t = this.at(piece.body, alpha);
+        if (!this.visible(t.x, t.y, piece.radius)) continue;
         this.rock(t.x, t.y, piece.radius, t.angle);
       }
       const dead = b.mode === 'dead';
@@ -205,6 +239,7 @@ export class S7LevelFx {
         // tendrils: root on the body edge -> tip, glowing where the exhaust burns them
         for (const d of b.tendrils) {
           const root = b.root(d.rootAngle);
+          if (!this.boxVisible(Math.min(root.x, d.tip.x) - 8, Math.min(root.y, d.tip.y) - 8, Math.max(root.x, d.tip.x) + 8, Math.max(root.y, d.tip.y) + 8)) continue;
           const burn = Math.min(1, d.burn / Math.max(0.01, b.t.burnToBreak));
           const col = burn > 0.05 ? lerpColor(TENDRIL, TENDRIL_BURN, burn) : TENDRIL;
           const n = 8;
@@ -231,7 +266,7 @@ export class S7LevelFx {
         this.setSprite(this.eye, 'boss.keeperEye', winding ? 1 : 0);
         this.eye.position.set(0, 3);
         const dying = b.mode === 'dying';
-        this.keeper.position.set(b.pos.x + (dying ? shake(4) : 0), b.pos.y + (b.mode === 'stagger' ? shake(3) : 0));
+        this.keeper.position.set(b.pos.x + (dying ? this.shake(4) : 0), b.pos.y + (b.mode === 'stagger' ? this.shake(3) : 0));
         this.keeper.alpha = dying ? Math.max(0.15, 1 - b.modeTime / 3) : 1;
       }
     }
@@ -251,9 +286,9 @@ export class S7LevelFx {
           const dir = z.speed < 0 ? 1 : -1; // the kill side extends this way from the edge
           const y0 = dir > 0 ? edge : edge - depth;
           fg.rect(0, y0, w, depth).fill({ color: FRONT_DARK, alpha: 0.92 });
-          if (edge < o.y - 140 || edge > o.y + VIEW_HEIGHT + 140) continue; // edge off-screen: the fill is enough
-          const tx0 = Math.max(0, Math.floor((o.x - 16) / 16) * 16);
-          const tx1 = Math.min(w, o.x + VIEW_WIDTH + 16);
+          if (edge < oy - 140 || edge > oy + VIEW_HEIGHT + 140) continue; // edge off-screen: the fill is enough
+          const tx0 = Math.max(0, Math.floor((ox - 16) / 16) * 16);
+          const tx1 = Math.min(w, ox + VIEW_WIDTH + 16);
           for (let x = tx0; x < tx1; x += 16) {
             const tooth = 6 + 6 * Math.abs(Math.sin(x * 0.07 + nowMs * 0.004));
             fg.rect(x, edge - (dir > 0 ? tooth : 0), 16, tooth).fill({ color: FRONT_DARK, alpha: 0.92 });
@@ -262,7 +297,7 @@ export class S7LevelFx {
           // embers rising off it
           for (let i = 0; i < 24; i++) {
             const ex = (i * 173 + nowMs * 0.03 * (1 + (i % 3))) % w;
-            if (ex < o.x - 2 || ex > o.x + VIEW_WIDTH) continue;
+            if (ex < ox - 2 || ex > ox + VIEW_WIDTH) continue;
             const ey = edge - dir * (((nowMs * 0.05 + i * 37) % 120) + 4);
             fg.rect(ex, ey, 2, 2).fill({ color: FRONT_EDGE, alpha: 0.7 });
           }
@@ -307,6 +342,21 @@ export class S7LevelFx {
     this.over.destroy({ children: true });
   }
 
+  /** Is the circle (x, y, r) inside this frame's cull rect? */
+  private visible(x: number, y: number, r: number): boolean {
+    return x + r >= this.cx0 && x - r <= this.cx1 && y + r >= this.cy0 && y - r <= this.cy1;
+  }
+
+  /** Does the box [x0, x1] x [y0, y1] overlap this frame's cull rect? */
+  private boxVisible(x0: number, y0: number, x1: number, y1: number): boolean {
+    return x1 >= this.cx0 && x0 <= this.cx1 && y1 >= this.cy0 && y0 <= this.cy1;
+  }
+
+  /** Rumble offset (px) of amplitude `amp` for the frame being drawn. */
+  private shake(amp: number): number {
+    return (Math.sin(this.nowMs * 0.09) + Math.sin(this.nowMs * 0.057)) * 0.5 * amp;
+  }
+
   /** Interpolated pose of `body` in px, written into one reused scratch object. */
   private at(body: BodyHandle, alpha: number): PxPose {
     const t = this.session.physics.getInterpolatedTransform(body, alpha);
@@ -333,7 +383,11 @@ export class S7LevelFx {
 }
 
 function lerpColor(a: number, b: number, k: number): number {
-  const ch = (c: number, s: number) => (c >> s) & 0xff;
-  const mix = (s: number) => Math.round(ch(a, s) + (ch(b, s) - ch(a, s)) * k) << s;
-  return mix(16) | mix(8) | mix(0);
+  return mixChannel(a, b, k, 16) | mixChannel(a, b, k, 8) | mixChannel(a, b, k, 0);
+}
+
+function mixChannel(a: number, b: number, k: number, s: number): number {
+  const ca = (a >> s) & 0xff;
+  const cb = (b >> s) & 0xff;
+  return Math.round(ca + (cb - ca) * k) << s;
 }

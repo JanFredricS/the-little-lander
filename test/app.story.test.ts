@@ -14,8 +14,9 @@
  *  - the Pixi host;
  *  - (test 2 only) one LevelSpec patched through a getLevel wrapper;
  *  - LevelView, which records the session it is handed;
- *  - GameUi, which records screens, and whose `dispatch` option the test uses
- *    as the player's menu clicks;
+ *  - GameUi, which records screens. Menu clicks go through the REAL
+ *    screenModel + itemAction (src/ui/screens.ts), as GameUi.activate does;
+ *    only drawing and pointer handling are skipped;
  *  - the cutscene player, which records scripts; the test finishes each one;
  *  - FrameLoop, which the test ticks by hand;
  *  - the keyboard / pointer sources: the "keyboard" replays the map's
@@ -27,8 +28,10 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
-import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenAction, ScreenState } from '../src/contracts';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState } from '../src/contracts';
 import type { LevelSession } from '../src/game/session';
+import type { GameUiOptions } from '../src/ui/gameUi';
+import type { ScreenContext } from '../src/ui/screens';
 import { SaveStore, type StorageLike } from '../src/story/save';
 import { MIN_COMPLETION_FUEL, pilotFor, type Pilot } from './support/storyPilots';
 
@@ -44,7 +47,8 @@ const h = vi.hoisted(() => ({
   pilot: null as Pilot | null,
   tick: 0,
   loop: null as null | { step: () => void; render: (a: number) => void; paused: boolean },
-  uiDispatch: null as null | ((a: ScreenAction) => void),
+  /** The player's menu click on the current screen (real screenModel + itemAction, as GameUi.activate). */
+  click: null as null | ((itemId: string) => void),
   uiScreens: [] as string[],
   pending: null as PendingCutscene | null,
   levelsStarted: [] as LevelId[],
@@ -92,24 +96,51 @@ vi.mock('../src/render/levelView', () => ({
   },
 }));
 
-vi.mock('../src/ui/gameUi', () => ({
-  GameUi: class {
-    holdSimulation = false;
-    constructor(opts: { dispatch: (a: ScreenAction) => void }) {
-      h.uiDispatch = opts.dispatch;
-    }
-    enter(s: ScreenState) {
-      h.uiScreens.push(s.id);
-    }
-    setLoading() {}
-    onEvent() {}
-    levelStarted() {}
-    noteFrame() {}
-    tick() {}
-    render() {}
-    destroy() {}
-  },
-}));
+vi.mock('../src/ui/gameUi', async () => {
+  const screens = await import('../src/ui/screens');
+  return {
+    GameUi: class {
+      holdSimulation = false;
+      private state: ScreenState = { id: 'boot' };
+      constructor(private readonly o: GameUiOptions) {
+        h.click = (itemId) => this.activate(itemId);
+      }
+      /** Same context GameUi.ctx() builds (lastHull only affects results text). */
+      private ctx(): ScreenContext {
+        return {
+          levels: this.o.levels(),
+          save: this.o.save!(),
+          showDebug: !!this.o.showDebugLevels,
+          touchPref: 'auto',
+          lastHull: null,
+          ...(this.o.story ? { story: this.o.story() } : {}),
+        };
+      }
+      /** GameUi.activate() minus the drawing: the item must be on screen and enabled. */
+      private activate(itemId: string): void {
+        const model = screens.screenModel(this.state, this.ctx());
+        const item = model.items.find((i) => i.id === itemId);
+        expect(item, `${this.state.id}: no menu item '${itemId}' (${model.items.map((i) => i.id).join(', ')})`).toBeDefined();
+        expect(item!.enabled, `${this.state.id}: '${itemId}' disabled`).toBe(true);
+        const a = screens.itemAction(this.state, itemId, this.ctx());
+        if (!screens.isUiCommand(a)) this.o.dispatch(a);
+        else if (a.ui === 'continueStory') this.o.onContinueStory?.();
+        else throw new Error(`unexpected UI command ${a.ui}`);
+      }
+      enter(s: ScreenState) {
+        this.state = s;
+        h.uiScreens.push(s.id);
+      }
+      setLoading() {}
+      onEvent() {}
+      levelStarted() {}
+      noteFrame() {}
+      tick() {}
+      render() {}
+      destroy() {}
+    },
+  };
+});
 
 vi.mock('../src/story/cutscenePlayer', () => ({
   playCutscene: (_host: unknown, script: CutsceneScript, opts: { onDone: (skipped: boolean) => void }) => {
@@ -197,7 +228,7 @@ interface Run {
  * or level select comes back after the pick.
  */
 async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> {
-  Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, uiDispatch: null, pending: null });
+  Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null });
   h.uiScreens = [];
   h.levelsStarted = [];
   const save = new SaveStore(memoryStorage());
@@ -223,12 +254,12 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
     const s = r.app.state;
     switch (s.id) {
       case 'title':
-        h.uiDispatch!({ type: 'start' });
+        h.click!('start');
         break;
       case 'levelSelect':
         if (picked) return r;
         picked = true;
-        h.uiDispatch!({ type: 'selectLevel', levelId: 'hangarRun' });
+        h.click!('hangarRun');
         break;
       case 'playing': {
         if (!h.session || h.loop!.paused) break; // level still loading / inline cutscene
@@ -242,7 +273,7 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
       case 'results':
         expect(s.outcome, `${s.levelId}: ${JSON.stringify(s.outcome)}`).toMatchObject({ kind: 'complete' });
         r.fuel[s.levelId] = h.session!.state.fuel;
-        h.uiDispatch!({ type: 'continue' });
+        h.click!('next'); // results NEXT
         break;
       case 'cutscene':
         break; // App opens its player; handled on the next pass
