@@ -18,3 +18,13 @@ Format: slice · severity · finding · why parked.
   fixed pans only · fine unless S8 wants it.
 - S5 · low · Harpoon reel sound keyed to harpoonMissed (no ropeReeling
   event in contracts) · S8 may add the event.
+- S7 · low · Playtest visual notes: brittle zones draw as a flat orange
+  0.15-alpha rectangle over the full zone incl. open air (flightView.ts,
+  looks like debug art); fuel pickups are a flat yellow rectangle; map 6
+  jungle backdrop ends in an abrupt hard horizontal line (lilac/cream
+  bands) · parked for S8 visual pass (overlaps existing placeholder-shapes
+  residual).
+- S7 · low · s7Helpers.ts: s7Blob/s7Band/s7Noise seed differently from
+  kit's blobPoints/roughen (merging would change map 5-8 geometry);
+  s7Piece/s7Prop/s7Scatter/s7Notch/s7Profile have no kit equivalent ·
+  S8 dedup TODO in file.
