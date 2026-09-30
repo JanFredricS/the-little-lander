@@ -13,7 +13,8 @@
  *   8,800-9,800    beacon 2: a pocket between solid trees. Gusts 1.5 m/s².
  *   10,300-11,200  beacon 3: pad under an overhang (110 px headroom), fly
  *                  in from the open right side. Gusts 3 m/s².
- *   12,600         beacon 4: small swaying island (peak 13.5 px/s, well
+ *   12,600         beacon 4: small swaying island - the site rides it
+ *                  (runtime/islands.ts); peak 13.5 px/s, well
  *                  under the 24 px/s soft-land limit). Gusts 2.2 m/s².
  *   14,300-15,000  beacon 5: a 110 px vine-hung shaft, 500 px deep; the
  *                  shaft and the hover above it are sheltered, the approach
@@ -177,7 +178,8 @@ const entities: EntitySpec[] = [
   deco('glow3', 'prop.glowPlant', 10420, 1586, 18, 28),
   // ---- beacon 4: swaying islet
   { id: 'sway', kind: 'movingIsland', x: SWAY_X, y: SWAY_Y, outline: swayOutline, style: { material: 'soil', decorDensity: 0.3 }, path: swayPath, periodSec: 10, motion: 'pingpong' },
-  { id: 'site4', kind: 'beaconSite', x: SWAY_X + 20, y: SWAY_Y + 8, w: 90, holdSec: 2 },
+  // rides the islet (given at its rest pose; runtime/islands.ts moves it along)
+  { id: 'site4', kind: 'beaconSite', x: SWAY_X, y: SWAY_Y, w: 110, holdSec: 2 },
   // ---- beacon 5: the vine shaft
   vine('v10', SHAFT_L + 18, SHAFT_TOP + 4, 260),
   vine('v11', SHAFT_R - 18, SHAFT_TOP + 4, 340),

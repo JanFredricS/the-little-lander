@@ -15,6 +15,7 @@ import { crossingsAt, surfaceY } from '../src/levels/kit';
 import { LEVELS, resolveLevelParam } from '../src/levels/registry';
 import { CARRY_SEC, DragonBirdSequence, SEIZE_RADIUS } from '../src/levels/runtime/creatures';
 import { doorGap, REOPEN_AFTER_SEC } from '../src/levels/runtime/doors';
+import { siteRidesIsland } from '../src/levels/runtime/islands';
 import { islandOffset, islandPeakSpeed } from '../src/levels/runtime/paths';
 import { validateLevel } from '../src/levels/validate';
 import { resolveTuning } from '../src/physics/tuning';
@@ -113,11 +114,17 @@ describe('maps 1-4: objectives are reachable', () => {
     const islands = s.entities.filter((e): e is MovingIslandEntity => e.kind === 'movingIsland');
     for (const e of s.entities) {
       if (e.kind === 'beaconSite') {
-        // a site on a moving island is checked at the island's mid pose
-        const isl = islands.find((i) => Math.abs(i.x - e.x) < 80 && Math.abs(i.y - e.y) < 40);
-        const t = isl ? isl.periodSec / 4 : 0;
-        for (const dx of [0, -(e.w / 2 - 16), e.w / 2 - 16]) expect(onGround(s, e.x + dx, e.y, t), `${e.id} at dx ${dx}`).toBe(true);
-        expect(insideSolid(s, { x: e.x, y: e.y - 30 }, t), `${e.id} buried`).toBe(false);
+        // a site riding a moving island travels with it: check it at the
+        // start, both pingpong extremes and in between
+        const isl = islands.find((i) => siteRidesIsland(e, i));
+        const poses = isl ? [0, 0.25, 0.5, 0.75].map((k) => k * isl.periodSec) : [0];
+        for (const t of poses) {
+          const o = isl ? islandOffset(isl.path, isl.periodSec, isl.motion, t) : { x: 0, y: 0 };
+          const x = e.x + o.x;
+          const y = e.y + o.y;
+          for (const dx of [0, -(e.w / 2 - 16), e.w / 2 - 16]) expect(onGround(s, x + dx, y, t), `${e.id} at t ${t} dx ${dx}`).toBe(true);
+          expect(insideSolid(s, { x, y: y - 30 }, t), `${e.id} buried at t ${t}`).toBe(false);
+        }
       }
       if (e.kind === 'exitDock') {
         expect(insideSolid(s, { x: e.x, y: e.y - e.h / 2 }), `${e.id} region buried`).toBe(false);
@@ -132,6 +139,39 @@ describe('maps 1-4: objectives are reachable', () => {
     expect(sites).toHaveLength(5);
     expect(s.objectives).toContainEqual(expect.objectContaining({ kind: 'plantBeacons', count: 5, siteIds: sites }));
     expect(s.objectives).toContainEqual(expect.objectContaining({ kind: 'reachExit' }));
+  });
+
+  it('the swaying-island beacon zone follows the island in a live session (spec untouched)', async () => {
+    const s = spec('floatingIsles');
+    const specSite = s.entities.find((e) => e.id === 'site4')!;
+    const isl = s.entities.find((e): e is MovingIslandEntity => e.kind === 'movingIsland')!;
+    expect(siteRidesIsland(specSite as never, isl)).toBe(true);
+    const session = await LevelSession.create(s);
+    const site = session.env.beacons.sites.find((x) => x.entity.id === 'site4')!;
+    const idle = { thrust: false, engineLeft: false, engineRight: false, rotateCW: false, rotateCCW: false, aim: { x: 0, y: 0 }, aimTarget: null, fire: false, release: false, reelIn: false, reelOut: false, pause: false };
+    const extremes: Vec2[] = [];
+    for (let k = 0; k < Math.round((isl.periodSec / 2) * 60); k++) {
+      // hover in place (bang-bang on vertical speed) so the session outlives half a period
+      session.step({ ...idle, thrust: session.vessel.state().vel.y > 0 });
+      expect(session.outcome).toBeNull();
+      const o = islandOffset(isl.path, isl.periodSec, isl.motion, session.simTime);
+      expect(site.entity.x).toBeCloseTo(specSite.x + o.x, 5);
+      expect(site.entity.y).toBeCloseTo(specSite.y + o.y, 5);
+      extremes.push({ x: site.entity.x, y: site.entity.y });
+    }
+    // it really travelled to the far extreme of the path
+    const last = extremes[extremes.length - 1]!;
+    expect(last.x - specSite.x).toBeCloseTo(isl.path[1]!.x, 0);
+    expect(last.y - specSite.y).toBeCloseTo(isl.path[1]!.y, 0);
+    // a vessel standing on the pad's ends at that extreme is in the zone
+    const zoneH = session.tuning.beacon.zoneHeight;
+    for (const dx of [-(site.entity.w / 2 - 12), 0, site.entity.w / 2 - 12]) {
+      expect(session.env.beacons.inZone(site.entity, { x: last.x + dx, y: last.y - 16 })).toBe(true);
+    }
+    expect(session.env.beacons.inZone(site.entity, { x: last.x, y: last.y - zoneH - 5 })).toBe(false);
+    // the registry's spec is never mutated
+    expect(specSite).toMatchObject({ x: 12600, y: 1350 });
+    session.destroy();
   });
 
   it('moving islands move slower than the soft-landing limit', () => {

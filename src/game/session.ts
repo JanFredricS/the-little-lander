@@ -81,6 +81,7 @@ export class LevelSession {
       triggerContext: (p) => this.env.triggerContext(p),
       requestModeSwitch: (m) => this.requestModeSwitch(m),
       crashVessel: (cause) => this.vessel.crash(cause),
+      beaconSites: this.env.beacons.sites,
     });
     this.modeSwitchLatch = spec.modeSwitch ? new TriggerLatch(spec.modeSwitch.trigger) : null;
     this.camera = new Camera({

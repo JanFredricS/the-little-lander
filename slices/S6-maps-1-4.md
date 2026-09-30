@@ -1,5 +1,8 @@
 # S6 — Maps 1–4 (Hangar, Descent, Floating Isles, The Throat)
 
+> Note: terrain tile pass orchestrator-approved (terrain rendering replaced
+> by the tiled pass on orchestrator instruction; ratified in the Codex audit).
+
 Requires S1 (physics) + S2 (art) merged. Lives in `src/levels/` + tests.
 Real side-scroller lengths (PLAN.md story section has full descriptions):
 
