@@ -35,6 +35,14 @@
  *  - pit roof dips widened (the pod could wedge against a steep dip wall);
  *  - camp dock 520 px wide: an overshooting swing still lands in camp;
  *  - brittle anchors 1.4 s (1.0 s left no time to pick the next anchor).
+ * Darkness (audit cycle 1, drawn by src/render/s7LevelFx.ts S7_DARKNESS):
+ * a world-covering near-black overlay whose alpha smoothsteps from 0 at
+ * x 6600 (Section B start) to 0.5 at x 13000 and holds through the camp;
+ * glow plants / mushrooms / crystals / spores within 1400 px of the pod get
+ * an additive cyan halo (alpha up to ~0.1 outer / 0.22 core, scaled by the
+ * darkness) so they punch through. Max 0.5 is a deliberate cap so roof,
+ * chasm edges and brittle markers stay readable (not yet eyeballed in a
+ * browser; retune S7_DARKNESS.vaults.max if it reads too dark/light).
  * Two harpoon-rig bugs were found and fixed here (roped pods fell through
  * terrain; the winch crushed pods into rock) — see src/physics/vessel/harpoonRig.ts.
  */

@@ -1,7 +1,7 @@
 /**
  * S7 render layer smoke test: S7LevelFx draws every S7 system's state
  * (Keeper + tendrils + sweep telegraph, rocks, slam debris, crumbling ledges,
- * the collapse front, S7 gates) frame after frame of a real piloted run
+ * the collapse front, map 5 darkness) frame after frame of a real piloted run
  * without throwing. Pixi Graphics works headless; sprite textures (which
  * need a real canvas) are stubbed.
  */
@@ -12,8 +12,9 @@ import type { ArtApi, LevelSpec } from '../src/contracts';
 import { LevelSession } from '../src/game/session';
 import { keeper } from '../src/levels/keeper';
 import { MADDASH_ROUTE, madDash } from '../src/levels/madDash';
-import { vaults } from '../src/levels/vaults';
-import { S7LevelFx } from '../src/render/s7LevelFx';
+import { testpad } from '../src/levels/testpad';
+import { VAULTS_SECTION_B, vaults } from '../src/levels/vaults';
+import { S7LevelFx, s7DarknessAt } from '../src/render/s7LevelFx';
 import type { Pilot } from './support/s7Harness';
 import { keeperPilot, landerDashPilot } from './support/s7Pilots';
 
@@ -72,8 +73,31 @@ describe('S7 render layer', () => {
     expect(closing).toBe(true);
   });
 
-  it('is not built for levels without S7 systems', async () => {
+  it('map 5 darkness deepens through Section B (overlay alpha start vs end)', async () => {
+    const start = s7DarknessAt(vaults, VAULTS_SECTION_B);
+    const mid = s7DarknessAt(vaults, (VAULTS_SECTION_B + 13300) / 2);
+    const end = s7DarknessAt(vaults, 13300);
+    expect(s7DarknessAt(vaults, 3000)).toBe(0); // section A untouched
+    expect(start).toBeLessThan(0.02);
+    expect(mid).toBeGreaterThan(start);
+    expect(end).toBeGreaterThan(mid);
+    expect(end).toBeGreaterThanOrEqual(0.4);
+    expect(end).toBeLessThanOrEqual(0.55); // subtle: the route stays readable
+    // the live layer follows the vessel and draws glow halos
     const s = await LevelSession.create(vaults);
+    expect(S7LevelFx.wanted(s)).toBe(true);
+    const fx = new S7LevelFx(s, art);
+    fx.render(0, 0);
+    expect(fx.darkness).toBe(s7DarknessAt(vaults, s.state.pos.x));
+    (s.state.pos as { x: number }).x = 13000;
+    fx.render(0, 0);
+    expect(fx.darkness).toBeCloseTo(end, 5);
+    fx.destroy();
+    s.destroy();
+  });
+
+  it('is not built for levels without S7 systems', async () => {
+    const s = await LevelSession.create(testpad);
     expect(S7LevelFx.wanted(s)).toBe(false);
     s.destroy();
   });

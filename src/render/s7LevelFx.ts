@@ -2,8 +2,11 @@
  * S7 render layer for the level-owned systems (src/levels/systems, S7):
  * the Keeper (S2 boss sprites + tendrils + the sweep telegraph line), loose
  * rocks hanging / falling, slam debris, crumbling ledges and their chunks,
- * and the collapse front (map 8). Terrain and blast doors are NOT drawn here
- * (S6's TerrainView / EntityView own them).
+ * and the collapse front (map 8), plus map 5's deepening darkness (a
+ * darkening pass whose alpha follows the vessel's x-progress through
+ * Section B, with an additive glow per bioluminescent prop punching through;
+ * tuning in S7_DARKNESS / the vaults.ts header). Terrain and blast doors are
+ * NOT drawn here (S6's TerrainView / EntityView own them).
  *
  * Hooked into LevelView with two containers (under / over) and one render
  * call — a minimal S7 hook. Rocks / ledges / front are placeholder shapes
@@ -11,7 +14,7 @@
  */
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
-import type { ArtApi, SpriteName, ThemeId } from '../contracts';
+import type { ArtApi, LevelSpec, SpriteName, StaticPropEntity, ThemeId } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 
@@ -25,6 +28,33 @@ const TELEGRAPH = 0xffd040;
 const TELEGRAPH_LOCKED = 0xff4030;
 const TENDRIL = 0x7a3aa8;
 const TENDRIL_BURN = 0xff8a30;
+
+/**
+ * Progress-driven darkness per level id: alpha ramps (smoothstep) from 0 at
+ * x0 to max at x1 and holds. Glow sprites punch through with an additive halo.
+ */
+export const S7_DARKNESS: Record<string, { x0: number; x1: number; max: number; color: number; glowSprites: SpriteName[] }> = {
+  // map 5 (The Vaults): Section B = x 6600..13300; the camp (x ~13650) keeps full darkness
+  vaults: {
+    x0: 6600,
+    x1: 13000,
+    max: 0.5,
+    color: 0x02040a,
+    glowSprites: ['prop.bioParticle', 'prop.glowPlant', 'prop.glowMushroom', 'prop.crystalCluster'],
+  },
+};
+
+/** Darkness overlay alpha for a vessel at world x (0 when the level has no darkness pass). */
+export function s7DarknessAt(spec: LevelSpec, x: number): number {
+  const d = S7_DARKNESS[spec.id];
+  if (!d) return 0;
+  const k = Math.min(1, Math.max(0, (x - d.x0) / (d.x1 - d.x0)));
+  return d.max * k * k * (3 - 2 * k);
+}
+
+const GLOW = 0x8affd8;
+/** Glow halos are drawn only for props within this distance of the vessel. */
+const GLOW_RANGE = 1400;
 
 /** Keeper body frame period (ms) while idle. */
 const IDLE_FRAME_MS = 320;
@@ -41,6 +71,11 @@ export class S7LevelFx {
   private readonly eye = new Sprite(Texture.EMPTY);
   private readonly textures = new Map<string, Texture>();
   private readonly theme: ThemeId;
+  private readonly dark = new Graphics();
+  private readonly glow = new Graphics();
+  private readonly glowProps: StaticPropEntity[];
+  /** Current darkness overlay alpha (0 = none). */
+  darkness = 0;
 
   constructor(
     private readonly session: LevelSession,
@@ -49,13 +84,18 @@ export class S7LevelFx {
     this.theme = session.spec.themeId;
     this.keeper.addChild(this.body, this.eye);
     this.keeper.visible = false;
-    this.over.addChild(this.g, this.keeper, this.front);
+    this.glow.blendMode = 'add';
+    this.over.addChild(this.dark, this.glow, this.g, this.keeper, this.front);
+    const d = S7_DARKNESS[session.spec.id];
+    this.glowProps = d
+      ? session.spec.entities.filter((e): e is StaticPropEntity => e.kind === 'staticProp' && d.glowSprites.includes(e.sprite))
+      : [];
   }
 
   /** Does this level have anything for this layer to draw? */
   static wanted(session: LevelSession): boolean {
     const s = session.systems;
-    return !!(s.rocks || s.crumble || s.killFront || s.keeper);
+    return !!(s.rocks || s.crumble || s.killFront || s.keeper || S7_DARKNESS[session.spec.id]);
   }
 
   render(alpha: number, nowMs: number): void {
@@ -68,6 +108,8 @@ export class S7LevelFx {
       return { x: mToPx(t.x), y: mToPx(t.y), angle: t.angle };
     };
     const shake = (amp: number) => (Math.sin(nowMs * 0.09) + Math.sin(nowMs * 0.057)) * 0.5 * amp;
+
+    this.renderDarkness(nowMs);
 
     // ---- crumbling ledges + chunks
     if (sys.crumble) {
@@ -205,6 +247,31 @@ export class S7LevelFx {
           fg.rect(edge - 1, 0, 2, h).fill({ color: FRONT_EDGE, alpha: 0.8 });
         }
       }
+    }
+  }
+
+  /**
+   * Deepening darkness: one world-covering dark rect (cheap, camera-proof)
+   * whose alpha follows the vessel's x-progress, then an additive halo per
+   * nearby glow prop so the bioluminescence reads brighter as it gets darker.
+   */
+  private renderDarkness(nowMs: number): void {
+    const dk = this.dark.clear();
+    const gl = this.glow.clear();
+    const d = S7_DARKNESS[this.session.spec.id];
+    if (!d) return;
+    const vx = this.session.state.pos.x;
+    this.darkness = s7DarknessAt(this.session.spec, vx);
+    if (this.darkness <= 0.001) return;
+    const { w, h } = this.session.spec.worldSize;
+    dk.rect(-2000, -2000, w + 4000, h + 4000).fill({ color: d.color, alpha: this.darkness });
+    const k = this.darkness / d.max;
+    for (const e of this.glowProps) {
+      if (Math.abs(e.x - vx) > GLOW_RANGE) continue;
+      const r = Math.max(e.w, e.h) * (e.sprite === 'prop.bioParticle' ? 2.2 : 1.4);
+      const pulse = 0.8 + 0.2 * Math.sin(nowMs * 0.003 + e.x * 0.05);
+      gl.circle(e.x, e.y, r).fill({ color: GLOW, alpha: 0.10 * k * pulse });
+      gl.circle(e.x, e.y, r * 0.5).fill({ color: GLOW, alpha: 0.22 * k * pulse });
     }
   }
 
