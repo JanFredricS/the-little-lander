@@ -15,7 +15,8 @@
  *  5. The chimney (3,700-400): a narrow winding chimney under a debris rain,
  *     then the crust and the hole to the sky (exitDock, no landing needed).
  *
- * The front rises at 80 px/s from 3 s in and never trails more than 600 px
+ * The front rises at 80 px/s from the moment you lift off (120 px above the
+ * floor; reading the controls card is safe) and never trails more than 600 px
  * behind you (LEVEL_SYSTEM_OPTIONS.madDash maxLag: stopping always costs),
  * so the whole climb must average better than 80 px/s. Crumbling ledges
  * (perches in the bend pockets, never across the line) collapse 0.8 s after
@@ -30,9 +31,10 @@
  * landerDashPilot: engineLeft/engineRight taps only, a velocity + tilt loop
  * along MADDASH_ROUTE, no knowledge of the gates beyond the line):
  *  - Final tuning: climbs at 88-125 px/s all finish, in 81-115 s, hull
- *    intact, the front never closer than 280-340 px (the tightest moment is
- *    the lift-off; afterwards the lead grows to the 600 px cap), 0.55-0.8
- *    tank left. A pilot barely faster than the front is caught
+ *    intact, the front never closer than ~210 px (the tightest moment is
+ *    the lift-off; afterwards the lead grows to the 600 px cap), 0.7-0.8
+ *    tank left. Browser check: the level loads, the front appears on
+ *    lift-off and swallows a lander that sits in the hall. A pilot barely faster than the front is caught
  *    (test/s7.levels.test.ts), and a very aggressive lateral gain slams the
  *    wall on a gate side-switch and is caught — the intended failure mode.
  *  - What the pass changed (first cut: 0 of 6 pilot variants finished):
@@ -46,7 +48,8 @@
  *     - gates at 5 / 4.5 / 4 s from 360 px clipped the lander at 100 px/s ->
  *       7 / 6.5 / 6 s from 300 px (gap >= 160 px at 100 px/s, >= 120 at 80);
  *     - the front (75 px/s, 700 px lag, from 4 s) never came closer than
- *       420 px -> 80 px/s, 600 px, from 3 s and 60 px under the floor;
+ *       420 px -> 80 px/s, 600 px, from 90 px under the floor at lift-off
+ *       (a 3 s timer crushed a browser player still reading the card);
  *       burnSeconds 110 -> 95 (two 0.25 canisters on the way).
  */
 
@@ -255,7 +258,7 @@ const decor: EntitySpec[] = [
   ...[9000, 7000, 5000, 3000, 1200].map((y, i) => s7Prop(`ember${i}`, 'prop.emberDebris', centre(y) + (i % 2 ? 80 : -80), y, 12, 12)),
 ];
 
-const zones: ZoneSpec[] = [{ kind: 'killFront', id: 'collapse', axis: 'y', start: FLOOR_Y + 60, speed: -80, activate: { kind: 'time', atSec: 3 } }];
+const zones: ZoneSpec[] = [{ kind: 'killFront', id: 'collapse', axis: 'y', start: FLOOR_Y + 90, speed: -80, activate: { kind: 'enterRegion', rect: { x: 0, y: FLOOR_Y - 200, w: W, h: 80 } } }];
 
 export const madDash: LevelSpec = {
   id: 'madDash',

@@ -282,10 +282,10 @@ describe('map 8 — The Mad Dash', () => {
     let pos = front.start;
     let active = false;
     let worst = Infinity;
-    const at = front.activate?.kind === 'time' ? front.activate.atSec : 0;
+    const act = front.activate;
     const step = (p: Vec2, dt: number) => {
       t += dt;
-      if (!active && t >= at) active = true;
+      if (!active) active = !act || act.kind === 'start' || (act.kind === 'time' ? t >= act.atSec : act.kind === 'enterRegion' ? p.y <= act.rect.y + act.rect.h && p.y >= act.rect.y - 200 : false);
       if (!active) return;
       pos += front.speed * dt;
       const ahead = aheadOfFront(front, pos, p);
