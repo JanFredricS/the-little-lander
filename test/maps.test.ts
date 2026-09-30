@@ -85,6 +85,20 @@ describe('maps 1-4: specs', () => {
     expect(r.gravityTo.y).toBeCloseTo(1.2 * 9.8);
   });
 
+  it('map 1 stays gentle (S9): low spin-grav and softer lander thrust, so speed builds slowly', () => {
+    const s = spec('hangarRun');
+    const g = Math.hypot(s.gravity.x, s.gravity.y) / 9.8;
+    expect(g).toBeGreaterThanOrEqual(0.28);
+    expect(g).toBeLessThanOrEqual(0.32);
+    const t = resolveTuning(s.physicsOverrides).lander;
+    expect(t.thrust).toBeLessThan(resolveTuning().lander.thrust);
+    // both engines must still climb with a real margin (lift shaft), one engine must not hover alone
+    expect(2 * t.thrust - 1).toBeGreaterThanOrEqual(0.45);
+    expect(t.thrust).toBeLessThan(1);
+    // net climb accel (m/s²) well below S8's 0.4 g x (1.6 - 1)
+    expect((2 * t.thrust - 1) * g * 9.8).toBeLessThan(0.7 * 0.4 * 9.8 * 0.6);
+  });
+
   it('get harder: crash / damage limits tighten from map 1 to map 4', () => {
     const t1 = resolveTuning(spec('hangarRun').physicsOverrides);
     const t4 = resolveTuning(spec('throat').physicsOverrides);
