@@ -342,7 +342,9 @@ function core(pal: Palette): BackdropLayerPix[] {
     const top = Math.round(prof[Math.floor(x) % W]!) + 4;
     wrapped((dx) => waterfall(far, x + dx, top, 5, FH - top, [9, 10, 14], 0, 55 + i));
   }
-  far.apply((x, y, c) => (c !== 0 && bayer(x, y) < 0.3 - (y / H) * 0.2 ? 12 : -1));
+  // highlight dither thins out over the WHOLE extended layer and reaches zero
+  // at its bottom row (inside the mist band): no row where the dots stop dead
+  far.apply((x, y, c) => (c !== 0 && bayer(x, y) < 0.3 * (1 - y / FH) ? 12 : -1));
   const MIST = 110;
   far.apply((x, y, c) => {
     if (c === 0 || y < FH - MIST) return -1;
