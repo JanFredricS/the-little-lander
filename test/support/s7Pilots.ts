@@ -9,6 +9,7 @@ import type { InputFrame, Vec2 } from '../../src/contracts';
 import type { LevelSession } from '../../src/game/session';
 import { castSolid } from '../../src/physics/tags';
 import { mToPx, vMToPx, vPxToM } from '../../src/physics/units';
+import { HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS } from '../../src/levels/hollow';
 import { frame, type Pilot } from './s7Harness';
 
 export interface AnchorPick {
@@ -591,4 +592,13 @@ export function landerDashPilot(o: DashPilotOptions): Pilot {
     o.log?.push({ tilt, duty });
     return f;
   };
+}
+
+/** Thrust-only line through the on-route orbs (no rope). cover: hide in the nearest shelter while the sun charges. */
+export function hollowPilot(o: { vmax?: number; cover?: boolean } = {}) {
+  const orbs = HOLLOW_ORBS.filter((e) => !e.id.startsWith('orbBonus')).map((e) => ({ x: e.x, y: e.y }));
+  const orbSet = new Set(orbs);
+  const path = [...HOLLOW_ROUTE.filter((p) => !orbs.some((q) => Math.abs(q.x - p.x) < 80)), ...orbs].sort((a, b) => a.x - b.x);
+  path.push({ x: 15900, y: 1430 });
+  return thrustPilot({ path, precise: (p) => orbSet.has(p), vmax: o.vmax, ...(o.cover ? { shelters: HOLLOW_SHELTERS, shelterReach: 400 } : {}) });
 }

@@ -6,12 +6,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { HOLLOW_ORBS, HOLLOW_ROUTE, HOLLOW_SHELTERS, hollow } from '../src/levels/hollow';
+import { hollow } from '../src/levels/hollow';
 import { keeper } from '../src/levels/keeper';
 import { MADDASH_ROUTE, madDash } from '../src/levels/madDash';
 import { vaults } from '../src/levels/vaults';
 import { runPilot } from './support/s7Harness';
-import { harpoonPilot, keeperPilot, landerDashPilot, thrustPilot } from './support/s7Pilots';
+import { harpoonPilot, hollowPilot, keeperPilot, landerDashPilot } from './support/s7Pilots';
 
 describe('S7 playtests (autopilot completes the map)', () => {
   it('map 5 — The Vaults: hand-over-hand to the camp', { timeout: 120_000 }, async () => {
@@ -76,12 +76,3 @@ describe('S7 playtests (autopilot completes the map)', () => {
     }
   });
 });
-
-/** Thrust-only line through the on-route orbs (no rope). cover: hide in the nearest shelter while the sun charges. */
-export function hollowPilot(o: { vmax?: number; cover?: boolean } = {}) {
-  const orbs = HOLLOW_ORBS.filter((e) => !e.id.startsWith('orbBonus')).map((e) => ({ x: e.x, y: e.y }));
-  const orbSet = new Set(orbs);
-  const path = [...HOLLOW_ROUTE.filter((p) => !orbs.some((q) => Math.abs(q.x - p.x) < 80)), ...orbs].sort((a, b) => a.x - b.x);
-  path.push({ x: 15900, y: 1430 });
-  return thrustPilot({ path, precise: (p) => orbSet.has(p), vmax: o.vmax, ...(o.cover ? { shelters: HOLLOW_SHELTERS, shelterReach: 400 } : {}) });
-}
