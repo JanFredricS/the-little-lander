@@ -1,5 +1,7 @@
 # S8 — Integration, hardening, polish
 
+> orchestrator note: browser/mobile/live-deploy acceptance verified by orchestrator-run live playtest agents + post-merge live-site check, not by in-repo tests.
+>
 > orchestrator-pre-approved amendment: `PhysicsApi.bodyContacts(h): BodyContact[]`
 > (+ `BodyContact` / `BodyContactPoint` types) added to src/contracts/physics.ts.
 > It was a physics-local extension (src/physics/contactData.ts) with a
