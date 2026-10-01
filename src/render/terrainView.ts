@@ -5,28 +5,37 @@
  * view moves. Chunks that touch no terrain cost nothing. Works for every
  * level (maps 1-8, debug levels) with no per-level code.
  *
- * Frame budget (stutter round 2, profiled on descent at speed: the old
- * whole-chunk painter spent up to ~30 ms of one frame painting + uploading):
- * - Chunks are painted in TERRAIN_BAND_ROWS-row bands, TERRAIN_PAINT_BUDGET_MS
- *   per frame, nearest-to-the-predicted-view first.
- * - A finished chunk is uploaded (texture.source.update + shown) on a LATER
- *   frame than its last band, at most TERRAIN_UPLOADS_PER_FRAME per frame,
- *   so paint and GPU upload never stack in one frame.
+ * Frame budget (stutter rounds 2-3, profiled on descent at speed):
+ * - Chunks are painted in TERRAIN_BAND_ROWS-row bands within a per-frame
+ *   budget: TERRAIN_PAINT_BUDGET_MS normally, rising to
+ *   TERRAIN_PAINT_BUDGET_MAX_MS while the backlog would not finish in
+ *   TERRAIN_CATCHUP_FRAMES at the base budget or something on screen is
+ *   unfinished. A band is only started when the measured band cost still
+ *   fits the budget (the first band of a frame always runs).
+ * - In steady flight NOTHING bypasses that budget. An on-screen chunk that
+ *   is not ready (the look-ahead lost the race: very slow canvas, extreme
+ *   speed) is painted first, band by band from the side facing the view,
+ *   and re-uploaded as it fills (at most TERRAIN_VISIBLE_UPLOADS_PER_FRAME
+ *   per frame): a few frames of late fill instead of a 100+ ms frame
+ *   (round 3: synchronous finishing of late chunks measured 130 ms PAINT
+ *   hitches on a slow Mac canvas). Counted in lateChunks.
+ * - Off-screen, a finished chunk is uploaded (texture.source.update +
+ *   shown) on a LATER frame than its last band, at most
+ *   TERRAIN_UPLOADS_PER_FRAME per frame, so paint and upload never stack.
  * - The prepare area is the view plus a MARGIN ring, extended up to
  *   TERRAIN_MAX_LEAD chunks in the camera's direction of travel (lead =
- *   TERRAIN_LEAD_MS of camera motion), so budgeted work finishes before a
- *   chunk scrolls in even at max descent speed.
- * - Exceptions to the two rules above, all counted (syncUploadsLastUpdate):
+ *   TERRAIN_LEAD_MS of camera motion), so chunks are normally finished
+ *   before they scroll in.
+ * - Exceptions (synchronous, counted in syncUploadsLastUpdate):
  *   . LEVEL LOAD - the first update prepares the whole area at once
  *     (painted + uploaded in that frame; the load screen hides it).
- *   . CAMERA JUMP (restart / teleport: a move of more than a view in one
- *     update) - the new on-screen chunks are painted + uploaded at once,
- *     the rest of the area streams as usual. Counted in jumpUpdates.
- *   . LATE - in steady flight, an on-screen chunk that is still painting OR
- *     painted-but-not-uploaded is finished + shown at once (terrain must not
- *     be missing from the screen). Counted in lateChunks: the look-ahead
- *     keeps this at 0 in normal flight, so the invariants hold whenever it
- *     reads 0.
+ *   . CAMERA JUMP - the view lands outside the area prepared last update
+ *     (whatever the velocity: nothing there was even opened), or a view or
+ *     more away from where its velocity predicted (restart, teleport), or a
+ *     view or more away after a stall (> STALL_MS). A long frame at speed
+ *     that stays inside the prepared area is NOT a jump. The new on-screen
+ *     chunks are painted + uploaded at once, the rest of the area streams
+ *     as usual. Counted in jumpUpdates.
  * - Culled chunks return their canvas + texture + sprite to a free list and
  *   are repainted in place: same-size re-uploads, no canvas / GPU texture
  *   allocation churn while scrolling.
@@ -41,19 +50,29 @@ export const TERRAIN_CHUNK = 256;
 const CHUNK = TERRAIN_CHUNK;
 /** Chunks kept around the visible ones on every side (pre-painted before they scroll in). */
 const MARGIN = 1;
-/** Rows per paint band (a 256 px chunk = 4 bands). */
-export const TERRAIN_BAND_ROWS = 64;
+/** Rows per paint band (a 256 px chunk = 8 bands): the smallest unit of paint work in a frame. */
+export const TERRAIN_BAND_ROWS = 32;
 const BANDS = CHUNK / TERRAIN_BAND_ROWS;
-/** Per-frame time budget (ms) for off-screen band painting; at least one band always runs. */
+/** Per-frame band painting budget (ms) when keeping up; at least one band always runs. */
 export const TERRAIN_PAINT_BUDGET_MS = 2;
+/** Per-frame budget ceiling (ms) while catching up (backlog, or unfinished terrain on screen). */
+export const TERRAIN_PAINT_BUDGET_MAX_MS = 6;
+/** The budget rises so the current backlog would finish within this many frames. */
+export const TERRAIN_CATCHUP_FRAMES = 30;
 /** Finished off-screen chunks uploaded + shown per frame at most. */
 export const TERRAIN_UPLOADS_PER_FRAME = 2;
+/** On-screen chunks (re-)uploaded per frame at most while they fill in late. */
+export const TERRAIN_VISIBLE_UPLOADS_PER_FRAME = 4;
 /** Look-ahead: the prepare area extends this much camera motion (ms) ahead... */
-export const TERRAIN_LEAD_MS = 900;
+export const TERRAIN_LEAD_MS = 1200;
 /** ...capped at this many extra chunks in the direction of travel. */
-export const TERRAIN_MAX_LEAD = 3;
+export const TERRAIN_MAX_LEAD = 5;
+/** Band cost estimate (ms) before any band was measured. */
+const BAND_MS_INITIAL = 0.5;
 /** Camera velocity smoothing per update (EMA weight of the newest sample). */
 const VEL_SMOOTH = 0.2;
+/** An update gap longer than this (ms) is a stall, not a velocity sample. */
+const STALL_MS = 250;
 
 function makeCanvas(w: number, h: number): PixelCanvas {
   if (typeof document !== 'undefined') {
@@ -82,10 +101,16 @@ interface Chunk {
   j: number;
   surface: Surface | null;
   stage: Stage;
-  /** Next band to paint while Painting. */
+  /** Bands painted so far (Painting). */
   band: number;
+  /** Paint bottom band first (the chunk is above the view: its bottom edge scrolls in first). */
+  up: boolean;
   /** Any band drew terrain. */
   drew: boolean;
+  /** Drew since its last upload (late fill re-uploads only changed chunks). */
+  dirty: boolean;
+  /** Already counted in lateChunks. */
+  late: boolean;
 }
 
 /** Numeric chunk key (no per-frame string building); chunk indices stay well inside ±2^15. */
@@ -119,16 +144,30 @@ export class TerrainView {
   private vi1 = 0;
   private vj0 = 0;
   private vj1 = 0;
+  /** Prepare range of the last update (a view landing outside it is a jump). */
+  private pi0 = 0;
+  private pi1 = -1;
+  private pj0 = 0;
+  private pj1 = -1;
+  /** Look-ahead (chunks) of the current update, per axis. */
+  private leadX = 0;
+  private leadY = 0;
   /** Bands painted in the last update() (diagnostics / tests). */
   bandsLastUpdate = 0;
   /** Chunks uploaded in the last update() (diagnostics / tests). */
   uploadsLastUpdate = 0;
-  /** In steady flight, on-screen chunks that were not shown yet and had to be finished + uploaded at once (diagnostics; should stay 0). */
+  /** In steady flight, chunks that were on screen before they were finished + shown (each counted once; diagnostics, 0 when the look-ahead keeps up). */
   lateChunks = 0;
+  /** On-screen terrain chunks not fully shown after the last update() (late fill in progress). */
+  unreadyVisibleLastUpdate = 0;
+  /** Paint budget (ms) the last update() allowed. */
+  budgetLastUpdate = 0;
   /** Updates treated as a camera jump (on-screen chunks prepared at once; exempt from lateChunks). */
   jumpUpdates = 0;
-  /** Uploads in the last update() that bypassed TERRAIN_UPLOADS_PER_FRAME / the later-frame rule (load, jump, late). */
+  /** Uploads in the last update() that bypassed the per-frame budget and upload caps (level load, camera jump only). */
   syncUploadsLastUpdate = 0;
+  /** Smoothed measured cost of one band (ms): decides whether another band fits the budget. */
+  bandMs = BAND_MS_INITIAL;
   /** A camera jump was detected by track() for the current update. */
   private jumped = false;
   /** Wall ms spent in the last update() (FPS-counter hitch attribution: PAINT). */
@@ -157,14 +196,23 @@ export class TerrainView {
     const dt = t - this.lastT;
     const dx = o.x - this.lastX;
     const dy = o.y - this.lastY;
-    this.jumped = this.started && (Math.abs(dx) > VIEW_WIDTH || Math.abs(dy) > VIEW_HEIGHT);
-    if (!this.started || dt <= 0 || dt > 250 || this.jumped) {
+    // a jump = the view moved a view or more in one update AND either not where its own velocity
+    // predicted (restart, teleport) or after a stall (> STALL_MS: the frame already hitched, and the
+    // landing area may be far beyond what was prepared). A long-ish frame at speed moves far too,
+    // but as predicted, and must not trigger a synchronous repaint. updateChunks() also treats any
+    // view landing outside the previously prepared range as a jump.
+    const far = Math.abs(dx) >= VIEW_WIDTH || Math.abs(dy) >= VIEW_HEIGHT;
+    const unexplained = Math.abs(dx - this.velX * dt) >= VIEW_WIDTH || Math.abs(dy - this.velY * dt) >= VIEW_HEIGHT;
+    const stall = dt > STALL_MS;
+    this.jumped = this.started && far && (unexplained || stall);
+    if (!this.started || (this.jumped && unexplained)) {
+      // teleport / restart: the old motion says nothing about the new one
       this.velX = 0;
       this.velY = 0;
-    } else {
+    } else if (dt > 0 && !stall) {
       this.velX += (dx / dt - this.velX) * VEL_SMOOTH;
       this.velY += (dy / dt - this.velY) * VEL_SMOOTH;
-    }
+    } // a stall keeps the last velocity: one long sample is no evidence of a new speed
     this.lastX = o.x;
     this.lastY = o.y;
     this.lastT = t;
@@ -173,8 +221,6 @@ export class TerrainView {
   private updateChunks(o: Vec2, t0: number): void {
     const first = !this.started;
     this.started = true;
-    const jump = this.jumped;
-    if (jump) this.jumpUpdates++;
     this.bandsLastUpdate = 0;
     this.uploadsLastUpdate = 0;
     this.syncUploadsLastUpdate = 0;
@@ -183,12 +229,21 @@ export class TerrainView {
     const vi1 = (this.vi1 = Math.floor((o.x + VIEW_WIDTH - 1e-6) / CHUNK));
     const vj0 = (this.vj0 = Math.floor(o.y / CHUNK));
     const vj1 = (this.vj1 = Math.floor((o.y + VIEW_HEIGHT - 1e-6) / CHUNK));
-    const leadX = Math.min(TERRAIN_MAX_LEAD, Math.ceil((Math.abs(this.velX) * TERRAIN_LEAD_MS) / CHUNK));
-    const leadY = Math.min(TERRAIN_MAX_LEAD, Math.ceil((Math.abs(this.velY) * TERRAIN_LEAD_MS) / CHUNK));
+    // a jump: detected by track(), or the view landed (partly) outside everything prepared last
+    // update - those chunks were never even opened, whatever the velocity says
+    const outside = !first && (vi0 < this.pi0 || vi1 > this.pi1 || vj0 < this.pj0 || vj1 > this.pj1);
+    const jump = !first && (this.jumped || outside);
+    if (jump) this.jumpUpdates++;
+    const leadX = (this.leadX = Math.min(TERRAIN_MAX_LEAD, Math.ceil((Math.abs(this.velX) * TERRAIN_LEAD_MS) / CHUNK)));
+    const leadY = (this.leadY = Math.min(TERRAIN_MAX_LEAD, Math.ceil((Math.abs(this.velY) * TERRAIN_LEAD_MS) / CHUNK)));
     const i0 = vi0 - MARGIN - (this.velX < 0 ? leadX : 0);
     const i1 = vi1 + MARGIN + (this.velX > 0 ? leadX : 0);
     const j0 = vj0 - MARGIN - (this.velY < 0 ? leadY : 0);
     const j1 = vj1 + MARGIN + (this.velY > 0 ? leadY : 0);
+    this.pi0 = i0;
+    this.pi1 = i1;
+    this.pj0 = j0;
+    this.pj1 = j1;
     // cull outside the prepare range (+1 hysteresis, +lead so a reversal does not thrash) FIRST, so
     // the surfaces it frees are reused by the chunks opened below (a camera jump does not allocate
     // a second full set of canvases / textures)
@@ -198,53 +253,107 @@ export class TerrainView {
       this.close(c);
       this.chunks.delete(key);
     }
+    let unready = 0;
+    let painting = 0;
     for (let j = j0; j <= j1; j++) {
       for (let i = i0; i <= i1; i++) {
         const key = chunkKey(i, j);
         let c = this.chunks.get(key);
         if (!c) {
-          c = this.open(i, j);
+          c = this.open(i, j, vj0, vj1);
           this.chunks.set(key, c);
         }
         const visible = i >= vi0 && i <= vi1 && j >= vj0 && j <= vj1;
-        if (first || visible) this.finishNow(c, !first && !jump);
+        if (first || (jump && visible)) this.prepareNow(c);
+        else if (visible && (c.stage === Stage.Painting || c.stage === Stage.Painted)) {
+          unready++;
+          if (!c.late) {
+            c.late = true;
+            this.lateChunks++;
+          }
+        }
+        if (c.stage === Stage.Painting) painting += BANDS - c.band;
       }
     }
-    // uploads first: chunks finished on an EARLIER frame (never the frame they were painted)
-    let n = 0;
-    while (this.uploads.length > 0 && n < TERRAIN_UPLOADS_PER_FRAME) {
-      const c = this.uploads.shift()!;
-      if (c.stage !== Stage.Painted) continue;
-      this.show(c);
-      n++;
+    // budget: base, raised to clear the backlog within TERRAIN_CATCHUP_FRAMES, max while terrain on screen is unfinished
+    const need = (painting * this.bandMs) / TERRAIN_CATCHUP_FRAMES;
+    const budget = unready > 0 ? TERRAIN_PAINT_BUDGET_MAX_MS : Math.min(TERRAIN_PAINT_BUDGET_MAX_MS, Math.max(TERRAIN_PAINT_BUDGET_MS, need));
+    this.budgetLastUpdate = budget;
+    // off-screen uploads first: chunks finished on an EARLIER frame (never the frame they were painted)
+    const q = this.uploads;
+    for (let k = 0, n = 0; k < q.length && n < TERRAIN_UPLOADS_PER_FRAME; ) {
+      const c = q[k]!;
+      if (c.stage !== Stage.Painted) q.splice(k, 1);
+      else if (this.isVisible(c)) k++; // on screen: the visible pass below shows it (stays queued meanwhile)
+      else {
+        q.splice(k, 1);
+        this.show(c);
+        n++;
+      }
     }
-    // off-screen bands, nearest the predicted view first, within the frame budget (at least one band)
+    // bands: on-screen unfinished chunks first, then nearest the predicted view; a band starts only
+    // while its measured cost still fits the budget (the first band of a frame always runs)
     let firstBand = true;
-    while (this.painting.length > 0 && (firstBand || this.clock() - t0 < TERRAIN_PAINT_BUDGET_MS)) {
+    while (this.painting.length > 0 && (firstBand || this.clock() - t0 + this.bandMs <= budget)) {
       const k = this.nextPainting();
       if (k < 0) break;
       firstBand = false;
       const c = this.painting[k]!;
+      const b0 = this.clock();
       this.paintBand(c);
+      this.bandMs += (this.clock() - b0 - this.bandMs) * 0.2;
       if (c.stage !== Stage.Painting) {
         this.dropPainting(k);
         if (c.stage === Stage.Painted) this.uploads.push(c);
       }
     }
+    // on screen: finished chunks are shown, unfinished ones re-uploaded as they fill (capped)
+    let vis = 0;
+    unready = 0;
+    for (let j = vj0; j <= vj1; j++) {
+      for (let i = vi0; i <= vi1; i++) {
+        const c = this.chunks.get(chunkKey(i, j));
+        if (!c || c.stage === Stage.Shown || c.stage === Stage.Empty) continue;
+        let ready = false;
+        if (vis < TERRAIN_VISIBLE_UPLOADS_PER_FRAME && (c.stage === Stage.Painted || c.dirty)) {
+          vis++;
+          ready = c.stage === Stage.Painted;
+          if (ready) this.show(c);
+          else this.showPartial(c);
+        }
+        if (!ready) unready++;
+      }
+    }
+    this.unreadyVisibleLastUpdate = unready;
   }
 
-  /** Index of the painting chunk nearest the predicted view (half a lead ahead); -1 = none left. */
+  private isVisible(c: Chunk): boolean {
+    return c.i >= this.vi0 && c.i <= this.vi1 && c.j >= this.vj0 && c.j <= this.vj1;
+  }
+
+  /**
+   * Index of the painting chunk nearest the predicted view (half a lead ahead, the lead being
+   * capped like the prepare range - an uncapped prediction at high speed would sit beyond the
+   * prepared area and favour its far edge over the chunks scrolling in next); -1 = none left.
+   */
   private nextPainting(): number {
     const p = this.painting;
     for (let k = p.length - 1; k >= 0; k--) if (p[k]!.stage !== Stage.Painting) this.dropPainting(k);
-    const cx = (this.vi0 + this.vi1 + 1) / 2 + (this.velX * TERRAIN_LEAD_MS * 0.5) / CHUNK;
-    const cy = (this.vj0 + this.vj1 + 1) / 2 + (this.velY * TERRAIN_LEAD_MS * 0.5) / CHUNK;
+    const vx = (this.vi0 + this.vi1 + 1) / 2;
+    const vy = (this.vj0 + this.vj1 + 1) / 2;
+    const ax = this.leadX / 2;
+    const ay = this.leadY / 2;
+    const cx = vx + Math.min(ax, Math.max(-ax, (this.velX * TERRAIN_LEAD_MS * 0.5) / CHUNK));
+    const cy = vy + Math.min(ay, Math.max(-ay, (this.velY * TERRAIN_LEAD_MS * 0.5) / CHUNK));
     let best = -1;
     let bestD = Infinity;
     for (let k = 0; k < p.length; k++) {
       const c = p[k]!;
-      // Chebyshev distance in chunks; a started chunk wins near-ties (finish what is begun)
-      const d = Math.max(Math.abs(c.i + 0.5 - cx), Math.abs(c.j + 0.5 - cy)) - c.band * 0.1;
+      // on-screen chunks first (nearest the view centre), then Chebyshev distance in chunks to the
+      // predicted view; a started chunk wins near-ties (finish what is begun)
+      const d = this.isVisible(c)
+        ? -1000 + Math.max(Math.abs(c.i + 0.5 - vx), Math.abs(c.j + 0.5 - vy))
+        : Math.max(Math.abs(c.i + 0.5 - cx), Math.abs(c.j + 0.5 - cy)) - c.band * (0.4 / BANDS);
       if (d < bestD) {
         bestD = d;
         best = k;
@@ -283,11 +392,13 @@ export class TerrainView {
   }
 
   /** A new chunk: empty ones (no terrain nearby) are done at once; others get a cleared surface and start painting. */
-  private open(i: number, j: number): Chunk {
+  private open(i: number, j: number, vj0: number, vj1: number): Chunk {
     const x = i * CHUNK;
     const y = j * CHUNK;
+    // above the view's middle: its bottom edge scrolls in first, so paint bottom-up
+    const up = j * 2 + 1 < vj0 + vj1 + 1;
     const outside = x >= this.spec.worldSize.w || y >= this.spec.worldSize.h || x + CHUNK <= 0 || y + CHUNK <= 0;
-    if (outside || !piecesTouch(this.pieces, { x, y, w: CHUNK, h: CHUNK })) return { i, j, surface: null, stage: Stage.Empty, band: BANDS, drew: false };
+    if (outside || !piecesTouch(this.pieces, { x, y, w: CHUNK, h: CHUNK })) return { i, j, surface: null, stage: Stage.Empty, band: BANDS, up, drew: false, dirty: false, late: false };
     const recycled = this.free.pop();
     const f = recycled ?? this.surface();
     if (recycled) {
@@ -295,20 +406,17 @@ export class TerrainView {
       f.ctx.clearRect(0, 0, CHUNK, CHUNK);
     }
     f.sprite.visible = false;
-    const c: Chunk = { i, j, surface: f, stage: Stage.Painting, band: 0, drew: false };
+    const c: Chunk = { i, j, surface: f, stage: Stage.Painting, band: 0, up, drew: false, dirty: false, late: false };
     this.painting.push(c);
     return c;
   }
 
   /**
-   * Finish a chunk this frame and show it (bypassing the upload rules): it
-   * is on screen, or the level just loaded. `late` = steady flight (not a
-   * load or jump): counted in lateChunks whether it was still painting or
-   * painted but waiting for its upload frame.
+   * Level load / camera jump only: finish a chunk this frame and show it,
+   * bypassing the budget and upload caps (counted in syncUploadsLastUpdate).
    */
-  private finishNow(c: Chunk, late: boolean): void {
+  private prepareNow(c: Chunk): void {
     if (c.stage === Stage.Shown || c.stage === Stage.Empty) return;
-    if (late) this.lateChunks++;
     while (c.stage === Stage.Painting) this.paintBand(c);
     if (c.stage === Stage.Painted) {
       this.show(c);
@@ -322,15 +430,19 @@ export class TerrainView {
     if (!f || c.stage !== Stage.Painting) return;
     const r = this.band;
     r.x = c.i * CHUNK;
-    r.y = c.j * CHUNK + c.band * TERRAIN_BAND_ROWS;
+    r.y = c.j * CHUNK + (c.up ? BANDS - 1 - c.band : c.band) * TERRAIN_BAND_ROWS;
     const ctx = f.ctx;
     ctx.setTransform(1, 0, 0, 1, -r.x, -c.j * CHUNK);
     ctx.save();
     ctx.beginPath();
     ctx.rect(r.x, r.y, r.w, r.h);
     ctx.clip();
-    if (paintPieces(ctx, this.pieces, this.tiles, r, this.cracks)) c.drew = true;
+    const drew = paintPieces(ctx, this.pieces, this.tiles, r, this.cracks);
     ctx.restore();
+    if (drew) {
+      c.drew = true;
+      c.dirty = true; // a band that drew nothing changed nothing: no re-upload for it
+    }
     c.band++;
     this.bandsLastUpdate++;
     if (c.band < BANDS) return;
@@ -346,11 +458,17 @@ export class TerrainView {
 
   /** Upload + show a painted chunk (the upload itself happens in this frame's Pixi render). */
   private show(c: Chunk): void {
+    this.showPartial(c);
+    c.stage = Stage.Shown;
+  }
+
+  /** Upload + show what a chunk holds so far (an on-screen chunk filling in late). */
+  private showPartial(c: Chunk): void {
     const f = c.surface!;
     f.texture.source.update();
     f.sprite.position.set(c.i * CHUNK, c.j * CHUNK);
     f.sprite.visible = true;
-    c.stage = Stage.Shown;
+    c.dirty = false;
     this.uploadsLastUpdate++;
   }
 

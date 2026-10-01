@@ -9,7 +9,9 @@
  *  - surface strips along every exposed edge (style.surface, default on):
  *    edges facing up get 'top' tiles, facing down 'bottom', steep edges
  *    'side' (mirrored for right-facing walls). Strips follow the slope one
- *    pixel column (or row) at a time, so slopes stay crisp stair-steps;
+ *    pixel column (or row) at a time, so slopes stay crisp stair-steps
+ *    (runs of columns / rows at the same offset are drawn as ONE drawImage:
+ *    same pixels, a fraction of the calls - CPU canvases pay per call);
  *  - after the clip: a 1 px outline (palette outline colour) just outside
  *    each surface, and 'decor' tiles standing on flat-ish top edges at
  *    style.decorDensity (default 0.2).
@@ -35,6 +37,8 @@ export interface PreparedPiece {
   style: TerrainStyle;
   /** Closed solid outline (world px). */
   fill: Vec2[];
+  /** `fill` as a flat [x0, y0, x1, y1, ...] list. */
+  flat: number[];
   surfaces: SurfaceEdge[];
   bbox: { x0: number; y0: number; x1: number; y1: number };
   seed: number;
@@ -113,7 +117,9 @@ export function preparePiece(piece: Pick<TerrainPiece, 'id' | 'kind' | 'points' 
     x1 = Math.max(x1, p.x);
     y1 = Math.max(y1, p.y);
   }
-  return { id: piece.id, style: piece.style, fill, surfaces, bbox: { x0, y0, x1, y1 }, seed: piece.style.variantSeed ?? hashStr(piece.id) };
+  const flat: number[] = [];
+  for (const p of fill) flat.push(p.x, p.y);
+  return { id: piece.id, style: piece.style, fill, flat, surfaces, bbox: { x0, y0, x1, y1 }, seed: piece.style.variantSeed ?? hashStr(piece.id) };
 }
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -210,27 +216,13 @@ function edgeNear(e: SurfaceEdge, r: PaintRect): boolean {
 }
 
 export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: TileSource, r: PaintRect, cracks: readonly PaintRect[] = []): boolean {
-  let drew = false;
+  draws = 0;
+  hitR = r;
   ctx.imageSmoothingEnabled = false;
   for (const p of pieces) {
     if (!overlaps(p, r, T * 2)) continue;
-    drew = true;
     const mat = p.style.material;
-    ctx.save();
-    ctx.beginPath();
-    p.fill.forEach((q, i) => (i === 0 ? ctx.moveTo(q.x, q.y) : ctx.lineTo(q.x, q.y)));
-    ctx.closePath();
-    ctx.clip();
-    // fill grid
-    const gx0 = Math.floor(Math.max(r.x, p.bbox.x0) / T);
-    const gx1 = Math.floor(Math.min(r.x + r.w, p.bbox.x1) / T);
-    const gy0 = Math.floor(Math.max(r.y, p.bbox.y0) / T);
-    const gy1 = Math.floor(Math.min(r.y + r.h, p.bbox.y1) / T);
-    const fillKind = `${mat}:fill` as TileKind;
-    for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) ctx.drawImage(tiles.tile(fillKind, hash(gx, gy, p.seed) & 3), gx * T, gy * T);
-    if (p.style.surface !== false) for (const e of p.surfaces) if (edgeNear(e, r)) paintStrip(ctx, e, mat, p.seed, tiles, r);
-    for (const z of cracks) for (const e of p.surfaces) if (edgeNear(e, r)) paintCracks(ctx, e, z, p.seed, tiles, r);
-    ctx.restore();
+    paintClipped(ctx, p, mat, tiles, r, cracks);
     if (p.style.surface !== false) {
       ctx.fillStyle = tiles.outline;
       for (const e of p.surfaces) if (edgeNear(e, r)) paintOutline(ctx, e, r);
@@ -238,7 +230,149 @@ export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: T
       if (density > 0) for (const e of p.surfaces) if (e.n.y <= -0.85 && edgeNear(e, r)) paintDecor(ctx, e, mat, p.seed, density, tiles, r);
     }
   }
-  return drew;
+  return draws > 0;
+}
+
+/** Everything painted inside the piece's solid outline. */
+function paintClipped(ctx: Ctx, p: PreparedPiece, mat: string, tiles: TileSource, r: PaintRect, cracks: readonly PaintRect[]): void {
+  const poly = p.flat;
+  ctx.save();
+  // the outline as a cached Path2D: a long wall is ~300 vertices, and re-issuing them per band
+  // was a measurable share of a band on CPU canvases (same geometry -> same pixels)
+  const path = outlinePath(p);
+  if (path) ctx.clip(path);
+  else {
+    ctx.beginPath();
+    ctx.moveTo(poly[0]!, poly[1]!);
+    for (let k = 2; k < poly.length; k += 2) ctx.lineTo(poly[k]!, poly[k + 1]!);
+    ctx.closePath();
+    ctx.clip();
+  }
+  // fill grid
+  const gx0 = Math.floor(Math.max(r.x, p.bbox.x0) / T);
+  const gx1 = Math.floor(Math.min(r.x + r.w, p.bbox.x1) / T);
+  const gy0 = Math.floor(Math.max(r.y, p.bbox.y0) / T);
+  const gy1 = Math.floor(Math.min(r.y + r.h, p.bbox.y1) / T);
+  const fillKind = `${mat}:fill` as TileKind;
+  for (let gy = gy0; gy <= gy1; gy++) {
+    // only the tiles the outline can reach in this tile row (x-extent of the outline inside the
+    // row, +1 px for anti-aliasing): a wall's bbox spans the open shaft beside it, and tiles there
+    // would be clipped away entirely - same pixels, far fewer draws
+    slabExtent(poly, gy * T - 1, gy * T + T + 1);
+    if (!(slabLo <= slabHi)) continue;
+    const ax = Math.max(gx0, Math.floor((slabLo - 1) / T));
+    const bx = Math.min(gx1, Math.floor((slabHi + 1) / T));
+    for (let gx = ax; gx <= bx; gx++) ctx.drawImage(tiles.tile(fillKind, hash(gx, gy, p.seed) & 3), gx * T, gy * T);
+    // counted only when the solid really reaches the rect in this row (+1 px anti-aliasing): a
+    // drawn tile can lie wholly outside the rect or the outline (the drawn range is inclusive)
+    if (draws === 0 && ax <= bx) {
+      const x0 = Math.max(ax * T, r.x) - 1;
+      const x1 = Math.min(bx * T + T, r.x + r.w) + 1;
+      const y0 = Math.max(gy * T, r.y) - 1;
+      const y1 = Math.min(gy * T + T, r.y + r.h) + 1;
+      if (x0 < x1 && y0 < y1 && polyTouchesRect(poly, x0, y0, x1, y1)) draws++;
+    }
+  }
+  if (p.style.surface !== false) for (const e of p.surfaces) if (edgeNear(e, r)) paintStrip(ctx, e, mat, p.seed, tiles, r);
+  for (const z of cracks) for (const e of p.surfaces) if (edgeNear(e, r)) paintCracks(ctx, e, z, p.seed, tiles, r);
+  ctx.restore();
+}
+
+/** slabExtent() result: x-range of the outline within a horizontal slab (lo > hi = none). */
+let slabLo = 0;
+let slabHi = 0;
+
+/**
+ * X-extent of closed polygon `poly` (flat x,y list) inside the slab
+ * y0..y1. A bounded region's horizontal extremes inside a slab lie on its
+ * edges, so the extent of the edge pieces within the slab is exact.
+ */
+function slabExtent(poly: readonly number[], y0: number, y1: number): void {
+  let lo = Infinity;
+  let hi = -Infinity;
+  const n = poly.length;
+  for (let k = 0, j = n - 2; k < n; j = k, k += 2) {
+    const ax = poly[j]!;
+    const ay = poly[j + 1]!;
+    const bx = poly[k]!;
+    const by = poly[k + 1]!;
+    if ((ay < y0 && by < y0) || (ay > y1 && by > y1)) continue;
+    let xa = ax;
+    let xb = bx;
+    if (ay !== by) {
+      // the segment's part inside the slab
+      const ta = Math.min(1, Math.max(0, (y0 - ay) / (by - ay)));
+      const tb = Math.min(1, Math.max(0, (y1 - ay) / (by - ay)));
+      xa = ax + (bx - ax) * ta;
+      xb = ax + (bx - ax) * tb;
+    }
+    lo = Math.min(lo, xa, xb);
+    hi = Math.max(hi, xa, xb);
+  }
+  slabLo = lo;
+  slabHi = hi;
+}
+
+/** Draws by the current paintPieces() that land in its rect (its return value: did anything land). */
+let draws = 0;
+/** The current paintPieces() rect. */
+let hitR: PaintRect = { x: 0, y: 0, w: 0, h: 0 };
+
+/** Count a draw whose destination rect overlaps the paint rect (a draw wholly outside it changes no pixel there). */
+function hit(x: number, y: number, w: number, h: number): void {
+  const r = hitR;
+  if (x < r.x + r.w && x + w > r.x && y < r.y + r.h && y + h > r.y) draws++;
+}
+
+/** Whether closed polygon `poly` (flat x,y list) overlaps the rect x0..x1 × y0..y1. */
+function polyTouchesRect(poly: readonly number[], x0: number, y0: number, x1: number, y1: number): boolean {
+  const n = poly.length;
+  let inside = false;
+  const cx = (x0 + x1) / 2;
+  const cy = (y0 + y1) / 2;
+  for (let k = 0, j = n - 2; k < n; j = k, k += 2) {
+    const ax = poly[j]!;
+    const ay = poly[j + 1]!;
+    const bx = poly[k]!;
+    const by = poly[k + 1]!;
+    // segment a-b vs the rect (Liang-Barsky)
+    let t0 = 0;
+    let t1 = 1;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const clipT = (pp: number, q: number): boolean => {
+      if (pp === 0) return q >= 0;
+      const t = q / pp;
+      if (pp < 0) {
+        if (t > t1) return false;
+        if (t > t0) t0 = t;
+      } else {
+        if (t < t0) return false;
+        if (t < t1) t1 = t;
+      }
+      return true;
+    };
+    if (clipT(-dx, ax - x0) && clipT(dx, x1 - ax) && clipT(-dy, ay - y0) && clipT(dy, y1 - ay)) return true;
+    // even-odd: the rect centre inside the polygon (the rect lies wholly inside when no edge crosses it)
+    if (ay > cy !== by > cy && cx < ((bx - ax) * (cy - ay)) / (by - ay) + ax) inside = !inside;
+  }
+  return inside;
+}
+
+const paths = new WeakMap<PreparedPiece, Path2D>();
+/** The piece's outline as a Path2D (built once); null where Path2D does not exist (Node tests). */
+function outlinePath(p: PreparedPiece): Path2D | null {
+  if (typeof Path2D === 'undefined') return null;
+  let path = paths.get(p);
+  if (!path) {
+    path = new Path2D();
+    const f = p.flat;
+    path.moveTo(f[0]!, f[1]!);
+    for (let k = 2; k < f.length; k += 2) path.lineTo(f[k]!, f[k + 1]!);
+    path.closePath();
+    paths.set(p, path);
+  }
+  return path;
 }
 
 function paintStrip(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, tiles: TileSource, r: PaintRect): void {
@@ -249,15 +383,38 @@ function paintStrip(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, tiles: 
     const x0 = Math.max(Math.floor(xa), Math.floor(r.x) - 1);
     const x1 = Math.min(Math.ceil(xb), Math.ceil(r.x + r.w) + 1);
     const kind = `${mat}:${e.role}` as TileKind;
+    const top = e.role === 'top';
     const ry0 = r.y - T - 1;
     const ry1 = r.y + r.h + 1;
+    // a run of adjacent columns with the same tile and target row is one drawImage
+    let runImg: Img | null = null;
+    let runX = 0;
+    let runSx = 0;
+    let runY = 0;
+    let runN = 0;
     for (let x = x0; x < x1; x++) {
       const y = lerpAt(a, b, x + 0.5, 'x');
       if (y < ry0 || y > ry1 + T) continue; // this column's T px strip misses the rect
       const img = tiles.tile(kind, hash(Math.floor(x / T), seed, 7) & 3);
       const sx = ((x % T) + T) % T;
-      if (e.role === 'top') ctx.drawImage(img, sx, 0, 1, T, x, Math.floor(y), 1, T);
-      else ctx.drawImage(img, sx, 0, 1, T, x, Math.ceil(y) - T, 1, T);
+      const dy = top ? Math.floor(y) : Math.ceil(y) - T;
+      if (runN > 0 && img === runImg && dy === runY && x === runX + runN && sx === runSx + runN) {
+        runN++;
+        continue;
+      }
+      if (runN > 0) {
+        ctx.drawImage(runImg!, runSx, 0, runN, T, runX, runY, runN, T);
+        hit(runX, runY, runN, T);
+      }
+      runImg = img;
+      runX = x;
+      runSx = sx;
+      runY = dy;
+      runN = 1;
+    }
+    if (runN > 0) {
+      ctx.drawImage(runImg!, runSx, 0, runN, T, runX, runY, runN, T);
+      hit(runX, runY, runN, T);
     }
   } else {
     const ya = Math.min(a.y, b.y);
@@ -268,13 +425,36 @@ function paintStrip(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, tiles: 
     const right = e.n.x > 0; // surface faces right: mirror (side tiles face left)
     const rx0 = r.x - T - 1;
     const rx1 = r.x + r.w + T + 1;
+    // a run of adjacent rows with the same tile and target column is one drawImage
+    let runImg: Img | null = null;
+    let runY = 0;
+    let runSy = 0;
+    let runX = 0;
+    let runN = 0;
     for (let y = y0; y < y1; y++) {
       const x = lerpAt(a, b, y + 0.5, 'y');
       if (x < rx0 || x > rx1) continue; // this row's T px strip misses the rect
       const v = hash(Math.floor(y / T), seed, 11) & 3;
       const sy = ((y % T) + T) % T;
-      if (right) ctx.drawImage(tiles.sideMirrored(kind, v), 0, sy, T, 1, Math.ceil(x) - T, y, T, 1);
-      else ctx.drawImage(tiles.tile(kind, v), 0, sy, T, 1, Math.floor(x), y, T, 1);
+      const img = right ? tiles.sideMirrored(kind, v) : tiles.tile(kind, v);
+      const dx = right ? Math.ceil(x) - T : Math.floor(x);
+      if (runN > 0 && img === runImg && dx === runX && y === runY + runN && sy === runSy + runN) {
+        runN++;
+        continue;
+      }
+      if (runN > 0) {
+        ctx.drawImage(runImg!, 0, runSy, T, runN, runX, runY, T, runN);
+        hit(runX, runY, T, runN);
+      }
+      runImg = img;
+      runY = y;
+      runSy = sy;
+      runX = dx;
+      runN = 1;
+    }
+    if (runN > 0) {
+      ctx.drawImage(runImg!, 0, runSy, T, runN, runX, runY, T, runN);
+      hit(runX, runY, T, runN);
     }
   }
 }
@@ -284,18 +464,54 @@ function paintOutline(ctx: Ctx, e: SurfaceEdge, r: PaintRect): void {
   if (e.role !== 'side') {
     const x0 = Math.max(Math.floor(Math.min(a.x, b.x)), Math.floor(r.x) - 1);
     const x1 = Math.min(Math.ceil(Math.max(a.x, b.x)), Math.ceil(r.x + r.w) + 1);
+    // a run of adjacent pixels on the same row is one fillRect
+    let runX = x0;
+    let runY = 0;
+    let runN = 0;
     for (let x = x0; x < x1; x++) {
       const y = lerpAt(a, b, x + 0.5, 'x');
-      if (e.role === 'top') ctx.fillRect(x, Math.floor(y) - 1, 1, 1);
-      else ctx.fillRect(x, Math.ceil(y), 1, 1);
+      const py = e.role === 'top' ? Math.floor(y) - 1 : Math.ceil(y);
+      if (runN > 0 && py === runY) {
+        runN++;
+        continue;
+      }
+      if (runN > 0) {
+        ctx.fillRect(runX, runY, runN, 1);
+        hit(runX, runY, runN, 1);
+      }
+      runX = x;
+      runY = py;
+      runN = 1;
+    }
+    if (runN > 0) {
+      ctx.fillRect(runX, runY, runN, 1);
+      hit(runX, runY, runN, 1);
     }
   } else {
     const y0 = Math.max(Math.floor(Math.min(a.y, b.y)), Math.floor(r.y) - 1);
     const y1 = Math.min(Math.ceil(Math.max(a.y, b.y)), Math.ceil(r.y + r.h) + 1);
+    // a run of adjacent pixels in the same column is one fillRect
+    let runY = y0;
+    let runX = 0;
+    let runN = 0;
     for (let y = y0; y < y1; y++) {
       const x = lerpAt(a, b, y + 0.5, 'y');
-      if (e.n.x > 0) ctx.fillRect(Math.ceil(x), y, 1, 1);
-      else ctx.fillRect(Math.floor(x) - 1, y, 1, 1);
+      const px = e.n.x > 0 ? Math.ceil(x) : Math.floor(x) - 1;
+      if (runN > 0 && px === runX) {
+        runN++;
+        continue;
+      }
+      if (runN > 0) {
+        ctx.fillRect(runX, runY, 1, runN);
+        hit(runX, runY, 1, runN);
+      }
+      runY = y;
+      runX = px;
+      runN = 1;
+    }
+    if (runN > 0) {
+      ctx.fillRect(runX, runY, 1, runN);
+      hit(runX, runY, 1, runN);
     }
   }
 }
@@ -312,6 +528,7 @@ function paintDecor(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, density
     const x = c * T;
     const y = Math.floor(Math.max(lerpAt(e.a, e.b, x + 1, 'x'), lerpAt(e.a, e.b, x + T - 1, 'x')));
     ctx.drawImage(tiles.tile(kind, (h >>> 10) & 3), x, y - T + 1);
+    hit(x, y - T + 1, T, T);
   }
 }
 
@@ -355,6 +572,10 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
   const warm = tiles.rampColor('light', 0);
   const glint = tiles.rampColor('light', 2);
   const hilite = tiles.rampColor('primary', 3);
+  const dot = (x: number, y: number) => {
+    ctx.fillRect(x, y, 1, 1);
+    hit(x, y, 1, 1);
+  };
   // crumbling rim: a warm dithered band fading 5 px into the rock, dark
   // speckles on the surface row, and sparse glints
   for (let u = Math.floor(lo); u < hi; u++) {
@@ -367,15 +588,15 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
       const b = BAYER[(y & 3) * 4 + (x & 3)]!;
       if (k === 1 && (u & 1) === 0) {
         ctx.fillStyle = shade;
-        ctx.fillRect(x, y, 1, 1);
+        dot(x, y);
       } else if (b < 0.6 * (1 - k / 6)) {
         ctx.fillStyle = warm;
-        ctx.fillRect(x, y, 1, 1);
+        dot(x, y);
       }
     }
     if ((h & 7) === 0) {
       ctx.fillStyle = glint;
-      ctx.fillRect(Math.floor(q.x + ix * (2 + (h >>> 3) % 4)), Math.floor(q.y + iy * (2 + (h >>> 3) % 4)), 1, 1);
+      dot(Math.floor(q.x + ix * (2 + (h >>> 3) % 4)), Math.floor(q.y + iy * (2 + (h >>> 3) % 4)));
     }
   }
   // cracks
@@ -391,9 +612,9 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
       let y = q.y + iy;
       for (let k = 0; k < depth; k++) {
         ctx.fillStyle = dark;
-        ctx.fillRect(Math.floor(x), Math.floor(y), 1, 1);
+        dot(Math.floor(x), Math.floor(y));
         ctx.fillStyle = hilite;
-        ctx.fillRect(Math.floor(x + px), Math.floor(y + py), 1, 1);
+        dot(Math.floor(x + px), Math.floor(y + py));
         const j = (h >>> (4 + k)) & 3; // jitter sideways now and then
         const side = j === 1 ? 1 : j === 2 ? -1 : 0;
         x += ix + px * side;
@@ -402,7 +623,7 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
           // short branch
           const bs = h & 0x80000 ? 1 : -1;
           ctx.fillStyle = dark;
-          for (let b = 1; b <= 3; b++) ctx.fillRect(Math.floor(x + (ix + px * bs) * b), Math.floor(y + (iy + py * bs) * b), 1, 1);
+          for (let b = 1; b <= 3; b++) dot(Math.floor(x + (ix + px * bs) * b), Math.floor(y + (iy + py * bs) * b));
         }
       }
     }
