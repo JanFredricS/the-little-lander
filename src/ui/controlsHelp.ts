@@ -58,10 +58,13 @@ const KEYS_LANDER_SWAPPED: readonly string[] = [
   'UPSIDE DOWN? TOP THRUSTERS FLIP YOU',
 ];
 
-/** DIRECT steering (Settings.steering = 'direct'): cards for the modes it drives (src/shell/directSteering.ts). */
+/**
+ * DIRECT steering (Settings.steering = 'direct'): cards for the modes it drives (src/shell/directSteering.ts).
+ * Keyboard: lander only (rotate + thrust). The CSM keeps its classic keys in DIRECT (Descent on a
+ * keyboard is the ENGINE scheme in both settings), so its keyboard card is the normal one.
+ */
 const DIRECT_KEYS: Partial<Record<VesselMode, readonly string[]>> = {
-  lander: ['W A S D / ARROWS   THRUST THAT WAY', 'DIAGONALS TOO - HOLD TO BURN', 'THE LANDER TURNS ITSELF TO PUSH', 'DOWN FIRES THE TOP THRUSTERS', 'LET GO TO COAST'],
-  csm: ['W A S D / ARROWS   THRUST THAT WAY', 'DIAGONALS TOO - HOLD TO BURN', 'THE CSM TURNS, THEN BURNS', 'LET GO TO COAST'],
+  lander: ['A / ←   ROTATE LEFT', 'D / →   ROTATE RIGHT', 'W / ↑ / SPACE   THRUST', 'S / ↓   TOP THRUSTERS (PUSH DOWN)', 'LET GO TO COAST'],
 };
 const DIRECT_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
   lander: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE LANDER TURNS ITSELF TO PUSH', 'BELOW THE SHIP: TOP THRUSTERS', 'LET GO TO COAST'],

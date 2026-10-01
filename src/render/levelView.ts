@@ -23,6 +23,7 @@ import { FeelFx, type FeelOptions } from './feelFx';
 import { FlightView } from './flightView';
 import { S7LevelFx } from './s7LevelFx';
 import { TerrainView } from './terrainView';
+import type { TerrainDiag } from '../ui/fpsMeter';
 
 export class LevelView {
   readonly root = new Container();
@@ -129,9 +130,20 @@ export class LevelView {
     } else this.hud = null;
   }
 
-  /** Wall ms the last render() spent in terrain chunk painting (FPS-counter hitch attribution). */
+  /** Wall ms the last render() spent in terrain streaming, uploads included (FPS-counter hitch attribution). */
   get terrainPaintMs(): number {
     return this.terrain.msLastUpdate;
+  }
+
+  /** Terrain streaming diagnostics (FPS counter terrain line); filled into `out` (no allocation). */
+  terrainDiag(out: TerrainDiag): TerrainDiag {
+    const t = this.terrain;
+    out.jumps = t.jumpUpdates;
+    out.late = t.lateChunks;
+    out.syncUploads = t.syncUploadsTotal;
+    out.ms = t.msLastUpdate;
+    out.uploadMs = t.uploadMsLastUpdate;
+    return out;
   }
 
   render(alpha: number, nowMs: number, paused: boolean): void {
@@ -195,6 +207,11 @@ export class LevelView {
    * are painted and uploaded as the camera streams them (only the ones on
    * screen at load are included).
    */
+  /** GPU-initialise terrain chunk surfaces as they are created (renderer.texture.initSource; see TerrainView.setUploader). */
+  setTerrainUploader(init: (source: TextureSource) => void): void {
+    this.terrain.setUploader(init);
+  }
+
   forEachTextureSource(upload: (source: TextureSource) => void): void {
     const seen = new Set<TextureSource>();
     const add = (t: Texture | undefined) => {

@@ -16,17 +16,25 @@ import {
   compressTilt,
   DIRECT_BURN_GATE,
   DIRECT_CROSSOVER_HYSTERESIS,
+  DIRECT_KEY_RATE_BAND,
+  DIRECT_KEY_STOP_BAND,
+  DIRECT_KEY_TURN_RATE,
+  DIRECT_LANDER_COUPLE_SCALE,
   DIRECT_LANDER_THRUST_SCALE,
   DIRECT_LEAD_SEC,
   DIRECT_THRUST_BAND,
   DIRECT_TILT_CAP,
   DIRECT_TOP_CROSSOVER,
   DirectSteering,
+  landerCoupleScale,
   trailingDuty,
   wrapAngle,
 } from '../src/shell/directSteering';
 import { emptyFrame, InputMapper, KeyboardSource, PointerSource } from '../src/shell/input';
 import { DEFAULT_SETTINGS, parseSave } from '../src/story/save';
+import { descent } from '../src/levels/descent';
+import { getLevel } from '../src/levels/registry';
+import { LevelSession } from '../src/game/session';
 import { frameHasInput, helpCard } from '../src/ui/controlsHelp';
 import { itemAction, screenModel, type ScreenContext } from '../src/ui/screens';
 import { touchLayout } from '../src/ui/touch/touchLayout';
@@ -44,18 +52,19 @@ afterEach(() => {
 });
 
 /** A vessel in open space, flown only through the DirectSteering layer. */
-async function rig(mode: VesselMode, spawn: { angle?: number } = {}) {
+async function rig(mode: VesselMode, spawn: { angle?: number } = {}, tuning = resolveTuning()) {
   const physics = await PhysicsWorld.create({ gravity: { x: 0, y: G }, hitSpeedThreshold: 0.5 });
   cleanup.push(() => physics.destroy());
-  const vessel = createVessel(mode, physics, { pos: { x: 0, y: 0 }, ...spawn }, () => {}, { tuning: resolveTuning(), refGravity: G, harpoonGuns: 1 });
+  const vessel = createVessel(mode, physics, { pos: { x: 0, y: 0 }, ...spawn }, () => {}, { tuning, refGravity: G, harpoonGuns: 1 });
   const layer = new DirectSteering();
+  layer.setLanderTuning(tuning.lander);
   let state: VesselState = vessel.state();
   const frames: InputFrame[] = [];
   const states: VesselState[] = [];
-  /** n fixed steps holding steer `d` (null = released). */
-  const hold = (d: { x: number; y: number } | null, n: number) => {
+  /** n fixed steps feeding `make()` frames through the layer. */
+  const run = (make: () => InputFrame, n: number) => {
     for (let i = 0; i < n; i++) {
-      const f = layer.apply({ ...emptyFrame(), steer: d ?? { x: 0, y: 0 } }, state);
+      const f = layer.apply(make(), state);
       frames.push(f);
       vessel.applyInput(f, FIXED_DT);
       physics.step(FIXED_DT);
@@ -64,7 +73,16 @@ async function rig(mode: VesselMode, spawn: { angle?: number } = {}) {
     }
     return state;
   };
-  return { layer, hold, frames, states, state: () => state };
+  /** n fixed steps holding steer `d` (null = released). */
+  const hold = (d: { x: number; y: number } | null, n: number) => run(() => ({ ...emptyFrame(), steer: d ?? { x: 0, y: 0 } }), n);
+  /** n fixed steps holding keyboard flags (what KeyboardSource emits in DIRECT; no steer). */
+  const keys = (flags: Partial<InputFrame>, n: number) => run(() => ({ ...emptyFrame(), ...flags }), n);
+  /** Set the spin (rad/s) directly (a knock the keys did not make). */
+  const spin = (w: number) => {
+    physics.setAngularVelocity(vessel.body, w);
+    state = vessel.state();
+  };
+  return { layer, hold, keys, frames, states, state: () => state, spin };
 }
 
 describe('DIRECT steering: angle hold (lander, real physics)', () => {
@@ -376,11 +394,13 @@ describe('DIRECT steering: release, pass-through, CSM', () => {
     expect(Math.abs(r.state().angle - tilted)).toBeLessThan(10 * DEG); // attitude left alone: no auto-upright
   });
 
-  it('with no command the layer overrides stray flight flags (it owns flight) but never pause / restart', () => {
+  it('a steer owns flight: key flags under a held finger are overridden; pause / restart never touched', () => {
     const l = new DirectSteering();
-    const f = l.apply({ ...emptyFrame(), thrust: true, engineLeft: true, topRight: true, rotateCW: true, pause: true, restart: true }, { mode: 'lander', angle: 0, angularVel: 0 });
-    expect(flightOn(f)).toEqual([]);
+    const f = l.apply({ ...emptyFrame(), steer: dirAt(0), rotateCW: true, topRight: true, pause: true, restart: true }, { mode: 'lander', angle: 0, angularVel: 0 });
+    expect(flightOn(f)).toEqual(['engineLeft', 'engineRight']);
     expect(f.pause && f.restart).toBe(true);
+    // no steer, no keys: nothing on (coast)
+    expect(flightOn(l.apply(emptyFrame(), { mode: 'lander', angle: 0.4, angularVel: 0.1 }))).toEqual([]);
   });
 
   it('harpoon modes pass through untouched (their normal controls stay)', () => {
@@ -424,9 +444,10 @@ describe('DIRECT steering: release, pass-through, CSM', () => {
 describe('DIRECT steering: input sources', () => {
   const ctx = (mode: VesselMode, vessel = { x: 100, y: 100 }): InputSampleContext => ({ mode, vesselWorldPos: vessel, clientToWorld: (x, y) => ({ x: x * 2, y: y * 2 }) });
 
-  it('keyboard: W A S D / arrows give an 8-way steer; flight keys unbound; pause / restart kept', () => {
+  it('keyboard (lander): ← / A rotate CCW, → / D rotate CW, ↑ / W / Space thrust, ↓ / S both top thrusters; no steer; pause / restart kept', () => {
     const kb = new KeyboardSource(null);
     kb.setDirectSteering(true);
+    kb.setSwapEngines(true); // does not apply to DIRECT
     const m = new InputMapper();
     m.add(kb);
     const press = (codes: string[], mode: VesselMode = 'lander') => {
@@ -436,26 +457,38 @@ describe('DIRECT steering: input sources', () => {
       m.sample(ctx(mode)); // flush latched presses
       return f;
     };
-    expect(press(['KeyW']).steer).toEqual({ x: 0, y: -1 });
-    expect(press(['ArrowDown']).steer).toEqual({ x: 0, y: 1 });
-    const ne = press(['KeyW', 'KeyD']).steer;
-    expect(ne.x).toBeCloseTo(Math.SQRT1_2);
-    expect(ne.y).toBeCloseTo(-Math.SQRT1_2);
-    expect(press(['ArrowLeft', 'KeyS']).steer.x).toBeLessThan(0);
-    expect(press(['KeyW', 'KeyS']).steer).toEqual({ x: 0, y: 0 }); // opposite keys cancel: coast
-    for (const code of ['Space', 'KeyJ', 'KeyK', 'KeyL', 'KeyQ', 'KeyE', 'KeyA']) expect(flightOn(press([code])), code).toEqual([]);
+    for (const c of ['KeyA', 'ArrowLeft']) expect(flightOn(press([c])), c).toEqual(['rotateCCW']);
+    for (const c of ['KeyD', 'ArrowRight']) expect(flightOn(press([c])), c).toEqual(['rotateCW']);
+    for (const c of ['KeyW', 'ArrowUp', 'Space']) expect(flightOn(press([c])), c).toEqual(['thrust']);
+    for (const c of ['KeyS', 'ArrowDown']) expect(flightOn(press([c])), c).toEqual(['topLeft', 'topRight']);
+    for (const c of ['KeyJ', 'KeyK', 'KeyL', 'KeyQ', 'KeyE', 'KeyU', 'KeyO']) expect(flightOn(press([c])), c).toEqual([]);
+    expect(press(['KeyW', 'KeyD']).steer).toEqual({ x: 0, y: 0 }); // keys never steer by direction
     expect(press(['Escape']).pause).toBe(true);
     expect(press(['Backspace']).restart).toBe(true);
-    expect(press(['KeyA'], 'csm').steer).toEqual({ x: -1, y: 0 });
-    // harpoon modes keep their bindings (no steer)
+    // harpoon modes keep their bindings
     const h = press(['Space', 'KeyW'], 'harpoon');
     expect(h.fire && h.reelIn).toBe(true);
-    expect(h.steer).toEqual({ x: 0, y: 0 });
-    // a tap shorter than a tick still steers one tick
+    // a tap shorter than a tick still turns one tick
     kb.keyDown('KeyD');
     kb.keyUp('KeyD');
-    expect(m.sample(ctx('lander')).steer).toEqual({ x: 1, y: 0 });
-    expect(m.sample(ctx('lander')).steer).toEqual({ x: 0, y: 0 });
+    expect(m.sample(ctx('lander')).rotateCW).toBe(true);
+    expect(m.sample(ctx('lander')).rotateCW).toBe(false);
+  });
+
+  it('keyboard (CSM): DIRECT changes nothing - every key gives the classic ENGINE frame, and the layer passes it through', () => {
+    const sample = (direct: boolean, codes: string[]) => {
+      const kb = new KeyboardSource(null);
+      kb.setDirectSteering(direct);
+      const m = new InputMapper();
+      m.add(kb);
+      codes.forEach((c) => kb.keyDown(c));
+      const f = m.sample(ctx('csm'));
+      return direct ? new DirectSteering().apply(f, { mode: 'csm', angle: 0.3, angularVel: -0.5 }) : f;
+    };
+    const all = ['KeyW', 'ArrowUp', 'Space', 'KeyA', 'ArrowLeft', 'KeyD', 'ArrowRight', 'KeyS', 'ArrowDown', 'KeyQ', 'KeyE', 'KeyJ', 'KeyL', 'Escape', 'Backspace'];
+    for (const c of all) expect(sample(true, [c]), c).toEqual(sample(false, [c]));
+    expect(sample(true, ['KeyW', 'KeyD']), 'W+D').toEqual(sample(false, ['KeyW', 'KeyD']));
+    expect(flightOn(sample(true, ['KeyW', 'KeyA']))).toEqual(['thrust', 'rotateCCW']);
   });
 
   it('keyboard: ENGINES scheme (default) is unchanged and reports no steer', () => {
@@ -549,16 +582,200 @@ describe('DIRECT steering: UI, touch layout, setting', () => {
     expect(parseSave({ settings: { steering: 'direct' } })!.settings.steering).toBe('direct');
   });
 
-  it('help card: DIRECT lines for lander / csm (keys + touch); swap does not apply; harpoon cards unchanged', () => {
+  it('help card: DIRECT lines for lander (keys + touch) and csm (touch only); swap does not apply; harpoon cards unchanged', () => {
     const keys = helpCard('lander', false, true, true, true);
     expect(keys.title).toBe('LANDER CONTROLS (DIRECT)');
-    expect(keys.lines.join(' ')).toMatch(/W A S D \/ ARROWS\s+THRUST THAT WAY/);
-    expect(keys.lines.join(' ')).toMatch(/TOP THRUSTERS/);
-    expect(keys.lines.join(' ')).not.toMatch(/ENGINE \(TILT/);
+    const k = keys.lines.join(' ');
+    expect(k).toMatch(/A \/ ←\s+ROTATE LEFT/);
+    expect(k).toMatch(/D \/ →\s+ROTATE RIGHT/);
+    expect(k).toMatch(/W \/ ↑ \/ SPACE\s+THRUST/);
+    expect(k).toMatch(/S \/ ↓\s+TOP THRUSTERS/);
+    expect(k).not.toMatch(/ENGINE \(TILT|THRUST THAT WAY/);
+    // Descent / CSM on a keyboard: the classic ENGINE card in both settings
+    expect(helpCard('csm', false, true, false, true)).toEqual(helpCard('csm', false, true, false, false));
+    expect(helpCard('csm', false, true, false, true).title).toBe('CSM CONTROLS');
     const touch = helpCard('lander', true, true, false, true);
     expect(touch.lines.join(' ')).toMatch(/HOLD ANYWHERE: THRUST TOWARD FINGER/);
     expect(touch.lines.at(-1)).toMatch(/PAUSE/);
     expect(helpCard('csm', true, true, false, true).lines.join(' ')).toMatch(/TOWARD FINGER/);
     expect(helpCard('harpoon', true, true, false, true)).toEqual(helpCard('harpoon', true, true, false, false));
+  });
+});
+
+describe('DIRECT keyboard: lander rotate + thrust (real physics)', () => {
+  it.each([1, -1])('a held rotate key (%i) spins up fast to the turn rate on an RCS couple that costs ~no altitude', async (dir) => {
+    const r = await rig('lander');
+    const coast = await rig('lander');
+    r.keys(dir > 0 ? { rotateCW: true } : { rotateCCW: true }, 30); // 0.5 s
+    coast.keys({}, 30);
+    const st = r.state();
+    // crisp: at the rate within 0.3 s, held there (bang-bang inside the band)
+    const at = r.states.findIndex((x) => Math.abs(x.angularVel - dir * DIRECT_KEY_TURN_RATE) <= DIRECT_KEY_RATE_BAND + 1e-6);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(at).toBeLessThan(18);
+    for (const x of r.states.slice(at + 1)) expect(Math.abs(x.angularVel - dir * DIRECT_KEY_TURN_RATE)).toBeLessThan(DIRECT_KEY_RATE_BAND + 0.15);
+    expect((dir * st.angle) / DEG).toBeGreaterThan(35);
+    // the couple: one main (scaled down) + the opposite top thruster, never both mains
+    const cw = dir > 0;
+    const pulses = r.frames.filter((f) => flightOn(f).length > 0);
+    expect(pulses.length).toBeGreaterThan(5);
+    for (const f of pulses) {
+      expect(flightOn(f)).toEqual(cw ? ['engineLeft', 'topRight'] : ['engineRight', 'topLeft']);
+      expect(f.engineScale).toBe(landerCoupleScale(resolveTuning().lander)); // ≈ DIRECT_LANDER_COUPLE_SCALE
+    }
+    // altitude: within 2 px of a pure coast after half a second of turning
+    expect(Math.abs(st.pos.y - coast.state().pos.y)).toBeLessThan(2);
+  });
+
+  it('releasing the key stops the spin it made, then everything is off and the attitude is left alone (no auto-upright)', async () => {
+    const r = await rig('lander');
+    r.keys({ rotateCW: true }, 30);
+    const n = r.frames.length;
+    r.keys({}, 90);
+    const after = r.frames.slice(n);
+    // braking pulses first (the opposite couple), then nothing at all
+    const firstOff = after.findIndex((f) => flightOn(f).length === 0);
+    expect(firstOff).toBeGreaterThan(0);
+    expect(firstOff).toBeLessThan(20);
+    for (const f of after.slice(0, firstOff)) expect(flightOn(f)).toEqual(['engineRight', 'topLeft']);
+    expect(after.slice(firstOff).every((f) => flightOn(f).length === 0)).toBe(true);
+    const end = r.state();
+    expect(Math.abs(end.angularVel)).toBeLessThan(DIRECT_KEY_STOP_BAND);
+    expect(end.angle / DEG).toBeGreaterThan(40); // stays turned: nothing rights it
+    const settled = r.states[n + firstOff]!.angle;
+    expect(Math.abs(end.angle - settled) / DEG).toBeLessThan(4);
+  });
+
+  it('a spin the key did not make is never braked (no input = no power)', () => {
+    const l = new DirectSteering();
+    for (let i = 0; i < 30; i++) expect(flightOn(l.apply(emptyFrame(), { mode: 'lander', angle: 1, angularVel: 3 }))).toEqual([]);
+  });
+
+  it.each([
+    ['tap D while spinning +3 (the key brakes it to the rate)', 3, { rotateCW: true }],
+    ['tap A while spinning +3 (the key brakes it)', 3, { rotateCCW: true }],
+    ['tap D while spinning -3 (the key brakes it)', -3, { rotateCW: true }],
+    ['tap A while spinning -3', -3, { rotateCCW: true }],
+  ] as const)('the release brake removes at most what the key added: %s', async (_n, w0, key) => {
+    // the hull's angular damping slows any spin: compare with the same spin left alone
+    const r = await rig('lander');
+    const alone = await rig('lander');
+    r.spin(w0);
+    alone.spin(w0);
+    r.keys(key, 1); // one tick
+    alone.keys({}, 1);
+    const added = r.state().angularVel - alone.state().angularVel; // the key's own contribution
+    const n = r.frames.length;
+    r.keys({}, 60);
+    alone.keys({}, 60);
+    // released: the brake never takes away more than the key added (here every tap moved the spin
+    // TOWARD zero - the key's rate is below 3 - so there is nothing to take back: no brake at all)
+    expect(Math.sign(added)).toBe(-Math.sign(w0));
+    expect(r.frames.slice(n).every((f) => flightOn(f).length === 0)).toBe(true);
+    const diff = r.state().angularVel - alone.state().angularVel;
+    expect(Math.abs(diff)).toBeLessThanOrEqual(Math.abs(added) + 1e-6);
+    expect(Math.sign(diff)).toBe(Math.sign(added)); // the spin it took off stays off; nothing re-added
+  });
+
+  it('a tap that added spin is braked back to the spin it found, not to zero', async () => {
+    const r = await rig('lander');
+    const alone = await rig('lander');
+    r.spin(1);
+    alone.spin(1);
+    r.keys({ rotateCW: true }, 6); // spins up toward the 2.2 rate
+    alone.keys({}, 6);
+    expect(r.state().angularVel - alone.state().angularVel).toBeGreaterThan(0.3);
+    const n = r.frames.length;
+    r.keys({}, 60);
+    alone.keys({}, 60);
+    // braked (the opposite couple) only until the key's extra spin is gone - never through the spin it found
+    const after = r.frames.slice(n);
+    expect(after.some((f) => f.engineRight && f.topLeft)).toBe(true);
+    expect(after.every((f) => !f.engineLeft && !f.topRight)).toBe(true);
+    expect(r.state().angularVel).toBeGreaterThan(alone.state().angularVel - DIRECT_KEY_STOP_BAND - 0.05);
+  });
+
+  it('L7: the couple scale comes from the level tuning (hangarRun: lighter mains) and a pure turn still costs ~no altitude', async () => {
+    const t = resolveTuning(getLevel('hangarRun')!.physicsOverrides);
+    expect(t.lander.thrust).not.toBe(resolveTuning().lander.thrust);
+    const scale = landerCoupleScale(t.lander);
+    expect(scale).toBeCloseTo(t.lander.topThrust / t.lander.thrust, 9);
+    expect(scale).not.toBeCloseTo(DIRECT_LANDER_COUPLE_SCALE, 3);
+    expect(landerCoupleScale(resolveTuning().lander)).toBeCloseTo(DIRECT_LANDER_COUPLE_SCALE, 2);
+    const r = await rig('lander', {}, t);
+    const coast = await rig('lander', {}, t);
+    r.keys({ rotateCW: true }, 30);
+    coast.keys({}, 30);
+    expect(r.frames.filter((f) => flightOn(f).length > 0).every((f) => f.engineScale === scale)).toBe(true);
+    expect(r.state().angle / DEG).toBeGreaterThan(35);
+    expect(Math.abs(r.state().pos.y - coast.state().pos.y)).toBeLessThan(2);
+  });
+
+  it('thrust alone = both mains at DIRECT_LANDER_THRUST_SCALE (climbs); S / ↓ alone = both top thrusters (pushes down); ↑ wins over ↓', async () => {
+    const up = await rig('lander');
+    up.keys({ thrust: true }, 60);
+    expect(up.frames.every((f) => f.engineLeft && f.engineRight && !f.topLeft && !f.topRight && f.engineScale === DIRECT_LANDER_THRUST_SCALE)).toBe(true);
+    expect(up.state().vel.y).toBeLessThan(0);
+    const down = await rig('lander');
+    const coast = await rig('lander');
+    down.keys({ topLeft: true, topRight: true }, 30);
+    coast.keys({}, 30);
+    expect(down.frames.every((f) => flightOn(f).join() === 'topLeft,topRight')).toBe(true);
+    expect(down.state().vel.y).toBeGreaterThan(coast.state().vel.y + 10);
+    expect(Math.abs(down.state().angle)).toBeLessThan(1e-3);
+    const both = new DirectSteering().apply({ ...emptyFrame(), thrust: true, topLeft: true, topRight: true }, { mode: 'lander', angle: 0, angularVel: 0 });
+    expect(flightOn(both)).toEqual(['engineLeft', 'engineRight']);
+  });
+
+  it('thrust + rotate: only the leading main engine while the turn rate is short, both once at rate; climbs while turning', async () => {
+    const r = await rig('lander');
+    r.keys({ thrust: true, rotateCCW: true }, 45);
+    const f = r.frames;
+    expect(flightOn(f[0]!)).toEqual(['engineRight']); // counter-clockwise: right engine leads
+    expect(f.some((x) => x.engineLeft && x.engineRight)).toBe(true);
+    expect(f.every((x) => !x.engineLeft || x.engineRight)).toBe(true); // never the clockwise-only engine
+    expect(f.every((x) => !x.topLeft && !x.topRight)).toBe(true);
+    expect(r.state().angle).toBeLessThan(-30 * DEG);
+    expect(r.state().vel.x).toBeLessThan(0); // tilted left and burning: drifts left
+  });
+
+  it('↓ + rotate: only the leading top thruster while the rate is short', () => {
+    const f = new DirectSteering().apply({ ...emptyFrame(), topLeft: true, topRight: true, rotateCW: true }, { mode: 'lander', angle: 0, angularVel: 0 });
+    expect(flightOn(f)).toEqual(['topRight']); // top-right pushes the right side down = clockwise
+  });
+});
+
+describe('Descent on a keyboard: the ENGINE scheme in both steering settings', () => {
+  it('the same key script flies the Descent CSM identically with DIRECT on or off', async () => {
+    const script = (t: number): string[] => (t < 40 ? ['KeyW'] : t < 70 ? ['KeyD'] : t < 90 ? ['KeyW', 'ArrowLeft'] : t < 120 ? [] : ['ArrowUp', 'KeyA']);
+    const fly = async (direct: boolean) => {
+      const s = await LevelSession.create(descent);
+      s.start();
+      expect(s.state.mode).toBe('csm');
+      const kb = new KeyboardSource(null);
+      kb.setDirectSteering(direct);
+      const m = new InputMapper();
+      m.add(kb);
+      const layer = new DirectSteering();
+      let held: string[] = [];
+      const trace: string[] = [];
+      for (let t = 0; t < 150; t++) {
+        const want = script(t);
+        held.filter((c) => !want.includes(c)).forEach((c) => kb.keyUp(c));
+        want.filter((c) => !held.includes(c)).forEach((c) => kb.keyDown(c));
+        held = want;
+        const f = m.sample({ mode: s.state.mode, vesselWorldPos: s.state.pos, clientToWorld: (x, y) => ({ x, y }) });
+        if (direct) layer.apply(f, s.state); // what App.step does under Settings.steering = 'direct'
+        s.step(f);
+        trace.push(`${flightOn(f).join('+')}@${s.state.pos.x.toFixed(3)},${s.state.pos.y.toFixed(3)},${s.state.angle.toFixed(4)}`);
+      }
+      s.destroy();
+      return trace;
+    };
+    const engines = await fly(false);
+    const direct = await fly(true);
+    expect(direct).toEqual(engines);
+    expect(engines[10]).toMatch(/^thrust@/);
+    expect(engines[50]).toMatch(/^rotateCW@/);
   });
 });

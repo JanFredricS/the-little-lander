@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CAUSE_EXT, FpsMeter, fpsText, FRAME_PHASES, PHASE_AUDIO, PHASE_PAINT, PHASE_STEP } from '../src/ui/fpsMeter';
+import { CAUSE_EXT, FpsMeter, fpsText, FRAME_PHASES, PHASE_AUDIO, PHASE_DRAW, PHASE_PAINT, PHASE_STEP, PHASE_UPLOAD } from '../src/ui/fpsMeter';
 
 describe('FPS meter', () => {
   it('publishes averaged fps / frame ms / cpu ms once per window', () => {
@@ -91,6 +91,36 @@ describe('FPS meter', () => {
     expect(m.reading!.lastCause).toBe(-1);
   });
 
+  it('terrain streaming split across PAINT + UPLOAD: the pair is blamed (labelled by its larger half) when neither alone explains it', () => {
+    const m = new FpsMeter(500);
+    const ph = new Float64Array(FRAME_PHASES.length);
+    let t = 0;
+    const steady = (n: number): void => {
+      ph.fill(0);
+      for (let i = 0; i < n; i++) m.frame((t += 1000 / 60), 1, ph);
+    };
+    const hitch = (paint: number, upload: number, draw = 0): void => {
+      ph.fill(0);
+      ph[PHASE_PAINT] = paint;
+      ph[PHASE_UPLOAD] = upload;
+      ph[PHASE_DRAW] = draw;
+      m.frame((t += 1000 / 60), paint + upload + draw, ph);
+      ph.fill(0);
+      m.frame((t += 80), 1, ph); // overrun ~63 ms: half is ~32
+      steady(40);
+    };
+    m.frame(t, 1, ph);
+    steady(40);
+    hitch(20, 25); // neither half alone, the pair (45) does: UPLOAD (larger) with 45
+    expect(fpsText(m.reading)).toMatch(/LAST UPLOAD 45$/);
+    hitch(24, 18); // PAINT larger
+    expect(fpsText(m.reading)).toMatch(/LAST PAINT 42$/);
+    hitch(10, 8); // the pair is not enough either: EXT
+    expect(m.reading!.lastCause).toBe(CAUSE_EXT);
+    hitch(5, 5, 40); // one phase alone explains it: that phase, not the pair
+    expect(fpsText(m.reading)).toMatch(/LAST DRAW 40$/);
+  });
+
   it('reset() drops the reading and the open window', () => {
     const m = new FpsMeter(500);
     for (let i = 0; i <= 31; i++) m.frame(i * (1000 / 60), 3);
@@ -101,5 +131,22 @@ describe('FPS meter', () => {
     expect(m.frame(99_000, 1)).toBe(false);
     for (let i = 1; i <= 31; i++) m.frame(99_000 + i * (1000 / 60), 1);
     expect(m.reading!.fps).toBeCloseTo(60, 0);
+  });
+});
+
+describe('terrain diagnostics line (FPS counter)', () => {
+  it('reports the latest counters and the worst terrain / upload ms of the last ~2 s windows', async () => {
+    const { TerrainDiagMeter, terrainText } = await import('../src/ui/fpsMeter');
+    const m = new TerrainDiagMeter();
+    m.note({ jumps: 0, late: 1, syncUploads: 12, ms: 3, uploadMs: 1 });
+    m.note({ jumps: 1, late: 2, syncUploads: 18, ms: 78.4, uploadMs: 61.2 });
+    expect(terrainText(m.publish())).toBe('TERRAIN MAX 78 UP 61 JUMP 1 LATE 2 SYNC 18');
+    // the spike stays in the readout for the ~2 s history, then ages out
+    for (let w = 0; w < 3; w++) {
+      m.note({ jumps: 1, late: 2, syncUploads: 18, ms: 2, uploadMs: 0.5 });
+      expect(m.publish().worstMs).toBeCloseTo(78.4);
+    }
+    m.note({ jumps: 1, late: 2, syncUploads: 18, ms: 2, uploadMs: 0.5 });
+    expect(terrainText(m.publish())).toBe('TERRAIN MAX 2 UP 1 JUMP 1 LATE 2 SYNC 18');
   });
 });

@@ -48,7 +48,8 @@ export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOp
   const killFront = spec.zones.some((z) => z.kind === 'killFront') ? new KillFrontSystem(host, options.killFront, crumble) : null;
   const boss = spec.entities.find((e): e is BossSpawnEntity => e.kind === 'bossSpawn');
   const keeper = boss ? new KeeperSystem(host, boss, rocks) : null;
-  const righting = spec.vesselMode === 'harpoonThrust' ? new RightingSystem(host) : null;
+  // every level: it serves the reaction-wheel modes (csm, harpoonThrust) whatever the level switches to, idle otherwise
+  const righting = new RightingSystem(host);
   const list = [rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
   return { list, rocks, crumble, killFront, keeper, righting };
 }

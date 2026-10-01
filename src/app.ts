@@ -28,7 +28,7 @@ import { getCutscene } from './story/scripts';
 import { GameUi, type GameUiOptions } from './ui/gameUi';
 import type { StoryContext } from './ui/screens';
 import { detectTouch } from './ui/touch/touchLayer';
-import { FRAME_PHASES, PHASE_AUDIO, PHASE_DRAW, PHASE_PAINT, PHASE_STEP, PHASE_SUBMIT } from './ui/fpsMeter';
+import { FRAME_PHASES, PHASE_AUDIO, PHASE_DRAW, PHASE_PAINT, PHASE_STEP, PHASE_SUBMIT, PHASE_UPLOAD, type TerrainDiag } from './ui/fpsMeter';
 
 export interface AppOptions {
   art?: ArtApi;
@@ -103,6 +103,10 @@ export class App {
   /** DIRECT steering layer (Settings.steering = 'direct'): steer command -> engine pulses, once per fixed step. */
   private readonly direct = new DirectSteering();
   private steering: SteeringScheme = 'engines';
+  /** Reused terrain diagnostics record (FPS counter terrain line). */
+  /** A new level view has not rendered yet (its load frame is dropped from the terrain readout). */
+  private terrainDiagFresh = false;
+  private readonly terrainDiag: TerrainDiag = { jumps: 0, late: 0, syncUploads: 0, ms: 0, uploadMs: 0 };
   /** Input sampling context, updated in place every step. */
   private readonly inputCtx: InputSampleContext = {
     mode: 'lander',
@@ -280,6 +284,7 @@ export class App {
       return;
     }
     this.session = session;
+    this.direct.setLanderTuning(session.tuning.lander); // DIRECT keyboard couple balanced for this level's lander
     session.on((e) => this.ui.onEvent(e));
     if (this.options.onEvent) session.on(this.timedOnEvent);
     const midCutscene = modeSwitchCutscene(levelId, spec);
@@ -294,10 +299,12 @@ export class App {
       });
     }
     this.view = new LevelView(session, this.art, { reducedMotion: this.save.state.settings.reducedMotion });
+    this.terrainDiagFresh = true; // its first render prepares the whole screen synchronously: keep that out of the readout
     this.pixi.app.stage.addChildAt(this.view.root, 0);
     // GPU uploads now (loading screen) for the level's sprites, halos, backdrops and props (see
     // LevelView.forEachTextureSource); terrain chunks keep streaming in as the camera moves
     this.view.forEachTextureSource((src) => this.pixi.uploadTexture(src));
+    this.view.setTerrainUploader((src) => this.pixi.uploadTexture(src)); // chunk surfaces too, as they stream in
     this.ui.levelStarted(spec);
     session.start();
     this.clearInputOnNextStep = true;
@@ -381,13 +388,20 @@ export class App {
     // FPS counter (pause menu): rAF cadence + this frame's CPU work (fixed steps + render + Pixi submit),
     // split per phase so a hitch can be tagged with its slowest phase
     const ph = this.phases;
-    const paint = this.view?.terrainPaintMs ?? 0;
+    const terrain = this.view?.terrainDiag(this.terrainDiag) ?? null;
+    const paint = terrain ? terrain.ms : 0;
+    const upload = terrain ? terrain.uploadMs : 0;
     ph[PHASE_AUDIO] = this.audioMs;
     ph[PHASE_STEP] = Math.max(0, ph[PHASE_STEP]! - this.audioMs);
-    ph[PHASE_PAINT] = paint;
+    ph[PHASE_PAINT] = Math.max(0, paint - upload);
+    ph[PHASE_UPLOAD] = upload;
     ph[PHASE_DRAW] = Math.max(0, tSubmit - now - paint);
     ph[PHASE_SUBMIT] = end - tSubmit;
-    this.ui.noteFrameTiming(now, end - t0, ph);
+    this.ui.noteFrameTiming(now, end - t0, ph, terrain);
+    if (terrain && this.terrainDiagFresh) {
+      this.terrainDiagFresh = false;
+      this.ui.resetTerrainHistory(); // level start / restart: the load frame is not a streaming hitch
+    }
     ph.fill(0);
     this.audioMs = 0;
   }

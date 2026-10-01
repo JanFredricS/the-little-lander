@@ -17,7 +17,7 @@ import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, S
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
 import { frameHasInput } from './controlsHelp';
-import { FpsMeter, fpsText } from './fpsMeter';
+import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } from './fpsMeter';
 import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
@@ -118,6 +118,9 @@ export class GameUi {
   private steering: SteeringScheme;
   private readonly fpsMeter = new FpsMeter();
   private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
+  /** Second FPS-counter line: terrain streaming diagnostics (in a level). */
+  private readonly terrainLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
+  private readonly terrainMeter = new TerrainDiagMeter();
   /** Cached HUD left inset (virtual px) + when it was measured: measuring reads DOM layout, so not every frame. */
   private insetCache = { at: -Infinity, value: 0 };
   private lastHull: number | null = null;
@@ -128,7 +131,7 @@ export class GameUi {
 
   constructor(private readonly o: GameUiOptions) {
     this.screenView = new ScreenView(o.art);
-    this.layer.addChild(this.hudView.root, this.screenView.root, this.fpsLabel);
+    this.layer.addChild(this.hudView.root, this.screenView.root, this.fpsLabel, this.terrainLabel);
     o.pixi.app.stage.addChild(this.layer);
     this.hudView.root.visible = false;
     this.touchDetected = detectTouch();
@@ -138,6 +141,7 @@ export class GameUi {
     this.lowRes = o.lowRes ?? false;
     this.steering = o.steering ?? 'engines';
     this.fpsLabel.visible = this.showFps;
+    this.terrainLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
     this.touch.setDirectSteering(this.steering === 'direct');
@@ -202,6 +206,11 @@ export class GameUi {
   }
 
   // --------------------------------------------------------------- screens
+
+  /** New level view (start / restart): drop the terrain ms history so the load frame's synchronous prepare does not dominate MAX / UP. */
+  resetTerrainHistory(): void {
+    this.terrainMeter.reset();
+  }
 
   enter(next: ScreenState): void {
     this.state = next;
@@ -341,10 +350,15 @@ export class GameUi {
    * One animation frame's timing for the FPS counter: rAF time + CPU ms of the
    * frame's work (the App measures steps + render). Cheap when the counter is off.
    */
-  noteFrameTiming(nowMs: number, workMs: number, phases?: ArrayLike<number>): void {
+  noteFrameTiming(nowMs: number, workMs: number, phases?: ArrayLike<number>, terrain?: TerrainDiag | null): void {
     if (!this.showFps) return;
-    this.fpsMeter.frame(nowMs, workMs, phases);
+    if (terrain) this.terrainMeter.note(terrain);
+    const published = this.fpsMeter.frame(nowMs, workMs, phases);
     this.fpsLabel.setText(fpsText(this.fpsMeter.reading)); // no-op unless a new reading was published
+    if (published) {
+      // terrain line (in a level): which streaming path fired - for player reports from the deployed build
+      this.terrainLabel.setText(terrain ? terrainText(this.terrainMeter.publish()) : '');
+    }
   }
 
   render(nowMs: number): void {
@@ -359,6 +373,7 @@ export class GameUi {
       // top-right corner; left of the mode badge while the HUD is up
       const right = this.hudView.root.visible ? this.hudView.badgeLeft - 4 : VIEW_WIDTH - 4;
       this.fpsLabel.position.set(Math.round(right - this.fpsLabel.width), 5);
+      this.terrainLabel.position.set(Math.round(right - this.terrainLabel.width), 5 + Math.ceil(this.fpsLabel.height) + 2);
     }
     if (this.screenView.root.visible && this.model) {
       this.screenView.render(this.menu, nowMs);
@@ -443,9 +458,12 @@ export class GameUi {
     } else if (a.ui === 'toggleFps') {
       this.showFps = !this.showFps;
       this.fpsLabel.visible = this.showFps;
+      this.terrainLabel.visible = this.showFps;
       // no stale reading (or a first window spanning the time it was off) when it comes back
       this.fpsMeter.reset();
+      this.terrainMeter.reset();
       this.fpsLabel.setText(this.showFps ? fpsText(null) : '');
+      this.terrainLabel.setText('');
       this.o.onShowFpsChange?.(this.showFps);
       this.refreshModel(false);
     } else if (a.ui === 'toggleLowRes') {

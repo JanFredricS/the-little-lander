@@ -13,6 +13,8 @@ let canvasesMade = 0;
 let bandsThisFrame = 0;
 /** Draw calls (drawImage / fillRect) issued in the current frame. */
 let opsThisFrame = 0;
+/** Texture uploads issued in the current frame. */
+let uploadsThisFrame = 0;
 let bandsFrame = -1;
 /** Virtual-clock reading at the start of the frame's latest band (see bandClock). */
 let lastBandStart = 0;
@@ -27,6 +29,7 @@ function startFrameCount(): void {
     bandsFrame = frame;
     bandsThisFrame = 0;
     opsThisFrame = 0;
+    uploadsThisFrame = 0;
   }
 }
 
@@ -79,7 +82,7 @@ class FakeCtx {
     this.canvas.lastPaintFrame = frame;
     startFrameCount();
     bandsThisFrame++;
-    lastBandStart = clockNow();
+    lastBandStart = paintClock();
     this.canvas.bandRows.push([this.pathBox.y0, this.pathBox.y1]);
   }
   moveTo() {
@@ -179,6 +182,8 @@ vi.mock('pixi.js', () => {
         canvas,
         source: {
           update: () => {
+            startFrameCount();
+            uploadsThisFrame++;
             uploadLog.push([frame, canvas.lastPaintFrame, canvas, canvas.fresh]);
             canvas.fresh = false;
           },
@@ -190,7 +195,7 @@ vi.mock('pixi.js', () => {
   return { Container, Sprite, Texture };
 });
 
-const { TerrainView, TERRAIN_UPLOADS_PER_FRAME, TERRAIN_VISIBLE_UPLOADS_PER_FRAME, TERRAIN_PAINT_BUDGET_MAX_MS, TERRAIN_CHUNK } = await import('../src/render/terrainView');
+const { TerrainView, TERRAIN_UPLOADS_PER_FRAME, TERRAIN_VISIBLE_UPLOADS_PER_FRAME, TERRAIN_PAINT_BUDGET_MAX_MS, TERRAIN_UPLOAD_BUDGET_MS, TERRAIN_CHUNK } = await import('../src/render/terrainView');
 const { getLevel } = await import('../src/levels/registry');
 const { PALETTES } = await import('../src/art/palettes');
 
@@ -199,18 +204,25 @@ const art = { palettes: PALETTES, getTile: () => tile } as never;
 
 let clockBandMs = 0;
 let clockOpMs = 0;
-function clockNow(): number {
+let clockUploadMs = 0;
+/** The virtual clock without upload time (band cost accounting). */
+function paintClock(): number {
   const cur = bandsFrame === frame;
   return frame * (1000 / 60) + (cur ? bandsThisFrame * clockBandMs + opsThisFrame * clockOpMs : 0);
+}
+function clockNow(): number {
+  const cur = bandsFrame === frame;
+  return frame * (1000 / 60) + (cur ? bandsThisFrame * clockBandMs + opsThisFrame * clockOpMs + uploadsThisFrame * clockUploadMs : 0);
 }
 /**
  * Virtual clock: frames 16.7 ms apart; within a frame every band costs
  * `bandMs` plus `opMs` per draw call it issues (real painter work: bands
  * vary in cost, so the estimate-driven budget can be checked for real).
  */
-function bandClock(bandMs: number, opMs = 0): () => number {
+function bandClock(bandMs: number, opMs = 0, uploadMs = 0): () => number {
   clockBandMs = bandMs;
   clockOpMs = opMs;
+  clockUploadMs = uploadMs;
   return clockNow;
 }
 
@@ -220,6 +232,7 @@ beforeEach(() => {
   canvasesMade = 0;
   bandsThisFrame = 0;
   opsThisFrame = 0;
+  uploadsThisFrame = 0;
   bandsFrame = -1;
   lastBandStart = 0;
   uploadLog.length = 0;
@@ -346,7 +359,7 @@ describe('TerrainView streaming', () => {
     // the budget held every frame: a band only STARTS while its estimated cost still fits, so a
     // frame's time minus its last band's cost is within the budget (no fixed per-band cost assumed)
     const budgetHeld = () => {
-      const lastBand = tv.bandsLastUpdate > 0 ? clockNow() - lastBandStart : 0;
+      const lastBand = tv.bandsLastUpdate > 0 ? paintClock() - lastBandStart : 0;
       expect(tv.msLastUpdate - lastBand).toBeLessThanOrEqual(tv.budgetLastUpdate + 1e-9);
       expect(tv.budgetLastUpdate).toBeLessThanOrEqual(TERRAIN_PAINT_BUDGET_MAX_MS);
       if (tv.bandsLastUpdate > 1) multiBandFrames++;
@@ -474,28 +487,183 @@ describe('TerrainView streaming', () => {
     for (const c of chunksOf(tv)) if (onScreen(c, x, yy)) expect(c.stage === SHOWN || c.stage === EMPTY, `chunk ${c.i},${c.j}`).toBe(true);
   }
 
-  it('a stall whose move the velocity explains but that lands a screen or more away is a jump: the new screen is whole at once', () => {
+  it('a stall along the flight path inside the reach is NOT a jump: the new screen fills in late within the budget, no repeat', () => {
+    // bands, draw calls AND uploads cost time (a canvas that keeps up at this speed without stalls)
+    const tv = new TerrainView(spec, art, bandClock(0.5, 0.005, 1));
+    let y = cruise(tv, 1000, 42, 60); // ~2500 px/s
+    const syncAtLoad = tv.syncUploadsTotal;
+    let logged = uploadLog.length;
+    const frameOk = () => {
+      expect(tv.syncUploadsLastUpdate).toBe(0);
+      // paint within its budget (minus the last band) + uploads within theirs (minus the last upload)
+      const lastBand = tv.bandsLastUpdate > 0 ? paintClock() - lastBandStart : 0;
+      expect(tv.msLastUpdate - tv.uploadMsLastUpdate - lastBand).toBeLessThanOrEqual(tv.budgetLastUpdate + 1e-9);
+      expect(tv.uploadMsLastUpdate).toBeLessThanOrEqual(TERRAIN_UPLOAD_BUDGET_MS + 1);
+      logged = checkUploads(tv, logged);
+    };
+    for (const stallFrames of [6, 18, 60]) {
+      // a 100 ms, 300 ms, 1 s stall (GC, tab jank): the camera moved on as predicted
+      frame += stallFrames;
+      y += 42 * stallFrames;
+      tv.update({ x, y });
+      frameOk();
+      // ...and flight goes on: the stall must not feed itself (no jump, no synchronous frame)
+      let ready: number | undefined;
+      for (let f = 1; f <= 90; f++) {
+        frame++;
+        y += 42;
+        tv.update({ x, y });
+        frameOk();
+        if (tv.unreadyVisibleLastUpdate === 0) ready ??= f;
+      }
+      expect(ready, `screen whole again after a ${stallFrames}-frame stall`).toBeLessThan(60);
+    }
+    expect(tv.jumpUpdates).toBe(0);
+    expect(tv.syncUploadsTotal).toBe(syncAtLoad); // nothing synchronous after the level load
+  });
+
+  it('a velocity-aligned move beyond the reach (~2x the look-ahead) is a jump: the new screen is whole at once', () => {
     const tv = new TerrainView(spec, art, bandClock(0.25));
-    let y = cruise(tv, 2000, 20, 60); // ~1200 px/s
-    // a 1 s stall (tab in the background, GC): the camera moved on as predicted, 1200 px
-    frame += 60;
-    y += 1200;
+    let y = cruise(tv, 1000, 150, 40); // 9000 px/s, velocity estimate settled; lead capped at TERRAIN_MAX_LEAD chunks
+    // a 600 ms stall at that speed: 5400 px, exactly as predicted, past the reach
+    frame += 36;
+    y += 5400;
     const logged = uploadLog.length;
     tv.update({ x, y });
     expect(tv.jumpUpdates).toBe(1);
-    expect(tv.lateChunks).toBe(0);
     screenReady(tv, y);
     checkUploads(tv, logged);
   });
 
-  it('a velocity-aligned move beyond the prepared area (even in a normal-length frame) is a jump', () => {
+  /** On-screen terrain chunks (non-empty) and how many of them show something (finished, or partly as they fill). */
+  function screenShown(tv: View, yy: number): { terrain: number; showing: number } {
+    let terrain = 0;
+    let showing = 0;
+    for (const c of chunksOf(tv)) {
+      if (!onScreen(c, x, yy) || c.stage === EMPTY) continue;
+      terrain++;
+      if (c.stage === SHOWN || c.surface?.sprite.visible) showing++;
+    }
+    return { terrain, showing };
+  }
+
+  it('an extreme-speed long frame INSIDE the reach that leaves the screen fully blank is prepared at once, exactly once', () => {
     const tv = new TerrainView(spec, art, bandClock(0.25));
-    let y = cruise(tv, 1000, 150, 40); // 9000 px/s, velocity estimate settled; lead capped at TERRAIN_MAX_LEAD chunks
-    // a 250 ms frame (not a stall) at that speed: 2250 px, exactly as predicted, past the lead
+    let y = cruise(tv, 1000, 150, 40); // 9000 px/s
+    expect(tv.jumpUpdates).toBe(0);
+    // a 250 ms frame: 2250 px, as predicted - inside the reach (not a jump by the reach rule)
     frame += 15;
     y += 2250;
+    let logged = uploadLog.length;
     tv.update({ x, y });
+    logged = checkUploads(tv, logged);
+    expect(tv.blankUpdates).toBe(1);
     expect(tv.jumpUpdates).toBe(1);
+    expect(tv.syncUploadsLastUpdate).toBeGreaterThan(0);
+    screenReady(tv, y);
+    // flight goes on: never blank again, the next frame is not synchronous, few frames below fully shown
+    let partial = 0;
+    for (let f = 1; f <= 60; f++) {
+      frame++;
+      y += 150;
+      tv.update({ x, y });
+      logged = checkUploads(tv, logged);
+      if (f === 1) expect(tv.syncUploadsLastUpdate).toBe(0);
+      const s = screenShown(tv, y);
+      expect(s.terrain === 0 || s.showing > 0, `frame ${f}: screen blank`).toBe(true);
+      if (s.showing < s.terrain) partial++;
+    }
+    expect(tv.blankUpdates).toBe(1);
+    expect(tv.jumpUpdates).toBe(1);
+    expect(partial).toBeLessThanOrEqual(10);
+  });
+
+  it('a blank screen is not re-prepared on two updates in a row (no self-feeding synchronous loop)', () => {
+    const tv = new TerrainView(spec, art, bandClock(0.25));
+    let y = cruise(tv, 1000, 150, 40);
+    frame += 15;
+    y += 2250;
+    tv.update({ x, y }); // blank -> prepared
+    frame += 15;
+    y += 2250;
+    tv.update({ x, y }); // blank again right away: waits a frame (late fill)
+    expect(tv.blankUpdates).toBe(1);
+    expect(tv.syncUploadsLastUpdate).toBe(0);
+  });
+
+  it('a backward snap: under a view it overlaps the shown screen (no sync); a view or more is a jump prepared once', () => {
+    const tv = new TerrainView(spec, art, bandClock(0.25));
+    let y = cruise(tv, 1000, 150, 40); // flying down at 9000 px/s, lead below
+    frame++;
+    y -= 359; // snap back up, just under a view: not a teleport
+    tv.update({ x, y });
+    expect(tv.jumpUpdates).toBe(0);
+    expect(tv.syncUploadsLastUpdate).toBe(0);
+    const s = screenShown(tv, y);
+    expect(s.showing).toBeGreaterThan(0);
+    for (let f = 0; f < 30; f++) {
+      frame++;
+      tv.update({ x, y });
+    }
+    screenReady(tv, y);
+    // now down again and a snap back up past the trailing margin by more than a view: a jump
+    y = descend(tv, x, y, 150, 30);
+    frame++;
+    y -= 900;
+    const logged = uploadLog.length;
+    tv.update({ x, y });
+    checkUploads(tv, logged);
+    expect(tv.jumpUpdates).toBe(1);
+    expect(tv.blankUpdates).toBe(0);
+    screenReady(tv, y);
+    frame++;
+    tv.update({ x, y });
+    expect(tv.jumpUpdates).toBe(1); // prepared once
+    expect(tv.syncUploadsLastUpdate).toBe(0);
+  });
+
+  it('GPU init: every new surface is initialised once through the uploader; without one, first updates stay out of the upload estimate', () => {
+    // with an uploader (the App's renderer.texture.initSource)
+    const tv = new TerrainView(spec, art, bandClock(0.25, 0, 3));
+    const inits = new Map<unknown, number>();
+    tv.setUploader((src) => inits.set(src, (inits.get(src) ?? 0) + 1));
+    // every chunk surface ever live (recycled ones keep their source)
+    const sources = new Set<unknown>();
+    const collect = () => {
+      for (const c of chunksOf(tv)) if (c.surface) sources.add((c.surface as unknown as { texture: { source: unknown } }).texture.source);
+    };
+    tv.update({ x, y: y0 });
+    collect();
+    descend(tv, x, y0, 20, 120, collect);
+    expect(sources.size).toBeGreaterThan(10);
+    expect(inits.size).toBe(sources.size);
+    for (const src of sources) expect(inits.has(src)).toBe(true);
+    expect([...inits.values()].every((n) => n === 1)).toBe(true);
+    // measured uploads (3 ms each) moved the estimate
+    expect(tv.uploadMs).toBeGreaterThan(2);
+
+    // without one, the load's uploads are all first updates of fresh sources: not measured
+    const bare = new TerrainView(spec, art, bandClock(0.25, 0, 3));
+    const initial = bare.uploadMs;
+    bare.update({ x, y: y0 });
+    expect(bare.uploadsLastUpdate).toBeGreaterThan(0);
+    expect(bare.uploadMs).toBe(initial);
+  });
+
+  it('uploads stay within their per-frame budget (the first always runs) and every chunk still ends up shown', () => {
+    const tv = new TerrainView(spec, art, bandClock(0.25, 0, 1.2)); // ~1.2 ms per upload: one and a half fit the budget
+    tv.update({ x, y: y0 });
+    let maxUploads = 0;
+    let y = descend(tv, x, y0, 30, 200, () => {
+      expect(tv.uploadMsLastUpdate - (tv.uploadsLastUpdate > 0 ? 1.2 : 0)).toBeLessThanOrEqual(TERRAIN_UPLOAD_BUDGET_MS + 1e-9);
+      maxUploads = Math.max(maxUploads, tv.uploadsLastUpdate);
+    });
+    expect(maxUploads).toBeLessThanOrEqual(2);
+    for (let k = 0; k < 120; k++) {
+      frame++;
+      tv.update({ x, y });
+    }
+    expect(tv.pendingCount).toBe(0);
     screenReady(tv, y);
   });
 

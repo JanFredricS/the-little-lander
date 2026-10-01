@@ -19,10 +19,13 @@
  *
  * DIRECT steering (Settings.steering = 'direct', setDirectSteering on the
  * keyboard and pointer sources) in the modes of DIRECT_STEER_MODES (lander,
- * csm): the flight keys are unbound; W A S D / arrows report an 8-way
- * InputFrame.steer instead (pause / restart keys unchanged), and a finger
- * (or the left mouse button) held on the canvas reports steer = vessel ->
- * finger. src/shell/directSteering.ts turns steer into engine pulses.
+ * csm): a finger (or the left mouse button) held on the canvas reports
+ * steer = vessel -> finger. Keyboard: ROTATE + THRUST in lander mode
+ * (A / ← rotateCCW · D / → rotateCW · W / ↑ / Space thrust · S / ↓ both top
+ * thrusters; the engine / top-thruster keys J K L Q E U O are unbound and
+ * swapEngineButtons does not apply); CSM mode keeps its classic bindings
+ * (Descent on a keyboard is the ENGINE scheme in both settings).
+ * src/shell/directSteering.ts turns steer / the lander keys into engine pulses.
  */
 
 import type {
@@ -290,8 +293,8 @@ export class KeyboardSource implements InputSource {
   }
 
   /**
-   * DIRECT steering (Settings.steering = 'direct'): in DIRECT_STEER_MODES the
-   * flight keys are unbound and W A S D / arrows report an 8-way steer.
+   * DIRECT steering (Settings.steering = 'direct'): lander keys become
+   * rotate + thrust (see the header); CSM keys are unchanged.
    */
   setDirectSteering(on: boolean): void {
     this.direct = on;
@@ -308,7 +311,7 @@ export class KeyboardSource implements InputSource {
 
   sample(ctx: InputSampleContext): InputSourceSample {
     const { down, pressed } = this.keys.take();
-    if (this.direct && isDirectSteerMode(ctx.mode)) return directKeys(down, pressed);
+    if (this.direct && ctx.mode === 'lander') return directLanderKeys(down, pressed);
     const map = this.bindings[ctx.mode];
     const outDown: ControlFlags = {};
     const outPressed: ControlFlags = {};
@@ -353,19 +356,29 @@ export class KeyboardSource implements InputSource {
   };
 }
 
-/** Keys still bound under DIRECT steering (shell controls). */
-const DIRECT_KEY_BINDINGS: KeyBindings = PAUSE;
+/**
+ * Lander keys under DIRECT steering: rotate + thrust, read by DirectSteering
+ * (rotateCW / rotateCCW are its turn command; S / ↓ = both top thrusters).
+ */
+const DIRECT_LANDER_BINDINGS: KeyBindings = {
+  ...PAUSE,
+  KeyW: ['thrust'],
+  ArrowUp: ['thrust'],
+  Space: ['thrust'],
+  KeyA: ['rotateCCW'],
+  ArrowLeft: ['rotateCCW'],
+  KeyD: ['rotateCW'],
+  ArrowRight: ['rotateCW'],
+  KeyS: ['topLeft', 'topRight'],
+  ArrowDown: ['topLeft', 'topRight'],
+};
 
-/** DIRECT steering keys: shell controls + an 8-way steer from W A S D / arrows (a tap still steers one tick). */
-function directKeys(down: ReadonlySet<string>, pressed: ReadonlySet<string>): InputSourceSample {
+function directLanderKeys(down: ReadonlySet<string>, pressed: ReadonlySet<string>): InputSourceSample {
   const outDown: ControlFlags = {};
   const outPressed: ControlFlags = {};
-  for (const code of down) for (const c of DIRECT_KEY_BINDINGS[code] ?? []) outDown[c] = true;
-  for (const code of pressed) for (const c of DIRECT_KEY_BINDINGS[code] ?? []) outPressed[c] = true;
-  const held = (a: string, b: string) => down.has(a) || pressed.has(a) || down.has(b) || pressed.has(b);
-  const x = (held('KeyD', 'ArrowRight') ? 1 : 0) - (held('KeyA', 'ArrowLeft') ? 1 : 0);
-  const y = (held('KeyS', 'ArrowDown') ? 1 : 0) - (held('KeyW', 'ArrowUp') ? 1 : 0);
-  return { down: outDown, pressed: outPressed, aim: null, steer: x !== 0 || y !== 0 ? { x, y } : null };
+  for (const code of down) for (const c of DIRECT_LANDER_BINDINGS[code] ?? []) outDown[c] = true;
+  for (const code of pressed) for (const c of DIRECT_LANDER_BINDINGS[code] ?? []) outPressed[c] = true;
+  return { down: outDown, pressed: outPressed, aim: null };
 }
 
 // ----------------------------------------------------------------- pointer

@@ -67,6 +67,8 @@ const h = vi.hoisted(() => ({
   steering: 'engines' as 'engines' | 'direct',
   /** PilotKeys.engineFrames (true = like the browser autopilot; false only for the negative control). */
   pilotEngineFrames: true,
+  /** GameUi.resetTerrainHistory() calls (once per LevelView, on its first rendered frame). */
+  terrainResets: 0,
 }));
 
 vi.mock('../src/levels/registry', async (importOriginal) => {
@@ -104,6 +106,10 @@ vi.mock('../src/render/levelView', () => ({
       h.levelsStarted.push(session.spec.id);
     }
     render() {}
+    setTerrainUploader() {}
+    terrainDiag<T>(out: T): T {
+      return out;
+    }
     forEachTextureSource(upload: (src: unknown) => void) {
       upload({ level: this.session.spec.id });
     }
@@ -158,6 +164,9 @@ vi.mock('../src/ui/gameUi', async () => {
       tick() {}
       render() {}
       noteFrameTiming() {}
+      resetTerrainHistory() {
+        h.terrainResets++;
+      }
       destroy() {}
     },
   };
@@ -335,6 +344,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     h.pilotOverride = null;
     h.steering = 'engines';
     h.pilotEngineFrames = true;
+    h.terrainResets = 0;
     vi.spyOn(console, 'error').mockImplementation((...a) => void errors.push(a));
     vi.spyOn(console, 'warn').mockImplementation((...a) => void errors.push(a));
     vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
@@ -404,7 +414,15 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
       return { ...emptyFrame(), restart: true };
     };
     const r = await playStory(() => h.levelsStarted.filter((id) => id === 'hangarRun').length >= 2);
+    const resetsAtRestart = h.terrainResets;
+    for (let i = 0; i < 61; i++) {
+      h.loop!.step();
+      if (i % 60 === 0) h.loop!.render(1);
+    }
     expect(restartAt).toBeGreaterThanOrEqual(0);
+    // the terrain MAX / UP history restarts with each level view (start and restart), once each
+    expect(resetsAtRestart).toBeGreaterThanOrEqual(1);
+    expect(h.terrainResets).toBe(2);
     expect(r.screens.some((x) => x.startsWith('results:'))).toBe(false);
     expect(r.app.state).toMatchObject({ id: 'playing', levelId: 'hangarRun' });
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
@@ -412,19 +430,34 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
   });
 
   it('a persisted DIRECT steering setting does not disable pilot sources that emit physical engine frames', { timeout: 120_000 }, async () => {
-    // same guaranteed ceiling crash as above, but the save says DIRECT: the pilot's thrust must still reach the lander
+    // the save says DIRECT, and the pilot fires both engines as PHYSICAL flags (no `thrust`): a frame the DIRECT
+    // layer would drop (it reads only steer / thrust / rotate / the top pair). Marked engineFrames, it must reach
+    // the lander untouched (no engineScale) and fly into the ceiling.
+    const { LevelSession: Session } = await import('../src/game/session');
+    const stepped = vi.spyOn(Session.prototype, 'step');
     h.patch = (spec) => (spec.id === 'hangarRun' ? { ...spec, physicsOverrides: { ...spec.physicsOverrides, 'lander.crashSpeed': 120 } } : spec);
-    h.pilotOverride = () => () => ({ ...emptyFrame(), thrust: true });
+    const pilot = () => () => ({ ...emptyFrame(), engineLeft: true, engineRight: true });
+    h.pilotOverride = pilot;
     h.steering = 'direct';
     const r = await playStory((run) => run.app.state.id === 'results');
     expect(r.save.state.settings.steering).toBe('direct');
     const s = r.app.state;
     expect(s.id === 'results' && s.outcome).toMatchObject({ kind: 'failed' });
+    expect(r.crashStep).toBeGreaterThanOrEqual(0);
+    const flown = stepped.mock.calls.map((c) => c[0]!).filter((f) => f.engineLeft || f.engineRight);
+    expect(flown.length).toBeGreaterThan(30);
+    for (const f of flown) {
+      expect(f.engineLeft && f.engineRight).toBe(true);
+      expect(f.thrust).toBe(false);
+      expect(f.engineScale).toBeUndefined(); // the DIRECT layer never touched it
+    }
+    stepped.mockRestore();
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
 
-    // negative control: the same pilot WITHOUT the engineFrames marker goes through the DIRECT layer,
-    // which reads no steer and coasts: no engine ever fires, so no ceiling crash
+    // negative control: the SAME pilot WITHOUT the engineFrames marker goes through the DIRECT layer, which
+    // drops the physical engine flags (no steer, no DIRECT key command) and coasts: no engine fires, no crash
+    h.pilotOverride = pilot;
     h.pilotEngineFrames = false;
     let fired = false;
     const c = await playStory((run) => {

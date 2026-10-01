@@ -14,7 +14,9 @@
  * phase (FRAME_PHASES, a reused Float64Array). A rAF interval spans the
  * PREVIOUS frame's work, so a hitch is blamed on the previous frame's
  * slowest phase - or on EXT (GC, audio timer, browser / compositor, GPU
- * wait) when no phase explains at least half of the overrun. The readout
+ * wait) when no phase explains at least half of the overrun. PAINT and
+ * UPLOAD are both terrain streaming: when neither alone explains half but
+ * the pair does, the larger of the two is blamed with the pair's ms. The readout
  * shows the last hitch's cause and its ms ("LAST PAINT 23").
  */
 
@@ -23,15 +25,17 @@ export const HITCH_MS = 50;
 /**
  * Per-frame phases the App times (indices into the phases array):
  * STEP fixed steps (minus audio), AUDIO game-event audio handlers, PAINT
- * terrain chunk painting, DRAW view + UI render (minus paint), SUBMIT Pixi
- * render / GPU submit (texture uploads land here).
+ * terrain chunk band painting, UPLOAD terrain chunk texture uploads (Pixi
+ * uploads synchronously inside the terrain update), DRAW view + UI render
+ * (minus paint + upload), SUBMIT Pixi render / GPU submit.
  */
-export const FRAME_PHASES = ['STEP', 'AUDIO', 'PAINT', 'DRAW', 'SUBMIT'] as const;
+export const FRAME_PHASES = ['STEP', 'AUDIO', 'PAINT', 'UPLOAD', 'DRAW', 'SUBMIT'] as const;
 export const PHASE_STEP = 0;
 export const PHASE_AUDIO = 1;
 export const PHASE_PAINT = 2;
-export const PHASE_DRAW = 3;
-export const PHASE_SUBMIT = 4;
+export const PHASE_UPLOAD = 3;
+export const PHASE_DRAW = 4;
+export const PHASE_SUBMIT = 5;
 /** Hitch cause index: nothing the game timed explains it (GC, timers, compositor, GPU wait). */
 export const CAUSE_EXT = FRAME_PHASES.length;
 /** Labels by cause index (FRAME_PHASES + EXT). */
@@ -158,6 +162,13 @@ export class FpsMeter {
       }
     }
     const overrun = dt - NOMINAL_FRAME_MS;
+    const paint = this.prevPhases[PHASE_PAINT]!;
+    const upload = this.prevPhases[PHASE_UPLOAD]!;
+    if (bestMs < overrun / 2 && paint + upload >= overrun / 2) {
+      // terrain streaming split across its two phases: blame the pair (labelled by its larger half)
+      best = paint >= upload ? PHASE_PAINT : PHASE_UPLOAD;
+      bestMs = paint + upload;
+    }
     if (best < 0 || bestMs < overrun / 2) {
       this.lastCause = CAUSE_EXT;
       this.lastCauseMs = dt;
@@ -174,6 +185,74 @@ export class FpsMeter {
     this.work = 0;
     this.worst = 0;
   }
+}
+
+/** Terrain streaming counters for the FPS counter's second line (TerrainView diagnostics). */
+export interface TerrainDiag {
+  /** Camera jumps (synchronous on-screen repaints) since the level started. */
+  jumps: number;
+  /** Chunks that were on screen before they were finished (late fill) since the level started. */
+  late: number;
+  /** Synchronous uploads (level load + jumps) since the level started. */
+  syncUploads: number;
+  /** This frame's terrain update ms (paint + upload). */
+  ms: number;
+  /** This frame's upload ms (part of `ms`). */
+  uploadMs: number;
+}
+
+/**
+ * Worst terrain update ms over the last ~2 s (ring of window maxima like
+ * FpsMeter), plus the latest counters: the readout a player report needs
+ * to tell which streaming path fired.
+ */
+export class TerrainDiagMeter {
+  private worst = 0;
+  private worstUpload = 0;
+  private readonly hist = new Float64Array(HISTORY_WINDOWS * 2);
+  private at = 0;
+  private last: TerrainDiag = { jumps: 0, late: 0, syncUploads: 0, ms: 0, uploadMs: 0 };
+  private out = { jumps: 0, late: 0, sync: 0, worstMs: 0, worstUploadMs: 0 };
+
+  note(d: TerrainDiag): void {
+    this.worst = Math.max(this.worst, d.ms);
+    this.worstUpload = Math.max(this.worstUpload, d.uploadMs);
+    this.last = d;
+  }
+
+  /** Close a window (call when the FPS meter publishes); returns the reading. */
+  publish(): { jumps: number; late: number; sync: number; worstMs: number; worstUploadMs: number } {
+    this.hist[this.at * 2] = this.worst;
+    this.hist[this.at * 2 + 1] = this.worstUpload;
+    this.at = (this.at + 1) % HISTORY_WINDOWS;
+    let w = 0;
+    let wu = 0;
+    for (let i = 0; i < HISTORY_WINDOWS; i++) {
+      w = Math.max(w, this.hist[i * 2]!);
+      wu = Math.max(wu, this.hist[i * 2 + 1]!);
+    }
+    this.worst = 0;
+    this.worstUpload = 0;
+    const o = this.out;
+    o.jumps = this.last.jumps;
+    o.late = this.last.late;
+    o.sync = this.last.syncUploads;
+    o.worstMs = w;
+    o.worstUploadMs = wu;
+    return o;
+  }
+
+  reset(): void {
+    this.worst = 0;
+    this.worstUpload = 0;
+    this.hist.fill(0);
+    this.at = 0;
+  }
+}
+
+/** Terrain line, e.g. "TERRAIN MAX 7 UP 2 JUMP 0 LATE 3 SYNC 12" (MAX / UP: worst terrain / upload ms of the last ~2 s). */
+export function terrainText(r: { jumps: number; late: number; sync: number; worstMs: number; worstUploadMs: number }): string {
+  return `TERRAIN MAX ${Math.round(r.worstMs)} UP ${Math.round(r.worstUploadMs)} JUMP ${r.jumps} LATE ${r.late} SYNC ${r.sync}`;
 }
 
 /**

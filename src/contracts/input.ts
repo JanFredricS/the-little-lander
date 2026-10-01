@@ -80,7 +80,8 @@ export interface InputFrame {
    * HELD (direct-steering amendment). DIRECT steering command: the world
    * direction (unit, y-down) the player wants to thrust toward, or {0,0} for
    * none. Only reported while Settings.steering = 'direct' (a finger / mouse
-   * held on the play area relative to the vessel, or WASD / arrows 8-way).
+   * held on the play area relative to the vessel; DIRECT keys do not steer
+   * by direction - lander keys are rotate + thrust, CSM keys stay classic).
    * The shell's DirectSteering layer (src/shell/directSteering.ts) turns it
    * into engine / rotation flags before the controllers run; controllers
    * never read it.
@@ -94,6 +95,15 @@ export interface InputFrame {
    * whose one-engine-must-not-hover invariant stays intact.
    */
   engineScale?: number;
+  /**
+   * Direct-steering amendment (round 3 audit): the player's own turn command
+   * this step (+1 clockwise, -1 counter-clockwise, 0 none; absent = not
+   * reported). Set only by the DirectSteering layer - the held rotate key or
+   * the finger's angle hold, never its synthetic release brake - so the
+   * ground-righting assist (src/levels/systems/righting.ts) reads intent,
+   * not the layer's own output. Controllers never read it.
+   */
+  turnIntent?: number;
 }
 
 /** Semantic digital controls, 1:1 with InputFrame's boolean fields. */

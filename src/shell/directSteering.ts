@@ -1,15 +1,17 @@
 /**
  * DIRECT steering (Settings.steering = 'direct'): an input layer between the
- * InputMapper and the vessel controllers. Sources report only a direction
- * the player wants to thrust toward (InputFrame.steer: a finger held on the
- * play area, relative to the vessel, or WASD / arrows 8-way); once per fixed
+ * InputMapper and the vessel controllers. Pointer sources report only a
+ * direction the player wants to thrust toward (InputFrame.steer: a finger /
+ * held mouse on the play area, relative to the vessel; keys: see KEYBOARD
+ * below); once per fixed
  * step this layer rewrites the frame's flight controls into the engine
  * pulses a pilot would fire to push that way. Vessel physics, tuning, fuel
  * and brake assist are untouched: the controllers see an ordinary frame.
  *
  * No command = pure coast: every flight control off. No auto-hover, no
  * auto-upright, no velocity hold. The angle-hold logic acts only while a
- * direction is held.
+ * direction is held (the lander keyboard's release stop, below, only
+ * cancels the spin its own rotate key made).
  *
  * Lander (engines + S9 top thrusters):
  *  - Commands within DIRECT_TOP_CROSSOVER (100°) of world-up use the main
@@ -45,6 +47,35 @@
  *  over (the only way it can push down).
  * Harpoon modes keep their normal controls (their aim / fire / reel inputs
  * would collide with "hold anywhere to thrust").
+ *
+ * KEYBOARD (round 3, user feedback): the keys do not steer by direction. A
+ * steer (finger / held mouse) always wins; with no steer the layer reads the
+ * keyboard's semantic flags instead:
+ *  - CSM: the classic keys pass through untouched (thrust / rotateCW /
+ *    rotateCCW) - Descent and the other CSM legs fly the ENGINE scheme on a
+ *    keyboard whatever the steering setting.
+ *  - Lander (KeyboardSource emits rotateCCW ← / A, rotateCW → / D, thrust
+ *    ↑ / W / Space, topLeft + topRight ↓ / S): ROTATE + THRUST. A held
+ *    rotate key is a rate command (±DIRECT_KEY_TURN_RATE), flown bang-bang
+ *    on ω with DIRECT_KEY_RATE_BAND: alone it fires an RCS-like COUPLE (one
+ *    main + the opposite top thruster, main at DIRECT_LANDER_COUPLE_SCALE so
+ *    the two cancel along the body axis - turning costs ~no altitude); with
+ *    thrust it fires only the leading main engine while the rate is short
+ *    (both inside the band); with ↓ only the leading top thruster. Releasing
+ *    the rotate key brakes the spin IT added (same couple, opposite way):
+ *    back to the spin the vessel had when the key went down (or to 0 if
+ *    that was the other way), within DIRECT_KEY_STOP_BAND, then all off. It
+ *    never brakes below that baseline, so a tap during a tumble does not
+ *    stop the tumble - a stop, not an attitude hold or a stabiliser: nothing
+ *    ever chases an angle (no auto-upright).
+ *    The couple's main-engine scale is topThrust / thrust of the level's
+ *    lander tuning (setLanderTuning), so the pair cancels on every level.
+ *  - InputFrame.turnIntent reports the player's own turn command (the held
+ *    rotate key, or the finger's angle hold) - never the release brake - for
+ *    the ground-righting assist (src/levels/systems/righting.ts).
+ *    Thrust alone = both mains at DIRECT_LANDER_THRUST_SCALE; ↓ alone = both
+ *    top thrusters (a downward burn; ↑ wins when both are held). No keys =
+ *    coast.
  *
  * Power (Task 11): the lander's main engines run at DIRECT_LANDER_THRUST_SCALE
  * (InputFrame.engineScale) - the ENGINES scheme's thrust is unchanged.
@@ -89,6 +120,25 @@ export const DIRECT_TILT_CAP = 68 * DEG;
 export const DIRECT_CSM_ROTATE_BAND = 3 * DEG;
 /** CSM: the main engine burns only while pointed within this angle of the command. */
 export const DIRECT_CSM_BURN_CONE = 25 * DEG;
+
+/** Lander keyboard: turn rate (rad/s) a held rotate key flies at. */
+export const DIRECT_KEY_TURN_RATE = 2.2;
+/** Lander keyboard: |ω error| (rad/s) inside which the rate counts as held (no torque pulse). */
+export const DIRECT_KEY_RATE_BAND = 0.25;
+/** Lander keyboard: the release stop ends once |ω| (rad/s) is within this (or ω changed sign) - ~no drift left. */
+export const DIRECT_KEY_STOP_BAND = 0.08;
+/**
+ * Lander keyboard: main-engine scale while a rotate key fires the turning
+ * couple alone (main + opposite top thruster). topThrust / thrust (0.7 / 0.9):
+ * the pair cancels along the body axis, so a pure turn neither climbs nor
+ * sinks (brake assist aside).
+ */
+export const DIRECT_LANDER_COUPLE_SCALE = 0.78;
+
+/** Main-engine scale for the lander keyboard couple: top thrust / main thrust (the axial forces cancel). */
+export function landerCoupleScale(t: { thrust: number; topThrust: number }): number {
+  return t.thrust > 0 ? t.topThrust / t.thrust : DIRECT_LANDER_COUPLE_SCALE;
+}
 
 /** Tolerance (rad) for the crossover comparison: commands within it of an edge count as ON the edge. */
 const EDGE_EPS = 1e-9;
@@ -138,16 +188,28 @@ export class DirectSteering {
   private set: 'main' | 'top' | null = null;
   /** Sigma-delta accumulator for the trailing engine's duty. */
   private duty = 0;
+  /** Lander keyboard: sign of the turn the rotate key last flew (0 = none); armed = brake that spin on release. */
+  private keyTurn = 0;
+  /** Angular velocity when the current rotate key went down: the release brake stops there, never below. */
+  private keyBase = 0;
+  /** Couple main-engine scale for the current level's lander tuning. */
+  private coupleScale = DIRECT_LANDER_COUPLE_SCALE;
 
   /** Engine set in use for the held command (tests / debugging). */
   get engineSet(): 'main' | 'top' | null {
     return this.set;
   }
 
+  /** The level's lander tuning (thrust / topThrust, after its physicsOverrides): sets the keyboard couple's balance. */
+  setLanderTuning(t: { thrust: number; topThrust: number }): void {
+    this.coupleScale = landerCoupleScale(t);
+  }
+
   /** Forget the held command (input cleared: pause, resume, restart, new level). */
   reset(): void {
     this.set = null;
     this.duty = 0;
+    this.keyTurn = 0;
   }
 
   /**
@@ -158,22 +220,24 @@ export class DirectSteering {
    */
   apply(frame: InputFrame, v: SteerAttitude): InputFrame {
     if (!isDirectSteerMode(v.mode)) {
-      this.set = null;
+      this.reset(); // e.g. a switch to a harpoon mode: no brake carried across
       return frame;
     }
-    frame.thrust = false;
-    frame.engineLeft = false;
-    frame.engineRight = false;
-    frame.topLeft = false;
-    frame.topRight = false;
-    frame.rotateCW = false;
-    frame.rotateCCW = false;
-    frame.engineScale = undefined;
     const d = frame.steer;
     if (d.x === 0 && d.y === 0) {
-      this.reset(); // released: coast
-      return frame;
+      this.set = null;
+      this.duty = 0;
+      // no steer: keyboard flags (CSM: classic pass-through; lander: rotate + thrust)
+      if (v.mode === 'csm') {
+        this.keyTurn = 0;
+        frame.engineLeft = frame.engineRight = frame.topLeft = frame.topRight = false;
+        frame.engineScale = undefined;
+        return frame;
+      }
+      return this.keys(frame, v);
     }
+    this.keyTurn = 0;
+    clearFlight(frame);
     const cmd = commandAngle(d);
     if (v.mode === 'csm') {
       this.reset();
@@ -197,6 +261,7 @@ export class DirectSteering {
     // leading engine by s (turn / brake); trailing engine by duty, which needs BOTH |e| (actually
     // pointed there) and |s| (not about to swing off) small - no full thrust far off-axis mid-turn
     const cw = s > 0;
+    frame.turnIntent = cw ? 1 : -1; // the finger's own command (righting assist)
     const d0 = trailingDuty(Math.max(Math.abs(e), Math.abs(s)));
     let trail = false;
     if (d0 >= 1) {
@@ -221,4 +286,58 @@ export class DirectSteering {
     }
     return frame;
   }
+
+  /** Lander keyboard: rotate (rate command + release stop) and thrust, from the semantic key flags. */
+  private keys(frame: InputFrame, v: SteerAttitude): InputFrame {
+    const up = frame.thrust;
+    const down = !up && (frame.topLeft || frame.topRight);
+    const turn = (frame.rotateCW ? 1 : 0) - (frame.rotateCCW ? 1 : 0);
+    clearFlight(frame);
+    frame.turnIntent = turn; // the held key only: the release brake below is never intent
+    let target: number | null = null;
+    if (turn !== 0) {
+      if (turn !== this.keyTurn) this.keyBase = v.angularVel; // a new press (or reversal): remember the spin it started from
+      this.keyTurn = turn;
+      target = turn * DIRECT_KEY_TURN_RATE;
+    } else if (this.keyTurn !== 0) {
+      // released: remove only the spin the key added (down to its baseline, or 0 if that was the other way), then let go
+      const base = this.keyTurn > 0 ? Math.max(this.keyBase, 0) : Math.min(this.keyBase, 0);
+      if (this.keyTurn * (v.angularVel - base) <= DIRECT_KEY_STOP_BAND) this.keyTurn = 0;
+      else target = base;
+    }
+    const err = target === null ? 0 : target - v.angularVel;
+    const band = turn !== 0 ? DIRECT_KEY_RATE_BAND : 0; // stopping: brake every tick until the stop condition above
+    const torque = target !== null && Math.abs(err) > band ? Math.sign(err) : 0; // +1 = clockwise
+    if (up) {
+      // leading main engine only while the rate is short (left engine = clockwise), else both
+      frame.engineLeft = torque >= 0;
+      frame.engineRight = torque <= 0;
+      frame.engineScale = DIRECT_LANDER_THRUST_SCALE;
+    } else if (down) {
+      // top-right pushes the right side down = clockwise
+      frame.topRight = torque >= 0;
+      frame.topLeft = torque <= 0;
+    } else if (torque !== 0) {
+      // the couple: main + opposite top thruster, axial forces cancelling
+      const cw = torque > 0;
+      frame.engineLeft = cw;
+      frame.topRight = cw;
+      frame.engineRight = !cw;
+      frame.topLeft = !cw;
+      frame.engineScale = this.coupleScale;
+    }
+    return frame;
+  }
+}
+
+function clearFlight(frame: InputFrame): void {
+  frame.thrust = false;
+  frame.engineLeft = false;
+  frame.engineRight = false;
+  frame.topLeft = false;
+  frame.topRight = false;
+  frame.rotateCW = false;
+  frame.rotateCCW = false;
+  frame.engineScale = undefined;
+  frame.turnIntent = undefined;
 }

@@ -125,7 +125,15 @@ export function preparePiece(piece: Pick<TerrainPiece, 'id' | 'kind' | 'points' 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
 type Img = CanvasImageSource;
 
-/** Tile lookup with mirrored side tiles cached. */
+/**
+ * Tile lookup with mirrored side tiles cached.
+ * Canvas backing (audit round 3, L12): the chunk canvases are CPU-backed (willReadFrequently,
+ * terrainView.ts), so every drawImage source should be CPU-side too or the browser may read a
+ * GPU canvas back per draw. The mirrored tiles are ours: created willReadFrequently. The art
+ * tiles (art.getTile -> pixToCanvas) are left as they are: tiny (16 px) canvases written once by
+ * putImageData and never drawn into, below the size browsers accelerate canvases at, and shared
+ * with the sprite pipeline - copying them here would only add a cache.
+ */
 export class TileSource {
   private readonly mirrored = new Map<string, PixelCanvas>();
   readonly outline: string;
@@ -156,7 +164,7 @@ export class TileSource {
     let c = this.mirrored.get(key);
     if (!c) {
       c = this.makeCanvas(T, T);
-      const ctx = c.getContext('2d') as Ctx;
+      const ctx = c.getContext('2d', { willReadFrequently: true }) as Ctx; // CPU-backed like the chunk canvases it is drawn into
       ctx.translate(T, 0);
       ctx.scale(-1, 1);
       ctx.drawImage(this.tile(kind, v), 0, 0);
