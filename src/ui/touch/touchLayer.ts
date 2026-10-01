@@ -148,6 +148,14 @@ export class TouchLayer {
     this.relayout();
   }
 
+  /** Round 11 LAYOUT: the stick lower-right and the classic CSM buttons mirrored (rebuilds when it changes). */
+  setStickRight(on: boolean): void {
+    if (!!this.opts.stickRight === on) return;
+    this.opts = { ...this.opts, stickRight: on };
+    this.lastSize = '';
+    this.relayout();
+  }
+
   /** Pause / restart buttons (false: the desktop JOYSTICK layer = the stick alone). */
   setSystemButtons(on: boolean): void {
     if ((this.opts.systemButtons ?? true) === on) return;
@@ -169,7 +177,7 @@ export class TouchLayer {
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
     const o = this.opts;
-    const key = `${this.mode}|${w}|${h}|${!!o.swapEngines}|${!!o.direct}|${!!o.joystick}|${o.systemButtons ?? true}`;
+    const key = `${this.mode}|${w}|${h}|${!!o.swapEngines}|${!!o.direct}|${!!o.joystick}|${o.systemButtons ?? true}|${!!o.stickRight}`;
     if (key === this.lastSize) return;
     this.lastSize = key;
     const next = touchLayout(this.mode, w, h, this.opts);

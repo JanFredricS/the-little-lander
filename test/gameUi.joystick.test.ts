@@ -11,6 +11,7 @@ import type { ArtApi, InputSampleContext, SteeringScheme } from '../src/contract
 import { getLevel } from '../src/levels/registry';
 import { emptyFrame, InputMapper, VirtualControlsSource } from '../src/shell/input';
 import type { GameUiOptions } from '../src/ui/gameUi';
+import { MinimapView } from '../src/ui/minimap';
 import { FakeDom, type FakeElement } from './support/fakeDom';
 
 // PixelText rasterises through a DOM canvas (Texture.from): stubbed with fixed-width glyphs, as in ui.hudView.test.ts
@@ -268,6 +269,109 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
     expect(mm.siteMarkers.filter((s) => s.planted)).toEqual([]);
     ui.onEvent({ type: 'beaconPlanted', siteId: 'site3', planted: 1, total: 5 });
     expect(mm.siteMarkers.filter((s) => s.planted).map((s) => s.id)).toEqual(['site3']);
+    ui.destroy();
+  });
+  it('round 11: pause-menu LAYOUT flips the stick lower-right + the minimap lower-left (persisted); a stick held across a swap is released (no ghost stick)', async () => {
+    const sides: string[] = [];
+    const { ui, m } = await make({ touchPref: 'on', steering: 'joystick', onStickSideChange: (s) => sides.push(s) });
+    playHangarRun(ui as never);
+    const W = host.clientWidth;
+    const mmAt = () => {
+      (ui as unknown as { insetCache: { at: number } }).insetCache.at = -Infinity;
+      ui.render(1000);
+      return (ui as unknown as { mmAt: { x: number; y: number } }).mmAt;
+    };
+    let l = ui.touchLayer.getLayout()!;
+    expect(l.stick!.cx).toBeLessThan(W / 2);
+    expect(mmAt().x).toBeGreaterThan(320); // bottom-right (640-wide view)
+    const layer = ui.touchLayer;
+    const zone = () => (layer.el as unknown as FakeElement).children.find((c) => c.dataset.testid === 'joystick-zone')!;
+
+    // a finger holding the stick when the side flips (the layer rebuilt while visible)
+    dom.pointer('pointerdown', 7, l.stick!.cx + l.stick!.r, l.stick!.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 1, y: 0 });
+    layer.setStickRight(true);
+    l = layer.getLayout()!;
+    expect(l.stick!.cx).toBeGreaterThan(W / 2);
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 }); // centred (coast)
+    // the old finger keeps moving / lifts: nothing steers, no stuck stick
+    dom.pointer('pointermove', 7, l.stick!.cx - l.stick!.r, l.stick!.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 }); // centred (coast)
+    dom.pointer('pointerup', 7, l.stick!.cx - l.stick!.r, l.stick!.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 }); // centred (coast)
+    // a fresh touch on the new (right) stick works
+    dom.pointer('pointerdown', 8, l.stick!.cx, l.stick!.cy - l.stick!.r, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: -1 });
+    dom.pointer('pointerup', 8, l.stick!.cx, l.stick!.cy - l.stick!.r, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 }); // centred (coast)
+    layer.setStickRight(false);
+
+    // the pause menu item: label, persistence, the layout on resume, the minimap on the other corner
+    ui.enter({ id: 'paused', levelId: 'hangarRun' } as never);
+    const label = () => ui.currentModel!.items.find((i) => i.id === 'layout')!.label;
+    const activate = () => (ui as unknown as { activate(id: string): void }).activate('layout');
+    expect(label()).toBe('LAYOUT: STICK LEFT');
+    activate();
+    expect(sides).toEqual(['right']);
+    expect(label()).toBe('LAYOUT: STICK RIGHT');
+    ui.enter({ id: 'playing', levelId: 'hangarRun' } as never);
+    l = ui.touchLayer.getLayout()!;
+    expect(l.stick!.zone.x).toBeGreaterThanOrEqual(W / 2);
+    const at = mmAt();
+    expect(at.x).toBeLessThan(320); // bottom-left now
+    // clear of the stick (view px = css / 2 in this harness)
+    const s = l.stick!;
+    const base = { x: (s.cx - s.r) / 2, y: (s.cy - s.r) / 2, w: s.r, h: s.r };
+    const mm = { x: at.x, y: at.y, w: MinimapView.outerW, h: MinimapView.outerH };
+    expect(mm.x + mm.w <= base.x || base.x + base.w <= mm.x || mm.y + mm.h <= base.y || base.y + base.h <= mm.y).toBe(true);
+    ui.enter({ id: 'paused', levelId: 'hangarRun' } as never);
+    activate();
+    expect(sides).toEqual(['right', 'left']);
+    ui.enter({ id: 'playing', levelId: 'hangarRun' } as never);
+    expect(ui.touchLayer.getLayout()!.stick!.cx).toBeLessThan(W / 2);
+    expect(mmAt().x).toBeGreaterThan(320);
+    ui.destroy();
+  });
+
+  it('round 11 audit: the real flow - hold the stick, pause, LAYOUT, resume: centred, the stale finger is ignored; a restart keeps the side', async () => {
+    const { ui, m } = await make({ touchPref: 'on', steering: 'joystick' });
+    playHangarRun(ui as never);
+    const W = host.clientWidth;
+    const layer = ui.touchLayer;
+    const zone = () => (layer.el as unknown as FakeElement).children.find((c) => c.dataset.testid === 'joystick-zone')!;
+    let st = layer.getLayout()!.stick!;
+    dom.pointer('pointerdown', 5, st.cx + st.r, st.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 1, y: 0 });
+    // the finger stays down through pause -> LAYOUT -> resume
+    ui.enter({ id: 'paused', levelId: 'hangarRun' } as never);
+    (ui as unknown as { activate(id: string): void }).activate('layout');
+    ui.enter({ id: 'playing', levelId: 'hangarRun' } as never);
+    st = layer.getLayout()!.stick!;
+    expect(st.cx).toBeGreaterThan(W / 2);
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 });
+    // the old pointer id keeps moving (even onto the new stick) and lifts: ignored
+    dom.pointer('pointermove', 5, st.cx - st.r, st.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 });
+    dom.pointer('pointerup', 5, st.cx - st.r, st.cy, zone());
+    expect(m.sample(ctx).steer).toEqual({ x: 0, y: 0 });
+    // restart (the level starts again): still right
+    ui.enter({ id: 'playing', levelId: 'hangarRun' } as never);
+    ui.levelStarted(getLevel('hangarRun')! as never);
+    expect(layer.getLayout()!.stick!.cx).toBeGreaterThan(W / 2);
+    ui.enter({ id: 'paused', levelId: 'hangarRun' } as never);
+    expect(ui.currentModel!.items.find((i) => i.id === 'layout')!.label).toBe('LAYOUT: STICK RIGHT');
+    ui.destroy();
+  });
+
+  it('round 11: a saved stickSide right starts with the stick lower-right; the classic CSM buttons mirror (Descent)', async () => {
+    const { ui } = await make({ touchPref: 'on', steering: null, stickSide: 'right' });
+    ui.enter({ id: 'playing', levelId: 'descent' } as never);
+    ui.levelStarted(getLevel('descent')! as never);
+    const l = ui.touchLayer.getLayout()!;
+    const b = (c: string) => l.buttons.find((x) => x.control === c)!.rect;
+    expect(b('thrust').x).toBeLessThan(host.clientWidth / 2);
+    expect(b('rotateCCW').x).toBeGreaterThan(host.clientWidth / 2);
+    expect(b('rotateCCW').x).toBeLessThan(b('rotateCW').x);
     ui.destroy();
   });
 });

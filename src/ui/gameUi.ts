@@ -13,7 +13,7 @@
 
 import { Container } from 'pixi.js';
 import { resolveSteering, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
-import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, VesselMode, VesselState } from '../contracts';
+import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, StickSide, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
 import { frameHasInput, missionLines } from './controlsHelp';
@@ -21,7 +21,7 @@ import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } fr
 import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
-import { MINIMAP_BORDER, MINIMAP_H, MINIMAP_W, MinimapView, minimapPlacement } from './minimap';
+import { MINIMAP_BORDER, MINIMAP_H, MINIMAP_W, MinimapView, minimapPlacement, minimapSide } from './minimap';
 import { readSaveView, type SaveView } from './levelSelect';
 import { createMenu, gridMove, type GridDir, keyToCommand, menuCommand, menuFocus, scrollBy, scrollToFocus, type MenuResult, type MenuState } from './menu';
 import { enterFullscreen } from './fullscreen';
@@ -64,6 +64,10 @@ export interface GameUiOptions {
   showMinimap?: boolean;
   /** The pause-menu MINIMAP toggle changed (persist it). */
   onShowMinimapChange?(on: boolean): void;
+  /** Round 11: SaveState.settings.stickSide (default 'left': stick lower-left, minimap lower-right). */
+  stickSide?: StickSide;
+  /** The pause-menu LAYOUT toggle changed (persist it). */
+  onStickSideChange?(side: StickSide): void;
   /** SaveState.settings.steering: the explicit choice, or null / unset = never chosen (resolved per level: resolveSteering). */
   steering?: SteeringScheme | null;
   /** STEERING toggled in the pause menu (the App switches the input layer + persists). */
@@ -133,11 +137,13 @@ export class GameUi {
   /** The player's explicit choice, or null = never chosen (per-level default). */
   private steeringSetting: SteeringScheme | null;
   private showMinimap: boolean;
+  /** Round 11 LAYOUT: 'right' = stick lower-right + minimap lower-left. */
+  private stickSide: StickSide;
   private readonly minimap = new MinimapView();
   /** Vessel pose for the minimap (copied from the last tick: no per-frame allocation). */
   private readonly mmPose = new Float64Array(3);
   /** Minimap frame position (virtual px), re-placed with the HUD inset (4 Hz: it reads DOM layout). */
-  private mmAt = { x: 0, y: 0 };
+  private mmAt: { x: number; y: number } | null = { x: 0, y: 0 };
   private readonly fpsMeter = new FpsMeter();
   private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
   /** Second FPS-counter line: terrain streaming diagnostics (in a level). */
@@ -167,12 +173,14 @@ export class GameUi {
     this.steeringSetting = o.steering ?? null;
     this.steering = resolveSteering(this.steeringSetting, null);
     this.showMinimap = o.showMinimap ?? true;
+    this.stickSide = o.stickSide ?? 'left';
     this.fpsLabel.visible = this.showFps;
     this.terrainLabel.visible = this.showFps;
     this.audioLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
     this.touch.setSteering(this.steering);
+    this.touch.setStickRight(this.stickSide === 'right');
     this.rotate = new RotateHint(o.host, () => this.touchDetected);
 
     const onKey = (e: KeyboardEvent) => this.onKey(e);
@@ -279,6 +287,7 @@ export class GameUi {
       steering: this.steeringSetting,
       vesselMode: this.spec ? this.hud.mode : null,
       showMinimap: this.showMinimap,
+      stickSide: this.stickSide,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -321,8 +330,8 @@ export class GameUi {
     const helpTouch = touchVisible(this.touchPref, this.touchDetected);
     const direct = this.steering === 'direct';
     const joystick = this.steering === 'joystick';
-    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct, joystick);
-    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct, joystick, this.helpIsStart ? this.mission : '');
+    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct, joystick, '', this.stickSide === 'right');
+    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct, joystick, this.helpIsStart ? this.mission : '', this.stickSide === 'right');
     else this.hudView.setHelp(null, false);
   }
 
@@ -446,13 +455,16 @@ export class GameUi {
       // DOM layout reads are cached (4 Hz): per-frame getBoundingClientRect can force a synchronous layout on iOS
       if (nowMs - this.insetCache.at > 250 || nowMs < this.insetCache.at) {
         this.insetCache = { at: nowMs, value: this.restartInset() };
-        this.mmAt = minimapPlacement(this.touchRectsInView(), MINIMAP_W + 2 * MINIMAP_BORDER, MINIMAP_H + 2 * MINIMAP_BORDER, VIEW_WIDTH, VIEW_HEIGHT);
+        const aim = this.touch.isVisible && !!this.touch.getLayout()?.aimZone;
+        // null = no overlap-free spot (tiny screens): hidden
+        this.mmAt = minimapPlacement(this.touchRectsInView(), MINIMAP_W + 2 * MINIMAP_BORDER, MINIMAP_H + 2 * MINIMAP_BORDER, VIEW_WIDTH, VIEW_HEIGHT, 4, 80, minimapSide(this.stickSide === 'right', aim));
       }
       this.hudView.leftInset = this.insetCache.value;
       this.hudView.render(this.hud, nowMs);
     }
-    this.minimap.root.visible = this.hudView.root.visible && this.showMinimap && !!this.spec;
-    if (this.minimap.root.visible) this.minimap.render(this.mmPose[0]!, this.mmPose[1]!, this.mmPose[2]!, this.mmAt.x, this.mmAt.y, this.hudView.border);
+    const mmAt = this.mmAt;
+    this.minimap.root.visible = this.hudView.root.visible && this.showMinimap && !!this.spec && !!mmAt;
+    if (mmAt && this.minimap.root.visible) this.minimap.render(this.mmPose[0]!, this.mmPose[1]!, this.mmPose[2]!, mmAt.x, mmAt.y, this.hudView.border);
     if (this.showFps) {
       // top-right corner; left of the mode badge while the HUD is up
       const right = this.hudView.root.visible ? this.hudView.badgeLeft - 4 : VIEW_WIDTH - 4;
@@ -577,6 +589,14 @@ export class GameUi {
     } else if (a.ui === 'toggleMinimap') {
       this.showMinimap = !this.showMinimap;
       this.o.onShowMinimapChange?.(this.showMinimap);
+      this.refreshModel(false);
+    } else if (a.ui === 'toggleStickSide') {
+      // the layer is hidden while paused: it rebuilds now and shows on resume (a carried stick
+      // finger across the swap is released by TouchModel.relayout - no ghost stick)
+      this.stickSide = this.stickSide === 'right' ? 'left' : 'right';
+      this.touch.setStickRight(this.stickSide === 'right');
+      this.o.onStickSideChange?.(this.stickSide);
+      this.insetCache = { ...this.insetCache, at: -Infinity }; // re-place the minimap on the next frame
       this.refreshModel(false);
     } else if (a.ui === 'toggleLowRes') {
       this.lowRes = !this.lowRes;

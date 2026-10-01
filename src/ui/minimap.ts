@@ -5,6 +5,8 @@
  * lifted / shifted clear of any on-screen touch control (minimapPlacement).
  * Always on by default; pause-menu MINIMAP toggle (Settings.showMinimap).
  *
+ * Round 11: LAYOUT stick-right moves it to the bottom-left (minimapPlacement side).
+ *
  * Round 10: every plantBeacons site gets an amber diamond (solid = still to
  * plant, hollow + dimmed = planted), edge-pinned with its own arrow like the
  * exit. Marker objects are made in setLevel; per frame they only move.
@@ -253,8 +255,26 @@ export function minimapLayout(out: MinimapLayout, texW: number, texH: number, ve
  * bottom-right corner unless an on-screen control (`avoid`, virtual px) is
  * there; then shifted left along the bottom past those controls, else lifted
  * above them in the right column (never above `minTop`: the objectives).
+ * Round 11: `side` 'left' (LAYOUT stick right) = the mirror image - the
+ * bottom-LEFT corner, shifted right / lifted in the left column.
+ * Round 11 audit: when the lift is clamped at `minTop` and still overlaps (tiny
+ * / short screens, where the controls fill the column), the nearest
+ * overlap-free spot is searched (bottom row first, from the corner inward);
+ * null = there is none: the caller hides the minimap.
  */
-export function minimapPlacement(avoid: readonly Rect[], w: number, h: number, viewW: number, viewH: number, margin = 4, minTop = 80): { x: number; y: number } {
+export function minimapPlacement(avoid: readonly Rect[], w: number, h: number, viewW: number, viewH: number, margin = 4, minTop = 80, side: 'left' | 'right' = 'right'): { x: number; y: number } | null {
+  if (side === 'left') {
+    const p = minimapPlacement(
+      avoid.map((q) => ({ x: viewW - q.x - q.w, y: q.y, w: q.w, h: q.h })),
+      w,
+      h,
+      viewW,
+      viewH,
+      margin,
+      minTop,
+    );
+    return p && { x: viewW - p.x - w, y: p.y };
+  }
   const hits = (x: number, y: number) => avoid.some((r) => x < r.x + r.w && r.x < x + w && y < r.y + r.h && r.y < y + h);
   const corner = { x: viewW - margin - w, y: viewH - margin - h };
   if (!hits(corner.x, corner.y)) return corner;
@@ -273,7 +293,20 @@ export function minimapPlacement(avoid: readonly Rect[], w: number, h: number, v
     if (blocking.length === 0) break;
     y = Math.min(...blocking.map((r) => r.y)) - margin - h;
   }
-  return { x: corner.x, y: Math.max(minTop, Math.round(y)) };
+  const lifted = { x: corner.x, y: Math.max(minTop, Math.round(y)) };
+  if (!hits(lifted.x, lifted.y)) return lifted;
+  // nothing in the corner column fits: the nearest free spot, bottom row first, from the corner inward
+  for (let yy = corner.y; yy >= minTop; yy -= 4) for (let xx = corner.x; xx >= margin; xx -= 4) if (!hits(xx, yy)) return { x: xx, y: yy };
+  return null;
+}
+
+/**
+ * Round 11 audit: which bottom corner the minimap starts from. LAYOUT stick-right sends it
+ * left - except in the harpoon modes (a drag-aim zone), whose controls do not mirror: there the
+ * left is the aim area, so the minimap keeps the default (right-side) placement.
+ */
+export function minimapSide(stickRight: boolean, hasAimZone: boolean): 'left' | 'right' {
+  return stickRight && !hasAimZone ? 'left' : 'right';
 }
 
 /** Beacon sites: amber-yellow (not the vessel's amber arrow, not the exit's green square). */

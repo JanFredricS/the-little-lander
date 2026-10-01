@@ -37,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lowRes: null,
   steering: null,
   showMinimap: true,
+  stickSide: 'left',
 };
 
 export function defaultSave(): SaveState {
@@ -79,6 +80,7 @@ function parseSettings(v: unknown, legacy = false): Settings {
     lowRes: typeof v.lowRes === 'boolean' ? v.lowRes : d.lowRes,
     steering: v.steering === 'direct' || v.steering === 'joystick' || (v.steering === 'engines' && !legacy) ? v.steering : d.steering,
     showMinimap: typeof v.showMinimap === 'boolean' ? v.showMinimap : d.showMinimap,
+    stickSide: v.stickSide === 'left' || v.stickSide === 'right' ? v.stickSide : d.stickSide,
   };
 }
 

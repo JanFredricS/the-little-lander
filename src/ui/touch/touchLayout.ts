@@ -23,6 +23,13 @@
  *                  deadzone (and letting go) = coast. On a desktop without
  *                  touch controls the layout is the stick alone (no system
  *                  buttons: Esc / Backspace) and the mouse can drag it.
+ *   Round 11 LAYOUT (Settings.stickSide = 'right', option stickRight): the
+ *                  stick anchors lower-RIGHT (zone mirrored, right half only)
+ *                  and the classic CSM buttons swap sides (THRUST lower-left,
+ *                  ◀ ▶ lower-right, still in that order). The lander's engine
+ *                  buttons are symmetric (each side's button = that side's
+ *                  engine, mirroring would only swap meanings: see the swap
+ *                  setting) and the harpoon modes keep their layout.
  *   all modes      II pause, top centre · ↻ restart level, top-left
  *                  ("system" buttons: opaque, high-contrast, see touchLayer.ts)
  */
@@ -103,6 +110,8 @@ export interface TouchLayoutOptions {
   joystick?: boolean;
   /** Pause / restart buttons (default true; false = the desktop joystick-only layout). */
   systemButtons?: boolean;
+  /** Round 11 LAYOUT: the stick lower-right (and the classic CSM buttons mirrored). Default false. */
+  stickRight?: boolean;
 }
 
 export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchLayoutOptions = {}): TouchLayout {
@@ -120,10 +129,10 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
 
   const bottom = h - m;
   const right = w - m;
-  const rotateLeft = () => {
+  const rotateLeft = (x0 = m) => {
     buttons.push(
-      { id: 'rotateCCW', control: 'rotateCCW', label: '◀', kind: 'hold', rect: r(m, bottom - s, s, s) },
-      { id: 'rotateCW', control: 'rotateCW', label: '▶', kind: 'hold', rect: r(m + s + g, bottom - s, s, s) },
+      { id: 'rotateCCW', control: 'rotateCCW', label: '◀', kind: 'hold', rect: r(x0, bottom - s, s, s) },
+      { id: 'rotateCW', control: 'rotateCW', label: '▶', kind: 'hold', rect: r(x0 + s + g, bottom - s, s, s) },
     );
   };
   const harpoonCluster = () => {
@@ -146,17 +155,22 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
     // under the system buttons, at most half the width (the right half stays free: minimap)
     const R = Math.round(s * 0.85);
     const pad = Math.round(R * 0.25);
-    const cx = m + pad + R;
+    const lx = m + pad + R; // centre x on the left side
     const cy = bottom - pad - R;
     const top = Math.max(m + pauseSize + g, cy - 2 * R);
-    const zone = r(0, top, Math.min(w / 2, cx + 2 * R), h - top);
+    const zw = Math.min(w / 2, lx + 2 * R);
+    // LAYOUT right: the mirror image (lower-right, the left half stays free: minimap)
+    const cx = opts.stickRight ? Math.round(w - lx) : lx;
+    // right: the edge from the ROUNDED width (an odd w would push a half-px zone 1 px off-screen)
+    const zone = opts.stickRight ? r(w - Math.round(zw), top, Math.round(zw), h - top) : r(0, top, zw, h - top);
     return { mode, buttons, aimZone, stick: { cx, cy, r: R, zone } };
   }
   if (opts.direct && isDirectSteerMode(mode)) return { mode, buttons, aimZone, stick: null };
   switch (mode) {
     case 'csm':
-      rotateLeft();
-      buttons.push({ id: 'thrust', control: 'thrust', label: 'THRUST', kind: 'hold', rect: r(right - big, bottom - big, big, big) });
+      // side-anchored: LAYOUT right mirrors it (THRUST lower-left, ◀ ▶ lower-right in reading order)
+      rotateLeft(opts.stickRight ? right - 2 * s - g : m);
+      buttons.push({ id: 'thrust', control: 'thrust', label: 'THRUST', kind: 'hold', rect: r(opts.stickRight ? m : right - big, bottom - big, big, big) });
       break;
     case 'lander': {
       const small = Math.max(MIN_TOUCH_CSS, Math.round(big * 0.7));

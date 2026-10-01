@@ -4,7 +4,7 @@
  * machine, or a UI-local command). Views only draw these; tests drive them.
  */
 
-import { resolveSteering, type CrashCause, type LevelId, type LevelSpec, type ScreenAction, type ScreenState, type SteeringScheme, type VesselMode } from '../contracts';
+import { resolveSteering, type CrashCause, type LevelId, type LevelSpec, type ScreenAction, type ScreenState, type SteeringScheme, type StickSide, type VesselMode } from '../contracts';
 import { formatTime, levelEntries, levelMenuItems, nextStoryLevel, STORY_TITLES, type SaveView } from './levelSelect';
 import type { MenuItem } from './menu';
 import type { TouchPref } from './touch/touchModel';
@@ -26,6 +26,8 @@ export interface ScreenContext {
   vesselMode?: VesselMode | null;
   /** Minimap shown (Settings.showMinimap; default true). */
   showMinimap?: boolean;
+  /** Round 11: thumb-control side (Settings.stickSide; default 'left'). */
+  stickSide?: StickSide;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -59,7 +61,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'toggleSteering' } | { ui: 'toggleMinimap' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'toggleSteering' } | { ui: 'toggleMinimap' } | { ui: 'toggleStickSide' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -104,6 +106,11 @@ export function nextSteering(s: SteeringScheme | null): SteeringScheme | null {
 
 export function minimapLabel(on: boolean): string {
   return `MINIMAP: ${on ? 'ON' : 'OFF'}`;
+}
+
+/** Round 11 LAYOUT item: where the stick sits (the minimap takes the other bottom corner). */
+export function stickSideLabel(side: StickSide): string {
+  return `LAYOUT: STICK ${side === 'right' ? 'RIGHT' : 'LEFT'}`;
 }
 
 export function swapLabel(swap: boolean): string {
@@ -177,6 +184,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
           { id: 'steering', label: steeringLabel(ctx.steering ?? null, state.levelId, ctx.vesselMode), enabled: true },
           { id: 'minimap', label: minimapLabel(ctx.showMinimap ?? true), enabled: true },
+          { id: 'layout', label: stickSideLabel(ctx.stickSide ?? 'left'), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },
           { id: 'lowres', label: lowResLabel(ctx.lowRes ?? false), enabled: true },
@@ -242,6 +250,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'swap') return { ui: 'toggleSwap' };
       if (id === 'steering') return { ui: 'toggleSteering' };
       if (id === 'minimap') return { ui: 'toggleMinimap' };
+      if (id === 'layout') return { ui: 'toggleStickSide' };
       if (id === 'fps') return { ui: 'toggleFps' };
       if (id === 'lowres') return { ui: 'toggleLowRes' };
       return { ui: 'none' };

@@ -42,7 +42,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'showMinimap' | 'onShowMinimapChange' | 'audioDiag' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'showMinimap' | 'onShowMinimapChange' | 'stickSide' | 'onStickSideChange' | 'audioDiag' | 'save'>;
 }
 
 /**
@@ -135,7 +135,7 @@ export class App {
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
     // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
-    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, onSteeringChange, onShowMinimapChange, ...uiOpts } = Object.fromEntries(
+    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, onSteeringChange, onShowMinimapChange, onStickSideChange, ...uiOpts } = Object.fromEntries(
       Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
     ) as NonNullable<AppOptions['ui']>;
     const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
@@ -183,6 +183,7 @@ export class App {
       onTouchPrefChange: (p) => this.save.setSettings({ touchControls: p }),
       showFps: this.save.state.settings.showFps,
       showMinimap: this.save.state.settings.showMinimap,
+      stickSide: this.save.state.settings.stickSide,
       story: () => this.storyContext(),
       onContinueStory: () => this.titleContinue(),
       ...uiOpts,
@@ -195,6 +196,7 @@ export class App {
       },
       onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
       onShowMinimapChange: (on) => (onShowMinimapChange ? onShowMinimapChange(on) : this.save.setSettings({ showMinimap: on })),
+      onStickSideChange: (side) => (onStickSideChange ? onStickSideChange(side) : this.save.setSettings({ stickSide: side })),
       steering: this.steeringSetting,
       // the input layer switches at once (toggled while paused; resume clears input); a caller's callback replaces persistence only
       onSteeringChange: (st) => {

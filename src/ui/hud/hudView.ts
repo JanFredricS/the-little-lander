@@ -75,17 +75,17 @@ export class HudView {
 
   /** Show (mode) or hide (null) the controls help card. */
   /** `mission`: the level-start card's mission line(s) ('' = none: mid-level cards, the pause card). */
-  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false, joystick = false, mission = ''): void {
+  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false, joystick = false, mission = '', stickRight = false): void {
     if (mode === null) {
       this.help.visible = false;
       this.helpKey = '';
       return;
     }
-    const key = `${helpCardKey(mode, touch, start, this.border, swap, direct, joystick)}|${mission}`;
+    const key = `${helpCardKey(mode, touch, start, this.border, swap, direct, joystick, stickRight)}|${mission}`;
     this.help.visible = true;
     if (key === this.helpKey) return;
     this.helpKey = key;
-    const card = helpCard(mode, touch, start, swap, direct, joystick);
+    const card = helpCard(mode, touch, start, swap, direct, joystick, stickRight);
     this.helpTitle.setText(card.title);
     this.missionShown = mission;
     this.helpMission.setText(mission);

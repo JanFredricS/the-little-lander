@@ -79,18 +79,24 @@ const JOYSTICK_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
 const JOYSTICK_MOUSE = 'MOUSE: DRAG THE STICK (BOTTOM LEFT)';
 
 /** Cache key for a rendered help card: content AND the theme border it was drawn with. */
-export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false, direct = false, joystick = false): string {
-  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}|${direct}|${joystick}`;
+export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false, direct = false, joystick = false, stickRight = false): string {
+  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}|${direct}|${joystick}|${stickRight}`;
 }
+
+/** Round 11 LAYOUT stick-right: the stick / classic CSM lines name the other side (LEFT <-> RIGHT). */
+const mirrorSides = (lines: readonly string[]): string[] =>
+  lines.map((l) => l.replace(/LEFT STICK|RIGHT STICK|LEFT THUMB|RIGHT THUMB|BOTTOM LEFT|BOTTOM RIGHT/g, (w) => (w.includes('LEFT') ? w.replace('LEFT', 'RIGHT') : w.replace('RIGHT', 'LEFT'))));
 
 /**
  * `start` = the level-start card (the level waits for the first input). `swap` = engine buttons/keys swapped (S9).
  * `direct` = DIRECT steering (modes it does not drive keep their normal card; swap does not apply to it).
+ * `stickRight` = round 11 LAYOUT: the stick (and the classic CSM buttons) on the right.
  */
-export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false, joystick = false): HelpCard {
+export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false, joystick = false, stickRight = false): HelpCard {
   if (joystick && JOYSTICK_TOUCH[mode]) {
     // touch: the stick; keyboard: the DIRECT keys (the CSM keeps its classic ones) + the mouse-draggable stick
-    const lines = touch ? JOYSTICK_TOUCH[mode]! : [...(DIRECT_KEYS[mode] ?? KEYS[mode]), JOYSTICK_MOUSE];
+    const base = touch ? JOYSTICK_TOUCH[mode]! : [...(DIRECT_KEYS[mode] ?? KEYS[mode]), JOYSTICK_MOUSE];
+    const lines = stickRight ? mirrorSides(base) : base;
     return {
       title: `${TITLE[mode]} (JOYSTICK)`,
       lines: [...lines, touch ? 'II  PAUSE    ↻  RESTART' : 'ESC / P   PAUSE    BKSP   RESTART'],
@@ -98,7 +104,9 @@ export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = 
     };
   }
   const directLines = direct ? (touch ? DIRECT_TOUCH[mode] : DIRECT_KEYS[mode]) : undefined;
-  const touchLines = directLines ?? (touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode]);
+  const touchBase = directLines ?? (touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode]);
+  // only the classic CSM buttons move with LAYOUT (the lander's are symmetric, the harpoon's stay)
+  const touchLines = stickRight && !directLines && mode === 'csm' ? mirrorSides(touchBase) : touchBase;
   const keyLines = directLines ?? (swap && mode === 'lander' ? KEYS_LANDER_SWAPPED : KEYS[mode]);
   return {
     title: directLines ? `${TITLE[mode]} (DIRECT)` : TITLE[mode],

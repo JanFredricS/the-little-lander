@@ -173,7 +173,7 @@ describe('screen models drive the state machine', () => {
     s = press(s, 'testpad', c);
     expect(s).toEqual({ id: 'playing', levelId: 'testpad' });
     s = transition(s, { type: 'pause' });
-    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'steering', 'minimap', 'swap', 'fps', 'lowres', 'quit']);
+    expect(screenModel(s, c).items.map((i) => i.id)).toEqual(['resume', 'retry', 'controls', 'touch', 'steering', 'minimap', 'layout', 'swap', 'fps', 'lowres', 'quit']);
     expect(itemAction(s, 'steering', c)).toEqual({ ui: 'toggleSteering' });
     expect(itemAction(s, 'lowres', c)).toEqual({ ui: 'toggleLowRes' });
     expect(itemAction(s, 'fps', c)).toEqual({ ui: 'toggleFps' });

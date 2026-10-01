@@ -143,10 +143,12 @@ vi.mock('../src/ui/gameUi', async () => {
       private state: ScreenState = { id: 'boot' };
       private steering: SteeringScheme | null;
       private showMinimap: boolean;
+      private stickSide: 'left' | 'right';
       constructor(private readonly o: GameUiOptions) {
         h.click = (itemId) => this.activate(itemId);
         this.steering = o.steering ?? null;
         this.showMinimap = o.showMinimap ?? true;
+        this.stickSide = o.stickSide ?? 'left';
       }
       /** Same context GameUi.ctx() builds (lastHull only affects results text). */
       private ctx(): ScreenContext {
@@ -171,6 +173,7 @@ vi.mock('../src/ui/gameUi', async () => {
         // pause-menu settings: the same callbacks the real GameUi.activate makes (the App persists / rewires)
         else if (a.ui === 'toggleSteering') this.o.onSteeringChange?.((this.steering = screens.nextSteering(this.steering)));
         else if (a.ui === 'toggleMinimap') this.o.onShowMinimapChange?.((this.showMinimap = !this.showMinimap));
+        else if (a.ui === 'toggleStickSide') this.o.onStickSideChange?.((this.stickSide = this.stickSide === 'right' ? 'left' : 'right'));
         else throw new Error(`unexpected UI command ${a.ui}`);
       }
       enter(s: ScreenState) {
@@ -559,6 +562,12 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(r.save.state.settings.showMinimap).toBe(false);
     h.click!('minimap');
     expect(r.save.state.settings.showMinimap).toBe(true);
+    // round 11 LAYOUT: persisted by the App (default left)
+    expect(r.save.state.settings.stickSide).toBe('left');
+    h.click!('layout');
+    expect(r.save.state.settings.stickSide).toBe('right');
+    h.click!('layout');
+    expect(r.save.state.settings.stickSide).toBe('left');
     h.click!('steering'); // joystick -> AUTO: stored as null; hangarRun's default is JOYSTICK, so the gates stay
     expect(r.save.state.settings.steering).toBeNull();
     expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([true, false]);

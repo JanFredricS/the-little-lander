@@ -23,12 +23,13 @@
  *    finger that is still inside the zone takes the stick over from where it is.
  *  - relayout() (viewport resize - e.g. mobile Safari's toolbar, which the
  *    bottom-edge thumb summons - rotation, a settings rebuild) keeps the stick
- *    finger(s) when the new layout still has a stick; everything else is
- *    released as with setLayout().
+ *    finger(s) when the new layout still has a stick on the same side (its grab
+ *    zone overlaps the old one); everything else - and a stick that moved to the
+ *    other side (LAYOUT swap) - is released as with setLayout().
  */
 
 import type { ControlId, Vec2 } from '../../contracts';
-import { contains, stickVector, type TouchButton, type TouchLayout } from './touchLayout';
+import { contains, overlaps, stickVector, type TouchButton, type TouchLayout } from './touchLayout';
 
 /** CSS px a drag must travel before it aims (matches TOUCH_AIM_DEADZONE in shell/input.ts). */
 export const AIM_DEADZONE = 8;
@@ -72,7 +73,10 @@ export class TouchModel {
    */
   relayout(layout: TouchLayout | null): number[] {
     const keep: [number, Owner][] = [];
-    if (layout?.stick && this.layout?.stick) for (const [id, o] of this.pointers) if (o.kind === 'stick' || o.kind === 'stickWait') keep.push([id, o]);
+    // round 11: only while the stick stays on its side - after a LAYOUT swap the finger is across
+    // the screen from the new base (it would read as a full deflection): released instead
+    const stay = !!layout?.stick && !!this.layout?.stick && overlaps(layout.stick.zone, this.layout.stick.zone);
+    if (stay) for (const [id, o] of this.pointers) if (o.kind === 'stick' || o.kind === 'stickWait') keep.push([id, o]);
     if (keep.length === 0) {
       this.setLayout(layout);
       return [];

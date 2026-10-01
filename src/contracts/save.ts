@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes; direct-steering amendment: Settings.steering; round 8: steering 'joystick', Settings.showMinimap). Persistent progress (localStorage key 'the-little-lander/save').
+ * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes; direct-steering amendment: Settings.steering; round 8: steering 'joystick', Settings.showMinimap; round 11: Settings.stickSide). Persistent progress (localStorage key 'the-little-lander/save').
  * Readers must accept older/partial data: validate, then fill defaults.
  */
 
@@ -69,7 +69,17 @@ export interface Settings {
    * marked). Pause-menu toggle. Default true; older saves read as true.
    */
   showMinimap: boolean;
+  /**
+   * Round 11 (a player's request): which side the thumb controls sit on (pause-menu
+   * LAYOUT). 'left' (default; older saves read as left) = the JOYSTICK stick lower-left
+   * and the minimap lower-right; 'right' mirrors them (stick lower-right, minimap
+   * lower-left) and the classic CSM buttons (THRUST left, ◀ ▶ right). The lander's
+   * engine buttons are symmetric (each side's button is that side's engine) and stay.
+   */
+  stickSide: StickSide;
 }
+
+export type StickSide = 'left' | 'right';
 
 export type SteeringScheme = 'engines' | 'direct' | 'joystick';
 

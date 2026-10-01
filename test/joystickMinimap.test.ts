@@ -307,10 +307,10 @@ describe('JOYSTICK: setting', () => {
     const { steering, ...rest } = back.settings;
     expect(steering).toBeNull();
     const { steering: _old, ...v1rest } = v1.settings;
-    expect(rest).toEqual({ ...v1rest });
+    expect(rest).toEqual({ ...v1rest, stickSide: 'left' }); // round 11 field: absent -> the default
     // a v1 player who chose DIRECT keeps it alongside everything else
     const d = parseSave({ ...v1, settings: { ...v1.settings, steering: 'direct' } })!;
-    expect(d.settings).toEqual({ ...v1.settings, steering: 'direct' });
+    expect(d.settings).toEqual({ ...v1.settings, steering: 'direct', stickSide: 'left' });
   });
 
   it('help card: JOYSTICK touch lines; keyboard keeps the DIRECT keys plus the mouse stick', () => {
@@ -471,11 +471,11 @@ describe('minimap: marker math', () => {
     const H = MinimapView.outerH;
     expect(minimapPlacement([], W, H, 640, 360)).toEqual({ x: 640 - 4 - W, y: 360 - 4 - H });
     const cluster: Rect = { x: 560, y: 280, w: 76, h: 76 };
-    const p = minimapPlacement([cluster], W, H, 640, 360);
+    const p = minimapPlacement([cluster], W, H, 640, 360)!;
     expect(overlaps({ x: p.x, y: p.y, w: W, h: H }, cluster)).toBe(false);
     expect(p.y).toBe(360 - 4 - H);
     const wide: Rect = { x: 300, y: 300, w: 340, h: 60 };
-    const q = minimapPlacement([wide], W, H, 640, 360);
+    const q = minimapPlacement([wide], W, H, 640, 360)!;
     expect(overlaps({ x: q.x, y: q.y, w: W, h: H }, wide)).toBe(false);
     expect(q.y).toBeGreaterThanOrEqual(80);
   });
