@@ -25,6 +25,7 @@ export const SAMPLE_EVENTS: { [T in GameEventType]: GameEventOf<T> } = {
   ropeReleased: { type: 'ropeReleased', gun: 0 },
   vesselModeChanged: { type: 'vesselModeChanged', from: 'csm', to: 'lander' },
   objectiveComplete: { type: 'objectiveComplete', objectiveId: 'x' },
+  checkpointReached: { type: 'checkpointReached', checkpointId: 'x' },
   levelComplete: { type: 'levelComplete', levelId: 'descent', timeSec: 60, orbs: 1, score: 100 },
   levelFailed: { type: 'levelFailed', levelId: 'descent', cause: 'impact' },
   bossPhase: { type: 'bossPhase', phase: 2, hp: 0.6 },

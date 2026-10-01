@@ -19,7 +19,8 @@ import type { VirtualControlsSource } from '../shell/input';
 import { frameHasInput, missionLines } from './controlsHelp';
 import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } from './fpsMeter';
 import { PixelText } from './pixelText';
-import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
+import { hudReduce, hudTick, initHud, initHudResume, type HudState } from './hud/hudState';
+import type { ResumeInfo } from '../game/session';
 import { HudView } from './hud/hudView';
 import { MINIMAP_BORDER, MINIMAP_H, MINIMAP_W, MinimapView, minimapPlacement, minimapSide } from './minimap';
 import { readSaveView, type SaveView } from './levelSelect';
@@ -81,6 +82,12 @@ export interface GameUiOptions {
   story?(): StoryContext;
   /** Title CONTINUE activated: the App resumes the story (cutscene + level). */
   onContinueStory?(): void;
+  /**
+   * Round 12 (ScreenContext.checkpoint): on GAME OVER, a plain retry would resume at a
+   * checkpoint (RETRY FROM CHECKPOINT + RESTART LEVEL); paused, the run has a checkpoint
+   * that RESTART would drop (labelled RESTART LEVEL).
+   */
+  checkpoint?(): boolean;
 }
 
 const TAP_SLOP_CSS = 10;
@@ -289,6 +296,7 @@ export class GameUi {
       showMinimap: this.showMinimap,
       stickSide: this.stickSide,
       lastHull: this.lastHull,
+      checkpoint: this.o.checkpoint?.() ?? false,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
   }
@@ -337,22 +345,42 @@ export class GameUi {
 
   // ------------------------------------------------------------ gameplay
 
-  levelStarted(spec: LevelSpec): void {
+  /**
+   * A level session started. `resume` (round 12, LevelSession.resumeInfo): it is a checkpoint
+   * respawn - the HUD, minimap markers and steering start from the checkpoint's state (its
+   * vessel mode, so the HUD's mode-change check in tick() never sees a "switch" and shows no
+   * card), there is no start card / mission line, and a controls card holds the simulation only
+   * when the respawn is not a resting spot (the vessel would fall while the player reads it).
+   */
+  levelStarted(spec: LevelSpec, resume: ResumeInfo | null = null): void {
     this.spec = spec;
-    this.hud = initHud(spec);
+    this.hud = resume ? initHudResume(spec, resume) : initHud(spec);
+    const mode = resume ? resume.mode : spec.vesselMode;
     // never-chosen steering: per level / phase (ENGINES on Descent and floatingIsles' CSM - touch buttons too - else JOYSTICK)
-    this.steering = resolveSteering(this.steeringSetting, spec.id, spec.vesselMode);
+    this.steering = resolveSteering(this.steeringSetting, spec.id, mode);
     this.touch.setSteering(this.steering);
     // the minimap's terrain is baked ONCE here (load frame) and uploaded to the GPU right away
     this.minimap.setLevel(spec, (src) => this.o.pixi.uploadTexture(src));
-    this.mmPose[0] = spec.spawn.x;
-    this.mmPose[1] = spec.spawn.y;
-    this.mmPose[2] = spec.spawn.angle ?? 0;
-    this.helpMode = spec.vesselMode;
-    this.helpBlocks = true;
+    for (const id of resume?.planted ?? []) this.minimap.setPlanted(id);
+    this.mmPose[0] = resume ? resume.pose.x : spec.spawn.x;
+    this.mmPose[1] = resume ? resume.pose.y : spec.spawn.y;
+    this.mmPose[2] = resume ? resume.pose.angle : (spec.spawn.angle ?? 0);
     // round 10 (G): the start card states the mission, readable while it holds the level
     this.mission = missionLines(spec.objectives).join('\n');
-    this.helpIsStart = true;
+    if (!resume) {
+      this.helpMode = spec.vesselMode;
+      this.helpBlocks = true;
+      this.helpIsStart = true;
+    } else if (!resume.resting) {
+      this.helpMode = mode;
+      this.helpBlocks = true;
+      this.helpIsStart = false;
+      this.helpTtl = 6;
+    } else {
+      this.helpMode = null;
+      this.helpBlocks = false;
+      this.helpIsStart = false;
+    }
     this.loading = false;
     this.refreshModel(true);
     this.syncLayers();
@@ -650,7 +678,7 @@ export class GameUi {
   private shortcut(code: string): boolean {
     const id = this.state.id;
     if (id === 'paused' && code === 'KeyP') this.o.dispatch({ type: 'resume' });
-    else if ((id === 'paused' || id === 'results') && (code === 'KeyR' || code === 'Backspace')) this.o.dispatch({ type: 'retry' });
+    else if ((id === 'paused' || id === 'results') && (code === 'KeyR' || code === 'Backspace')) this.o.dispatch(id === 'paused' ? { type: 'retry', fromStart: true } : { type: 'retry' });
     else if (id === 'paused' && code === 'KeyQ') this.o.dispatch({ type: 'quit' });
     else return false;
     return true;

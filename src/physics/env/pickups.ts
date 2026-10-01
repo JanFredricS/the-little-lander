@@ -43,6 +43,28 @@ export class PickupSystem {
     }
   }
 
+  /** Ids of the pickups collected so far. */
+  collectedIds(): string[] {
+    return this.pickups.filter((p) => p.collected).map((p) => p.entity.id);
+  }
+
+  /**
+   * Round 12 checkpoint respawn: these pickups are already taken (silently: no events, no
+   * fuel - the respawn's fuel is the checkpoint's). Orbs still count toward orbs / points.
+   */
+  restoreCollected(ids: readonly string[]): void {
+    for (const p of this.pickups) {
+      if (p.collected || !ids.includes(p.entity.id)) continue;
+      p.collected = true;
+      this.byBody.delete(p.body);
+      if (this.physics.hasBody(p.body)) this.physics.destroyBody(p.body);
+      if (p.entity.kind === 'orb') {
+        this.orbsCollected++;
+        this.points += p.entity.points;
+      }
+    }
+  }
+
   /** After physics.step(). */
   update(vessel: FlightVessel): void {
     if (!this.byBody.size) return;

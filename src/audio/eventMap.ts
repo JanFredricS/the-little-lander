@@ -57,6 +57,7 @@ export const EVENT_SFX: { [T in GameEventType]: Mapper<T> } = {
   ropeReeling: (e) => (e.dir === null ? [] : [{ id: 'harpoonReel', opts: { variant: e.dir === 'in' ? 0 : 1 } }]),
   vesselModeChanged: () => [{ id: 'modeChange' }],
   objectiveComplete: () => [{ id: 'objective' }],
+  checkpointReached: () => [{ id: 'objective' }],
   levelComplete: () => [{ id: 'levelComplete' }],
   levelFailed: () => [{ id: 'levelFailed' }],
   bossPhase: (e) => [{ id: 'bossRoar', opts: { variant: e.phase - 1 } }],

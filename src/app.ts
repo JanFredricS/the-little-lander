@@ -12,7 +12,7 @@ import { DEFAULT_STEERING, FIXED_DT, resolveSteering, VESSEL_MODES } from './con
 import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, SteeringScheme, StillId } from './contracts';
 import { createArt, hasPreload } from './art/art';
 import { STILL_IDS } from './art/stills';
-import { LevelSession } from './game/session';
+import { LevelSession, type RespawnState } from './game/session';
 import { getLevel, LEVELS } from './levels/registry';
 import { loadPhysics } from './physics/engine';
 import { createPixiHost, type PixiHost } from './render/pixiApp';
@@ -74,6 +74,12 @@ export class App {
   /** Extra scripts to play inside the next `cutscene` screen (after the one it names). */
   private cutsceneChain: CutsceneId[] = [];
   private session: LevelSession | null = null;
+  /**
+   * Round 12: a crashed run's checkpoint (LevelSession.respawnState, kept when it fails). A plain
+   * retry of the same level resumes there; retry { fromStart } (pause RESTART, in-flight ↻ /
+   * Backspace, GAME OVER RESTART LEVEL), any other level start and a completion drop it.
+   */
+  private respawn: { levelId: LevelId; state: RespawnState } | null = null;
   private view: LevelView | null = null;
   /** HUD, menus, touch controls (created in start()). */
   ui!: GameUi;
@@ -186,6 +192,11 @@ export class App {
       stickSide: this.save.state.settings.stickSide,
       story: () => this.storyContext(),
       onContinueStory: () => this.titleContinue(),
+      // GAME OVER: a retry would resume (a held respawn for this level); paused: the run has a checkpoint RESTART would drop
+      checkpoint: () =>
+        this.state.id === 'paused'
+          ? (this.session?.checkpoint ?? null) !== null
+          : this.respawn !== null && 'levelId' in this.state && this.respawn.levelId === this.state.levelId,
       ...uiOpts,
       swapEngineButtons: swapEngines,
       // A caller's callback replaces the default persistence (like onTouchPrefChange) but never the keyboard sync.
@@ -278,10 +289,17 @@ export class App {
     if (next.id === 'playing') this.ui.setLoading(true);
     this.ui.enter(next);
     if (next.id === 'cutscene') this.playCutsceneChain([next.cutsceneId, ...chain]);
-    else if (next.id === 'playing') void this.startLevel(next.levelId);
+    else if (next.id === 'playing') {
+      // round 12: only a plain retry of the crashed level resumes at its checkpoint
+      const r = this.respawn;
+      this.respawn = null;
+      const resume = action.type === 'retry' && !action.fromStart && r && r.levelId === next.levelId ? r.state : null;
+      void this.startLevel(next.levelId, resume);
+    }
   }
 
-  private async startLevel(levelId: LevelId): Promise<void> {
+  /** `resume` (round 12): start from a checkpoint respawn instead of the level start. */
+  private async startLevel(levelId: LevelId, resume: RespawnState | null = null): Promise<void> {
     this.endSession(); // bumps levelToken + aborts warmups, cancelling any in-flight load
     const token = this.levelToken;
     const warm = (this.levelWarm = new AbortController());
@@ -294,14 +312,14 @@ export class App {
     // Pre-generate the theme's art during the loading screen, not mid-flight.
     if (hasPreload(this.art)) await this.art.warmup(spec.themeId, { signal: warm.signal });
     if (token !== this.levelToken || warm.signal.aborted) return;
-    const session = await LevelSession.create(spec);
+    const session = await LevelSession.create(spec, resume);
     if (token !== this.levelToken || this.state.id !== 'playing') {
       session.destroy();
       return;
     }
     this.session = session;
     // never-chosen steering resolves per level and phase (ENGINES on Descent and floatingIsles' CSM, else JOYSTICK)
-    const scheme = resolveSteering(this.steeringSetting, levelId, spec.vesselMode);
+    const scheme = resolveSteering(this.steeringSetting, levelId, session.state.mode); // a checkpoint respawn: its mode
     if (scheme !== this.steering) this.applySteering(scheme);
     // ... and again at a mid-level vessel switch (floatingIsles' detach: CSM ENGINES -> lander JOYSTICK)
     session.on((e) => {
@@ -330,7 +348,7 @@ export class App {
     // LevelView.forEachTextureSource); terrain chunks keep streaming in as the camera moves
     this.view.forEachTextureSource((src) => this.pixi.uploadTexture(src));
     this.view.setTerrainUploader((src) => this.pixi.uploadTexture(src)); // chunk surfaces too, as they stream in
-    this.ui.levelStarted(spec);
+    this.ui.levelStarted(spec, session.resumeInfo());
     session.start();
     this.clearInputOnNextStep = true;
     this.heldLastStep = false;
@@ -385,7 +403,9 @@ export class App {
       return;
     }
     if (frame.restart) {
-      this.dispatch({ type: 'retry' }); // playing -> playing: a fresh session of the same level
+      // playing -> playing: a fresh session of the same level - from its START (round 12: in flight,
+      // the restart key never respawns at a checkpoint; only a retry after a crash - the wreck hold above, GAME OVER RETRY - does)
+      this.dispatch({ type: 'retry', fromStart: true });
       return;
     }
     // DIRECT steering: the held direction becomes this step's engine pulses (flight controls only; edges above untouched).
@@ -401,6 +421,11 @@ export class App {
   /** After the session ends: count down CRASH_RESULTS_DELAY_SEC on failure (0 on completion), then results. */
   private holdThenEnd(s: LevelSession): void {
     const outcome = s.outcome!;
+    if (this.endHoldSteps === null) {
+      // round 12: a crash after a checkpoint - the retry (↻ during the wreck, GAME OVER RETRY) resumes there
+      const r = outcome.kind === 'failed' ? s.respawnState() : null;
+      this.respawn = r ? { levelId: s.spec.id, state: r } : null;
+    }
     this.endHoldSteps ??= outcome.kind === 'complete' ? 0 : Math.round(CRASH_RESULTS_DELAY_SEC / FIXED_DT);
     if (this.endHoldSteps-- > 0) {
       s.step(emptyFrame()); // ended session: only the camera settles

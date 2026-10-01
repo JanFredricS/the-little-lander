@@ -49,6 +49,20 @@ export class BeaconSystem {
     return this.sites.some((s) => s.entity.id === siteId && s.planted);
   }
 
+  /** Round 12 checkpoint respawn: these sites start planted (silently: no events). */
+  restorePlanted(siteIds: readonly string[]): void {
+    for (const site of this.sites) {
+      if (site.planted || !siteIds.includes(site.entity.id)) continue;
+      site.planted = true;
+      this.planted++;
+    }
+  }
+
+  /** Ids of the planted sites. */
+  plantedIds(): string[] {
+    return this.sites.filter((s) => s.planted).map((s) => s.entity.id);
+  }
+
   /** After physics.step(). */
   update(s: VesselState, dt: number): void {
     for (const site of this.sites) {

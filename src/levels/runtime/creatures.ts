@@ -150,6 +150,14 @@ export class CreatureSystem implements EntitySystem {
     }
   }
 
+  /**
+   * Round 12 checkpoint respawn past the seizure (the vessel is no longer a CSM): the
+   * dragon-bird's sequence is over - it neither wakes nor snaps back onto the vessel.
+   */
+  retireSeizers(): void {
+    for (const b of this.birds) b.phase = 'gone';
+  }
+
   afterStep(s: VesselState): void {
     const ctx = this.host.triggerContext(s.pos);
     for (const c of this.ambient) {

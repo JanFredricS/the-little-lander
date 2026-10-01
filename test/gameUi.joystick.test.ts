@@ -374,4 +374,67 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
     expect(b('rotateCCW').x).toBeLessThan(b('rotateCW').x);
     ui.destroy();
   });
+
+  it('round 12: a checkpoint respawn (levelStarted with resume) - lander HUD + JOYSTICK, kept beacons hollow on the minimap, no start card / mission, no hold on a resting spot, no mode card on the first tick; GAME OVER shows the checkpoint items', async () => {
+    const actions: unknown[] = [];
+    let canResume = true;
+    const { ui } = await make({ touchPref: 'on', steering: null, dispatch: (a) => actions.push(a), checkpoint: () => canResume });
+    const isles = getLevel('floatingIsles')!;
+    const resume = { mode: 'lander' as const, pose: { x: 6980, y: 1460, angle: 0 }, fuel: 0.6, hull: 0.9, planted: ['site1'], completed: [], orbs: 2, score: 20, time: 75, resting: true };
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.levelStarted(isles as never, resume);
+    expect(ui.holdSimulation).toBe(false);
+    expect(ui.helpVisible).toBe(false);
+    expect(ui.helpMission).toBe('');
+    const hud = ui.hudState;
+    expect(hud.mode).toBe('lander');
+    expect(hud.fuel).toBeCloseTo(0.6);
+    expect(hud.hull).toBeCloseTo(0.9);
+    expect(hud.beacons).toEqual({ planted: 1, total: 5 });
+    expect(hud.objectives.find((o) => o.kind === 'plantBeacons')).toMatchObject({ progress: 1, done: false });
+    expect(hud.time).toBe(75);
+    expect(hud.banner?.text).toBe('CHECKPOINT');
+    // AUTO steering resolved for the lander: the stick, not the CSM buttons
+    expect(ui.touchLayer.getLayout()!.stick).not.toBeNull();
+    const mm = (ui as unknown as { minimap: MinimapView }).minimap;
+    expect(mm.siteMarkers.filter((m) => m.planted).map((m) => m.id)).toEqual(['site1']);
+    // the first ticks in the lander are not a "mode change": no card, no hold (the round-10 detach hold must not misfire)
+    ui.tick({ mode: 'lander', pos: { x: 6980, y: 1460 }, vel: { x: 0, y: 0 }, angle: 0, angVel: 0, fuel: 0.6, hull: 0.9, attachedGoo: 0, crashed: false, landed: true, engines: { left: false, right: false } } as never, 1 / 60);
+    expect(ui.holdSimulation).toBe(false);
+    expect(ui.helpVisible).toBe(false);
+
+    // not a resting spot: the lander controls card holds (no mission line: it is not the start card)
+    ui.levelStarted(isles as never, { ...resume, resting: false });
+    expect(ui.holdSimulation).toBe(true);
+    expect(ui.helpMission).toBe('');
+    // a full start: the mission card as ever, CSM steering
+    ui.levelStarted(isles as never);
+    expect(ui.holdSimulation).toBe(true);
+    expect(ui.helpMission).not.toBe('');
+    expect(ui.hudState.mode).toBe('csm');
+    expect(mm.siteMarkers.every((m) => !m.planted)).toBe(true);
+
+    // GAME OVER with a checkpoint to resume: RETRY FROM CHECKPOINT (plain retry) + RESTART LEVEL (fromStart)
+    ui.enter({ id: 'results', levelId: 'floatingIsles', outcome: { kind: 'failed', cause: 'impact' } } as never);
+    expect(ui.currentModel!.items.map((i) => i.label)).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
+    expect(ui.currentModel!.info).toContain('CHECKPOINT: BEACONS KEPT');
+    const activate = (id: string) => (ui as unknown as { activate(id: string): void }).activate(id);
+    activate('retry');
+    activate('restart');
+    expect(actions).toEqual([{ type: 'retry' }, { type: 'retry', fromStart: true }]);
+    canResume = false;
+    ui.enter({ id: 'results', levelId: 'floatingIsles', outcome: { kind: 'failed', cause: 'impact' } } as never);
+    expect(ui.currentModel!.items.map((i) => i.label)).toEqual(['RETRY', 'LEVELS']);
+    // pause RESTART and its R / Backspace shortcut: always the whole level
+    actions.length = 0;
+    ui.enter({ id: 'paused', levelId: 'floatingIsles' } as never);
+    expect(ui.currentModel!.items[1]).toMatchObject({ id: 'retry', label: 'RESTART' });
+    canResume = true; // a run with a checkpoint: RESTART drops it - say so (audit round 12 #3)
+    ui.enter({ id: 'paused', levelId: 'floatingIsles' } as never);
+    expect(ui.currentModel!.items[1]).toMatchObject({ id: 'retry', label: 'RESTART LEVEL' });
+    activate('retry');
+    (ui as unknown as { onKey(e: unknown): void }).onKey({ code: 'Backspace', repeat: false, ctrlKey: false, metaKey: false, altKey: false, preventDefault() {} });
+    expect(actions).toEqual([{ type: 'retry', fromStart: true }, { type: 'retry', fromStart: true }]);
+    ui.destroy();
+  });
 });

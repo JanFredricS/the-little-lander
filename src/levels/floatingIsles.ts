@@ -43,7 +43,7 @@
  */
 
 import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
-import { bottomAt, island, islandPoints, P, polygon, roughen } from './kit';
+import { bottomAt, island, islandPoints, P, polygon, roughen, topAt } from './kit';
 
 const W = 18000;
 const H = 3000;
@@ -76,6 +76,20 @@ const ISLANDS: [string, number, number, number, number, number, number?][] = [
 const islandPieces: TerrainPiece[] = ISLANDS.map(([id, x0, x1, top, depth, seed, pad]) =>
   island(id, x0, x1, top, depth, 'soil', seed * 7, { pad: pad ?? 0.5, decorDensity: 0.35 }),
 );
+
+/**
+ * Round 12 (user: "add a checkpoint after the dragon, so I don't have to restart each
+ * time I crash"): checkpoint 'afterDragon', captured when the seizure hands over to the
+ * lander; a crash after it resumes here with the planted beacons kept (LevelSession).
+ * The respawn is a fixed resting spot, not wherever the dragon struck (that can be
+ * anywhere from x 4,700 to the 6,300 backstop, at any height, in the CSM crosswinds):
+ * standing on b1's pad, left of beacon 1's zone (x 7,120-7,280: the respawn never
+ * plants it), in calm air.
+ */
+const b1 = islandPieces.find((p) => p.id === 'b1')!;
+export const CHECKPOINT_RESPAWN_X = 6980;
+/** Feet ~1 px above the pad (lander centre to feet: height 18 / 2 + legDrop 7 = 16 px): it sets down at once. */
+export const CHECKPOINT_RESPAWN_Y = Math.floor(topAt(b1.points, CHECKPOINT_RESPAWN_X)) - 17;
 
 /** Beacon 3's overhang: a slab whose flat underside leaves 110 px over the pad. */
 const overhang = polygon(
@@ -356,6 +370,7 @@ export const floatingIsles: LevelSpec = {
   themeId: 'islands',
   vesselMode: 'csm',
   modeSwitch: { to: 'lander', trigger: { kind: 'enterRegion', rect: band(6300, 6500) }, cutscene: 'csmSeized' },
+  checkpoints: [{ id: 'afterDragon', at: 'modeSwitch', respawn: { x: CHECKPOINT_RESPAWN_X, y: CHECKPOINT_RESPAWN_Y } }],
   worldSize: { w: W, h: H },
   spawn: { x: 250, y: 1100 },
   gravity: { x: 0, y: G },

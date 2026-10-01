@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). Level data. A level is a plain data module exporting a
+ * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints). Level data. A level is a plain data module exporting a
  * LevelSpec (S6/S7 write them; the level loader spawns them; S1 physics
  * interprets zones/entities; S2/S4 render them).
  *
@@ -419,6 +419,24 @@ export interface ModeSwitch {
   cutscene?: CutsceneId;
 }
 
+/**
+ * Round 12 amendment: a respawn point. Once captured, a crash no longer costs the
+ * whole level: RETRY on the GAME OVER screen (and ↻ while the wreck plays out)
+ * resumes from the latest checkpoint; RESTART (pause menu / in flight) is still a
+ * full restart and re-arms it. What a checkpoint respawn keeps: see LevelSession.respawnState.
+ */
+export interface CheckpointSpec {
+  id: string;
+  /** When it is captured: 'modeSwitch' = right after LevelSpec.modeSwitch fires (the new vessel in place). */
+  at: 'modeSwitch';
+  /**
+   * Where the vessel respawns (world px, vessel centre; meant as a resting spot on a
+   * surface: the respawn starts at once, with no controls card). Default: where the
+   * vessel was at capture (velocity zeroed), which then holds behind the controls card.
+   */
+  respawn?: { x: number; y: number; angle?: number };
+}
+
 export interface CameraHints {
   /** Scroll emphasis: 'horizontal' (default) or 'vertical' (descents / escapes). */
   bias?: 'horizontal' | 'vertical';
@@ -434,6 +452,8 @@ export interface LevelSpec {
   vesselMode: VesselMode;
   /** Optional mid-level switch (Map 3 CSM -> lander). */
   modeSwitch?: ModeSwitch;
+  /** Round 12: checkpoints (Map 3: after the dragon seizure). Default none. */
+  checkpoints?: readonly CheckpointSpec[];
   /** World px. Everything must lie inside [0,w]×[0,h]. Real maps: 8k-24k px long. */
   worldSize: { w: number; h: number };
   /** Vessel spawn (world px, angle radians). */

@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: optional enginesChanged topLeft/topRight). Gameplay events. Emitted synchronously during a fixed step
+ * FROZEN (S0; S9 amendment: optional enginesChanged topLeft/topRight; round 12: checkpointReached). Gameplay events. Emitted synchronously during a fixed step
  * (by vessel controllers, level objective logic, the boss, the cutscene
  * player) into a GameEventSink; consumed by HUD, audio, FX, progress/saves.
  *
@@ -57,6 +57,8 @@ export type GameEvent =
   | { type: 'ropeReeling'; gun: number; dir: 'in' | 'out' | null }
   | { type: 'vesselModeChanged'; from: VesselMode; to: VesselMode }
   | { type: 'objectiveComplete'; objectiveId: string }
+  /** Round 12: a LevelSpec checkpoint was captured (a crash from now on resumes there). */
+  | { type: 'checkpointReached'; checkpointId: string }
   | { type: 'levelComplete'; levelId: LevelId; timeSec: number; orbs: number; score: number }
   | { type: 'levelFailed'; levelId: LevelId; cause: CrashCause }
   /** Boss entered phase 1..3. hp 0..1. */

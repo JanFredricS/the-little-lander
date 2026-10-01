@@ -28,6 +28,12 @@ export interface ScreenContext {
   showMinimap?: boolean;
   /** Round 11: thumb-control side (Settings.stickSide; default 'left'). */
   stickSide?: StickSide;
+  /**
+   * Round 12 (LevelSpec.checkpoints). GAME OVER: a retry resumes at a checkpoint (RETRY
+   * FROM CHECKPOINT; RESTART LEVEL starts over). Paused: the run has a checkpoint, so the
+   * RESTART item reads RESTART LEVEL (it drops the checkpoint and the kept beacons).
+   */
+  checkpoint?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -70,6 +76,9 @@ export const CRASH_TEXT: Record<CrashCause, string> = {
   crushed: 'CRUSHED',
   boss: 'THE KEEPER GOT YOU',
 };
+
+/** Round 12: the GAME OVER line after a checkpoint (what a RETRY keeps). */
+export const CHECKPOINT_INFO = 'CHECKPOINT: BEACONS KEPT';
 
 function levelTitle(ctx: ScreenContext, id: LevelId): string {
   return (ctx.levels[id]?.title ?? STORY_TITLES[id]).toUpperCase();
@@ -179,7 +188,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
         info: [levelTitle(ctx, state.levelId)],
         items: [
           { id: 'resume', label: 'RESUME', enabled: true },
-          { id: 'retry', label: 'RESTART', enabled: true },
+          { id: 'retry', label: ctx.checkpoint ? 'RESTART LEVEL' : 'RESTART', enabled: true },
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
           { id: 'steering', label: steeringLabel(ctx.steering ?? null, state.levelId, ctx.vesselMode), enabled: true },
@@ -210,6 +219,21 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           info: [levelTitle(ctx, state.levelId), `TIME  ${formatTime(o.timeSec)}`, `ORBS  ${o.orbs}`, `HULL  ${hull}`, `SCORE ${o.score}`],
           items,
           footer: 'ENTER SELECT · BKSP RETRY · ESC LEVELS',
+        };
+      }
+      if (ctx.checkpoint) {
+        return {
+          ...base,
+          kind: 'panel',
+          overGame: true,
+          heading: 'GAME OVER',
+          info: [CRASH_TEXT[o.cause], levelTitle(ctx, state.levelId), CHECKPOINT_INFO],
+          items: [
+            { id: 'retry', label: 'RETRY FROM CHECKPOINT', enabled: true },
+            { id: 'restart', label: 'RESTART LEVEL', enabled: true },
+            { id: 'levels', label: 'LEVELS', enabled: true },
+          ],
+          footer: 'ENTER / BKSP CHECKPOINT · ESC LEVELS',
         };
       }
       return {
@@ -243,7 +267,8 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       return { type: 'cutsceneDone' };
     case 'paused':
       if (id === 'resume') return { type: 'resume' };
-      if (id === 'retry') return { type: 'retry' };
+      // RESTART is always the whole level (round 12: never a checkpoint respawn)
+      if (id === 'retry') return { type: 'retry', fromStart: true };
       if (id === 'quit') return { type: 'quit' };
       if (id === 'controls') return { ui: 'controls' };
       if (id === 'touch') return { ui: 'toggleTouch' };
@@ -255,7 +280,9 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'lowres') return { ui: 'toggleLowRes' };
       return { ui: 'none' };
     case 'results': {
+      // after a checkpoint (round 12) plain RETRY resumes there; RESTART LEVEL starts over
       if (id === 'retry') return { type: 'retry' };
+      if (id === 'restart') return { type: 'retry', fromStart: true };
       if (id === 'levels') return { type: 'back' };
       if (id === 'next') {
         const spec = ctx.levels[state.levelId];

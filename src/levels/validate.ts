@@ -7,6 +7,7 @@
 import { ENTITY_KINDS, THEME_IDS, VESSEL_MODES } from '../contracts';
 import type { EntitySpec, LevelSpec, Rect, TerrainPiece, TriggerSpec, Vec2, ZoneSpec } from '../contracts';
 import { signedArea } from '../physics/units';
+import { crossingsAt } from './kit';
 import { PHYSICS_OVERRIDE_KEYS, overrideRangeError, resolveTuning, tuningConsistencyErrors } from '../physics/tuning';
 
 export function validateLevel(spec: LevelSpec): string[] {
@@ -133,6 +134,22 @@ export function validateLevel(spec: LevelSpec): string[] {
     if (!VESSEL_MODES.includes(spec.modeSwitch.to)) err(`modeSwitch: unknown mode '${String(spec.modeSwitch.to)}'`);
     if (spec.modeSwitch.to === spec.vesselMode) err('modeSwitch: target mode equals the start mode');
     triggerOk(spec.modeSwitch.trigger, 'modeSwitch');
+  }
+
+  // round 12: checkpoints
+  const cpIds = new Set<string>();
+  for (const c of spec.checkpoints ?? []) {
+    const what = `checkpoint '${c.id}'`;
+    if (!c.id) err('checkpoint with empty id');
+    else if (cpIds.has(c.id)) err(`${what}: duplicate id`);
+    cpIds.add(c.id);
+    if (c.at !== 'modeSwitch') err(`${what}: unknown 'at' '${String(c.at)}'`);
+    else if (!spec.modeSwitch) err(`${what}: at 'modeSwitch' but the level has no modeSwitch`);
+    if (c.respawn && (!inside(c.respawn) || (c.respawn.angle !== undefined && !fin(c.respawn.angle)))) err(`${what}: respawn outside the world`);
+    else if (c.respawn) {
+      const why = respawnSpotError(spec, c.respawn);
+      if (why) err(`${what}: respawn ${why}`);
+    }
   }
 
   if (spec.physicsOverrides) {
@@ -346,4 +363,45 @@ function checkZone(
     default:
       err(`${what}: unknown zone kind '${String((z as { kind: unknown }).kind)}'`);
   }
+}
+
+/** Max fall (px) from a checkpoint respawn point to the terrain below it: a resting spot, not a drop. */
+export const RESPAWN_MAX_DROP = 40;
+
+/**
+ * Round 12: a checkpoint respawn must be a resting spot - in open air (not inside a
+ * terrain piece), with terrain at most RESPAWN_MAX_DROP px below, and clear of every
+ * beacon site's landing zone (a respawn must never plant a beacon by itself).
+ * Static terrain only (moving islands are not a spot to respawn on).
+ */
+function respawnSpotError(spec: LevelSpec, p: Vec2): string | null {
+  let below = Infinity;
+  for (const piece of spec.terrain?.pieces ?? []) {
+    if (piece.kind === 'polygon') {
+      const ys = crossingsAt(piece.points, p.x);
+      if (ys.filter((y) => y <= p.y).length % 2 === 1) return `inside terrain '${piece.id}'`;
+      for (const y of ys) if (y > p.y) below = Math.min(below, y - p.y);
+      continue;
+    }
+    // ground: open polyline, solid below it; ceiling: solid above it
+    const y = polylineYAt(piece.points, p.x);
+    if (y === null) continue;
+    if (piece.kind === 'ground' ? p.y >= y : p.y <= y) return `inside terrain '${piece.id}'`;
+    if (piece.kind === 'ground') below = Math.min(below, y - p.y);
+  }
+  if (below > RESPAWN_MAX_DROP) return `has no terrain within ${RESPAWN_MAX_DROP} px below`;
+  for (const e of spec.entities) {
+    if (e.kind === 'beaconSite' && Math.abs(p.x - e.x) <= e.w / 2 + 20 && Math.abs(p.y - e.y) <= 60) return `is in beacon site '${e.id}'s landing zone`;
+  }
+  return null;
+}
+
+/** y of a left-to-right polyline at x (null outside its x range). */
+function polylineYAt(pts: readonly Vec2[], x: number): number | null {
+  for (let i = 1; i < pts.length; i++) {
+    const a = pts[i - 1]!;
+    const b = pts[i]!;
+    if (x >= a.x && x <= b.x) return b.x === a.x ? Math.min(a.y, b.y) : a.y + ((b.y - a.y) * (x - a.x)) / (b.x - a.x);
+  }
+  return null;
 }

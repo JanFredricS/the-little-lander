@@ -29,7 +29,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
 import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputFrame, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState, SteeringScheme } from '../src/contracts';
-import type { LevelSession } from '../src/game/session';
+import type { LevelSession, ResumeInfo } from '../src/game/session';
 import type { GameUiOptions } from '../src/ui/gameUi';
 import type { ScreenContext } from '../src/ui/screens';
 import { SaveStore, type StorageLike } from '../src/story/save';
@@ -79,6 +79,10 @@ const h = vi.hoisted(() => ({
   inputClears: [] as number[],
   /** Fake GameUi: start a controls-card hold once the session reaches this sim time (no switch / cutscene around it). */
   holdAtSim: null as number | null,
+  /** Round 12: GameUi.levelStarted's checkpoint resume argument, per level start (null = a full start). */
+  resumes: [] as (ResumeInfo | null)[],
+  /** The fake GameUi's current screen model (its real ctx: the App's checkpoint callback included). */
+  model: null as null | (() => import('../src/ui/screens').ScreenModel),
 }));
 
 vi.mock('../src/levels/registry', async (importOriginal) => {
@@ -146,6 +150,7 @@ vi.mock('../src/ui/gameUi', async () => {
       private stickSide: 'left' | 'right';
       constructor(private readonly o: GameUiOptions) {
         h.click = (itemId) => this.activate(itemId);
+        h.model = () => screens.screenModel(this.state, this.ctx());
         this.steering = o.steering ?? null;
         this.showMinimap = o.showMinimap ?? true;
         this.stickSide = o.stickSide ?? 'left';
@@ -158,6 +163,7 @@ vi.mock('../src/ui/gameUi', async () => {
           showDebug: !!this.o.showDebugLevels,
           touchPref: 'auto',
           lastHull: null,
+          checkpoint: this.o.checkpoint?.() ?? false,
           ...(this.o.story ? { story: this.o.story() } : {}),
         };
       }
@@ -184,7 +190,9 @@ vi.mock('../src/ui/gameUi', async () => {
       onEvent(e: GameEvent) {
         if (h.holdOnSwitch && e.type === 'vesselModeChanged') this.held = true;
       }
-      levelStarted() {}
+      levelStarted(_spec: LevelSpec, resume: ResumeInfo | null = null) {
+        h.resumes.push(resume);
+      }
       noteFrame(f: InputFrame) {
         if (this.held && frameHasInput(f)) this.held = false;
       }
@@ -475,6 +483,146 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(r.app.state).toMatchObject({ id: 'playing', levelId: 'hangarRun' });
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
+  });
+
+  it('round 12: floatingIsles checkpoint through the App (real ScreenContext) - RETRY FROM CHECKPOINT resumes in the lander, ↻ in the wreck resumes, pause shows RESTART LEVEL, LEVELS + reselect and RESTART LEVEL start over, another level gets the plain GAME OVER', { timeout: 300_000 }, async () => {
+    Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null, steps: 0 });
+    h.resumes = [];
+    h.levelsStarted = [];
+    h.kbDirect = [];
+    const { Autopilot } = await import('../src/levels/dev/autopilot');
+    const { floatingIslesRoute } = await import('../src/levels/dev/routes');
+    const { CHECKPOINT_RESPAWN_X } = await import('../src/levels/floatingIsles');
+    const sessions: LevelSession[] = [];
+    // per session (the LevelView fake asks for a pilot each time): what that life does
+    const plan: ((s: LevelSession, tick: number) => InputFrame)[] = [];
+    h.pilotOverride = () => {
+      const s = h.session!;
+      sessions.push(s);
+      return plan[sessions.length - 1] ?? (() => emptyFrame());
+    };
+    /** The reference route through the seizure and beacon 1, then a crash. */
+    const routeThenCrash = () => {
+      const ap = new Autopilot(floatingIslesRoute);
+      return (s: LevelSession) => {
+        if (!s.env.beacons.isPlanted('site1')) return ap.frame(s);
+        s.vessel.crash('impact');
+        return emptyFrame();
+      };
+    };
+    const crashAt = (n: number) => (s: LevelSession, t: number) => {
+      if (t === n) s.vessel.crash('impact');
+      return emptyFrame();
+    };
+    plan.push(routeThenCrash()); // life 1 -> GAME OVER -> RETRY FROM CHECKPOINT
+    // life 2 (respawn): pause at 0.5 s (RESTART LEVEL shown; resume), crash at 1 s, ↻ in the wreck
+    plan.push((s, t) => {
+      if (s.outcome) return { ...emptyFrame(), restart: true };
+      if (t === 30) return { ...emptyFrame(), pause: true };
+      if (t === 60) s.vessel.crash('impact');
+      return emptyFrame();
+    });
+    plan.push(crashAt(60)); // life 3 (respawn again) -> GAME OVER -> LEVELS -> pick floatingIsles
+    plan.push(routeThenCrash()); // life 4 (full start) -> GAME OVER -> RESTART LEVEL
+    plan.push((_s, t) => (t === 60 ? { ...emptyFrame(), pause: true } : emptyFrame())); // life 5 (full start) -> pause -> QUIT
+    plan.push(crashAt(60)); // life 6: hangarRun -> plain GAME OVER
+
+    const save = new SaveStore(memoryStorage());
+    const events: GameEvent[] = [];
+    const app = new App({} as HTMLElement, { art: {} as ArtApi, save, onEvent: (e) => events.push(e) });
+    await app.start();
+    app.dispatch({ type: 'start' });
+    app.dispatch({ type: 'selectLevel', levelId: 'floatingIsles' });
+    const seen: string[] = [];
+    const drive = async (until: () => boolean) => {
+      for (let guard = 0; guard < 200_000 && !until(); guard++) {
+        if (guard % 30 === 0) await flush();
+        if (h.pending) {
+          seen.push(h.pending.id);
+          const c = h.pending;
+          h.pending = null;
+          c.onDone(false);
+          continue;
+        }
+        if (app.state.id !== 'playing' || !h.session || h.loop!.paused) {
+          await flush();
+          continue;
+        }
+        h.loop!.step();
+        h.steps++;
+      }
+      expect(until(), JSON.stringify(app.state)).toBe(true);
+    };
+    const live = (n: number) => () => sessions.length === n && h.session === sessions[n - 1];
+    // the menu exactly as the player sees it: the fake GameUi's ctx (the App's real checkpoint callback)
+    const labels = () => h.model!().items.map((i) => i.label);
+
+    // life 1 -> GAME OVER with the checkpoint items
+    await drive(() => app.state.id === 'results');
+    expect(seen).toEqual(['csmSeized']);
+    expect(events.filter((e) => e.type === 'checkpointReached')).toHaveLength(1);
+    expect(labels()).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
+    const switchesBefore = events.filter((e) => e.type === 'vesselModeChanged').length;
+    h.click!('retry');
+
+    // life 2: the respawn
+    await drive(live(2));
+    const s2 = sessions[1]!;
+    expect(s2.respawnedFrom).not.toBeNull();
+    expect(s2.state.mode).toBe('lander');
+    expect(s2.state.pos.x).toBeCloseTo(CHECKPOINT_RESPAWN_X, 0);
+    expect(s2.env.beacons.isPlanted('site1')).toBe(true);
+    expect(h.resumes).toHaveLength(2);
+    expect(h.resumes[0]).toBeNull();
+    expect(h.resumes[1]).toMatchObject({ mode: 'lander', planted: ['site1'], resting: true });
+    expect(h.kbDirect.at(-1)).toBe(true); // AUTO steering resolved for the lander (JOYSTICK: DIRECT keys)
+    // paused in a run with a checkpoint: RESTART says it restarts the LEVEL
+    await drive(() => app.state.id === 'paused');
+    expect(labels()[1]).toBe('RESTART LEVEL');
+    h.click!('resume');
+    // crash, ↻ in the wreck: the checkpoint again
+    await drive(live(3));
+    expect(sessions[2]!.respawnedFrom).not.toBeNull();
+    expect(sessions[2]!.state.mode).toBe('lander');
+    expect(sessions[2]!.elapsed).toBeGreaterThan(sessions[1]!.respawnedFrom!.elapsed + 0.9); // life 2's second counts
+    // no second switch / cutscene / checkpoint event in the respawned lives
+    expect(events.filter((e) => e.type === 'vesselModeChanged')).toHaveLength(switchesBefore);
+    expect(events.filter((e) => e.type === 'checkpointReached')).toHaveLength(1);
+    expect(seen).toEqual(['csmSeized']);
+
+    // life 3: GAME OVER -> LEVELS -> floatingIsles again = a full start (the held checkpoint is dropped)
+    await drive(() => app.state.id === 'results');
+    expect(labels()).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
+    h.click!('levels');
+    expect(app.state.id).toBe('levelSelect');
+    app.dispatch({ type: 'selectLevel', levelId: 'floatingIsles' });
+    await drive(live(4));
+    const s4 = sessions[3]!;
+    expect(s4.respawnedFrom).toBeNull();
+    expect(s4.state.mode).toBe('csm');
+    expect(s4.env.beacons.isPlanted('site1')).toBe(false);
+    expect(h.resumes.at(-1)).toBeNull();
+    expect(h.kbDirect.at(-1)).toBe(false); // AUTO = ENGINES for the CSM again
+
+    // life 4: the route again (the checkpoint re-arms), crash -> GAME OVER -> RESTART LEVEL = a full start
+    await drive(() => app.state.id === 'results');
+    expect(seen).toEqual(['csmSeized', 'csmSeized']);
+    expect(labels()).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
+    h.click!('restart');
+    await drive(live(5));
+    expect(sessions[4]!.respawnedFrom).toBeNull();
+    expect(sessions[4]!.state.mode).toBe('csm');
+    // life 5: no checkpoint in this run yet - the pause item is plain RESTART; QUIT to another level
+    await drive(() => app.state.id === 'paused');
+    expect(labels()[1]).toBe('RESTART');
+    h.click!('quit');
+    app.dispatch({ type: 'selectLevel', levelId: 'hangarRun' });
+    // life 6: a crash on another level: the plain GAME OVER
+    await drive(() => app.state.id === 'results');
+    expect(sessions[5]!.spec.id).toBe('hangarRun');
+    expect(labels()).toEqual(['RETRY', 'LEVELS']);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    app.destroy();
   });
 
   it('a persisted DIRECT steering setting does not disable pilot sources that emit physical engine frames', { timeout: 120_000 }, async () => {

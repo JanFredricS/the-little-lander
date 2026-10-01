@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). The top-level screen state machine (src/shell/state.ts
+ * FROZEN (S0; round 12 amendment: retry.fromStart). The top-level screen state machine (src/shell/state.ts
  * implements the pure transition function). UI (S4) and story (S3) slices
  * render screens for these states and dispatch ScreenActions.
  *
@@ -37,7 +37,12 @@ export type ScreenAction =
   | { type: 'cutsceneDone' }
   | { type: 'pause' }
   | { type: 'resume' }
-  | { type: 'retry' } // playing/paused/results -> playing (same level, fresh session)
+  /**
+   * playing/paused/results -> playing (same level, fresh session). Round 12: a retry after a
+   * crash resumes at the level's latest checkpoint (if one was reached); fromStart = a full
+   * restart regardless (pause-menu RESTART, ↻ / Backspace in flight, GAME OVER "RESTART LEVEL").
+   */
+  | { type: 'retry'; fromStart?: boolean }
   | { type: 'quit' } // paused -> levelSelect
   | { type: 'levelEnded'; outcome: LevelOutcome }
   | { type: 'continue'; next: LevelId | null; cutsceneAfter?: CutsceneId }; // results -> [cutscene] -> next level / levelSelect

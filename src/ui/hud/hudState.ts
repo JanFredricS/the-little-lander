@@ -158,6 +158,47 @@ export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives
   };
 }
 
+/** Round 12: what a checkpoint respawn carries over (LevelSession.respawnState, seeded silently: no events replay). */
+export interface HudResume {
+  mode: VesselMode;
+  fuel: number;
+  hull: number;
+  /** Beacon site ids planted (kept across the respawn). */
+  planted: readonly string[];
+  /** Objective ids already complete. */
+  completed: readonly string[];
+  /** Orbs / points of the pickups kept taken. */
+  orbs: number;
+  score: number;
+  /** Elapsed level seconds of the earlier lives. */
+  time: number;
+}
+
+/** Round 12: initHud(spec) seeded with a checkpoint respawn, plus the CHECKPOINT banner. */
+export function initHudResume(spec: Parameters<typeof initHud>[0] & {}, r: HudResume): HudState {
+  const s = initHud(spec);
+  const done = new Set(r.completed);
+  const planted = r.planted.length;
+  return {
+    ...s,
+    mode: r.mode,
+    fuel: clamp01(r.fuel),
+    hull: clamp01(r.hull),
+    orbs: r.orbs,
+    score: r.score,
+    time: r.time,
+    beacons: s.beacons ? { ...s.beacons, planted } : null,
+    objectives: s.objectives.map((o) => {
+      const progress = o.kind === 'plantBeacons' ? Math.min(o.total, planted) : o.kind === 'collectOrbs' ? Math.min(o.total, r.orbs) : o.progress;
+      return done.has(o.id) ? { ...o, done: true, progress: o.total } : { ...o, progress };
+    }),
+    banner: { text: CHECKPOINT_BANNER, ttl: BANNER_TTL },
+  };
+}
+
+/** Round 12: the banner at a checkpoint capture and on a respawn there. */
+export const CHECKPOINT_BANNER = 'CHECKPOINT';
+
 const clamp01 = (v: number) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0);
 
 function mapObjectives(s: HudState, kind: HudObjective['kind'], f: (o: HudObjective) => HudObjective): HudObjective[] {
@@ -229,6 +270,8 @@ export function hudReduce(s: HudState, e: GameEvent): HudState {
         bossHp: 0,
         objectives: mapObjectives(s, 'surviveBoss', (o) => ({ ...o, done: true, progress: o.total })),
       };
+    case 'checkpointReached':
+      return { ...s, banner: { text: CHECKPOINT_BANNER, ttl: BANNER_TTL } };
     case 'levelComplete':
       return { ...s, orbs: e.orbs, score: e.score };
     default:
