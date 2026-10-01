@@ -42,7 +42,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'showMinimap' | 'onShowMinimapChange' | 'save'>;
 }
 
 /**
@@ -100,7 +100,7 @@ export class App {
     this.audioMs += performance.now() - t;
   };
   private readonly unbind: (() => void)[] = [];
-  /** DIRECT steering layer (Settings.steering = 'direct'): steer command -> engine pulses, once per fixed step. */
+  /** DIRECT steering layer (Settings.steering = 'direct' / 'joystick'): steer command -> engine pulses, once per fixed step. */
   private readonly direct = new DirectSteering();
   private steering: SteeringScheme = 'engines';
   /** Reused terrain diagnostics record (FPS counter terrain line). */
@@ -128,7 +128,7 @@ export class App {
 
   async start(initialActions: ScreenAction[] = []): Promise<void> {
     // Explicit options win, but an `undefined` (e.g. no ?touch=) must not mask the saved preference.
-    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, onSteeringChange, ...uiOpts } = Object.fromEntries(
+    const { onSwapEngineButtonsChange, onShowFpsChange, onLowResChange, onSteeringChange, onShowMinimapChange, ...uiOpts } = Object.fromEntries(
       Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
     ) as NonNullable<AppOptions['ui']>;
     const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
@@ -150,7 +150,8 @@ export class App {
     const pointer = new PointerSource(this.pixi.canvas);
     const setSteering = (s: SteeringScheme) => {
       this.steering = s;
-      keyboard.setDirectSteering(s === 'direct');
+      // JOYSTICK: the DIRECT keyboard; the canvas never steers (the virtual stick does, via this.virtual)
+      keyboard.setDirectSteering(s !== 'engines');
       pointer.setDirectSteering(s === 'direct');
       this.direct.reset();
     };
@@ -172,6 +173,7 @@ export class App {
       touchPref: this.save.state.settings.touchControls,
       onTouchPrefChange: (p) => this.save.setSettings({ touchControls: p }),
       showFps: this.save.state.settings.showFps,
+      showMinimap: this.save.state.settings.showMinimap,
       story: () => this.storyContext(),
       onContinueStory: () => this.titleContinue(),
       ...uiOpts,
@@ -183,6 +185,7 @@ export class App {
         else this.save.setSettings({ swapEngineButtons: swap });
       },
       onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
+      onShowMinimapChange: (on) => (onShowMinimapChange ? onShowMinimapChange(on) : this.save.setSettings({ showMinimap: on })),
       steering: this.steering,
       // the input layer switches at once (toggled while paused; resume clears input); a caller's callback replaces persistence only
       onSteeringChange: (st) => {
@@ -356,7 +359,7 @@ export class App {
     }
     // DIRECT steering: the held direction becomes this step's engine pulses (flight controls only; edges above untouched).
     // Skipped while an autopilot / replay source feeds physical engine frames (dev pilots work under any saved scheme).
-    if (this.steering === 'direct' && !this.input.hasEngineFrameSource) this.direct.apply(frame, s.state);
+    if (this.steering !== 'engines' && !this.input.hasEngineFrameSource) this.direct.apply(frame, s.state);
     this.ui.noteFrame(frame);
     if (this.ui.holdSimulation) return; // level-start controls card: wait for the first input
     s.step(frame);

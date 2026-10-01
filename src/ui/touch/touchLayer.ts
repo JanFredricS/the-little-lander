@@ -9,7 +9,7 @@
  * readable over both a dark sky and bright terrain.
  */
 
-import type { VesselMode } from '../../contracts';
+import type { SteeringScheme, VesselMode } from '../../contracts';
 import { rasterText } from '../font';
 import { touchLayout, type TouchLayout, type TouchLayoutOptions } from './touchLayout';
 import { TouchModel, type ControlSink } from './touchModel';
@@ -30,6 +30,13 @@ const CSS = `
 .tll-aim{border:2px dashed rgba(216,220,232,.18);display:flex;align-items:flex-end;justify-content:center;padding-bottom:6px}
 .tll-stick{position:absolute;pointer-events:none;border:3px solid rgba(240,176,48,.7);box-sizing:border-box}
 .tll-knob{position:absolute;pointer-events:none;width:20px;height:20px;margin:-10px 0 0 -10px;background:rgba(240,176,48,.8)}
+.tll-joyzone{position:absolute;pointer-events:auto;touch-action:none}
+.tll-joy,.tll-nub{position:absolute;pointer-events:none;box-sizing:border-box;
+  clip-path:polygon(0 8px,8px 8px,8px 0,calc(100% - 8px) 0,calc(100% - 8px) 8px,100% 8px,100% calc(100% - 8px),calc(100% - 8px) calc(100% - 8px),calc(100% - 8px) 100%,8px 100%,8px calc(100% - 8px),0 calc(100% - 8px))}
+.tll-joy{background:rgba(11,13,20,.28);border:3px solid rgba(216,220,232,.32);box-shadow:inset -3px -3px 0 rgba(0,0,0,.3),inset 3px 3px 0 rgba(255,255,255,.06)}
+.tll-joy.down{border-color:rgba(240,176,48,.6)}
+.tll-nub{background:rgba(216,220,232,.42);border:3px solid rgba(11,13,20,.55);box-shadow:inset -3px -3px 0 rgba(0,0,0,.3),inset 3px 3px 0 rgba(255,255,255,.18)}
+.tll-nub.down{background:rgba(240,176,48,.75);border-color:rgba(255,240,192,.9)}
 `;
 
 function label(text: string, maxW: number, maxScale = 4): HTMLCanvasElement {
@@ -49,6 +56,11 @@ export class TouchLayer {
   private readonly btnEls = new Map<string, HTMLDivElement>();
   private stick: HTMLDivElement | null = null;
   private knob: HTMLDivElement | null = null;
+  /** JOYSTICK: the stick base + nub (null without a stick in the layout). */
+  private joy: HTMLDivElement | null = null;
+  private nub: HTMLDivElement | null = null;
+  /** The stick's grab zone (pointer capture target of a carried stick finger). */
+  private joyZone: HTMLDivElement | null = null;
   private lastSize = '';
   private ro: ResizeObserver | null = null;
   private visible = false;
@@ -73,7 +85,7 @@ export class TouchLayer {
     this.el.addEventListener('pointermove', this.onMove);
     this.el.addEventListener('pointerup', this.onUp);
     this.el.addEventListener('pointercancel', this.onCancel);
-    this.el.addEventListener('lostpointercapture', this.onCancel);
+    this.el.addEventListener('lostpointercapture', this.onLostCapture);
     this.el.addEventListener('contextmenu', this.onContext);
     if (typeof ResizeObserver !== 'undefined') {
       this.ro = new ResizeObserver(() => this.relayout());
@@ -120,8 +132,26 @@ export class TouchLayer {
 
   /** DIRECT steering: lander / csm drop their flight buttons (rebuilds, releasing held ones, when it changes). */
   setDirectSteering(direct: boolean): void {
-    if (!!this.opts.direct === direct) return;
-    this.opts = { ...this.opts, direct };
+    this.setSteering(direct ? 'direct' : 'engines');
+  }
+
+  /**
+   * Flight scheme: DIRECT drops the lander / csm flight buttons, JOYSTICK replaces them with the
+   * virtual stick (rebuilds, releasing held controls, when it changes).
+   */
+  setSteering(s: SteeringScheme): void {
+    const direct = s === 'direct';
+    const joystick = s === 'joystick';
+    if (!!this.opts.direct === direct && !!this.opts.joystick === joystick) return;
+    this.opts = { ...this.opts, direct, joystick };
+    this.lastSize = '';
+    this.relayout();
+  }
+
+  /** Pause / restart buttons (false: the desktop JOYSTICK layer = the stick alone). */
+  setSystemButtons(on: boolean): void {
+    if ((this.opts.systemButtons ?? true) === on) return;
+    this.opts = { ...this.opts, systemButtons: on };
     this.lastSize = '';
     this.relayout();
   }
@@ -138,11 +168,17 @@ export class TouchLayer {
     if (!this.visible || !this.mode) return;
     const w = this.host.clientWidth;
     const h = this.host.clientHeight;
-    const key = `${this.mode}|${w}|${h}|${!!this.opts.swapEngines}|${!!this.opts.direct}`;
+    const o = this.opts;
+    const key = `${this.mode}|${w}|${h}|${!!o.swapEngines}|${!!o.direct}|${!!o.joystick}|${o.systemButtons ?? true}`;
     if (key === this.lastSize) return;
     this.lastSize = key;
-    this.layout = touchLayout(this.mode, w, h, this.opts);
-    this.model.setLayout(this.layout);
+    const next = touchLayout(this.mode, w, h, this.opts);
+    // same geometry (e.g. a resize event that changed nothing we use): keep the DOM and every touch
+    if (this.layout && this.el.childElementCount > 0 && sameLayout(this.layout, next)) return;
+    this.layout = next;
+    // a finger on the stick survives the rebuild (mobile Safari's toolbar resizes the viewport
+    // right where the left thumb is); other controls are released as before
+    const carried = this.model.relayout(this.layout);
     this.el.replaceChildren();
     this.btnEls.clear();
     const aim = this.layout.aimZone;
@@ -163,6 +199,33 @@ export class TouchLayer {
       d.appendChild(label(b.label, b.rect.w * 0.9));
       this.btnEls.set(b.id, d);
       this.el.appendChild(d);
+    }
+    const st = this.layout.stick;
+    this.joy = this.nub = this.joyZone = null;
+    if (st) {
+      // grab zone (receives the pointer events), base ring, nub (drawn above, not hit-tested)
+      const z = document.createElement('div');
+      z.className = 'tll-joyzone';
+      z.dataset.testid = 'joystick-zone';
+      place(z, st.zone);
+      this.joyZone = z;
+      this.joy = document.createElement('div');
+      this.joy.className = 'tll-joy';
+      place(this.joy, { x: st.cx - st.r, y: st.cy - st.r, w: st.r * 2, h: st.r * 2 });
+      this.nub = document.createElement('div');
+      this.nub.className = 'tll-nub';
+      const n = Math.round(st.r * 0.8);
+      place(this.nub, { x: st.cx - n / 2, y: st.cy - n / 2, w: n, h: n });
+      this.el.append(z, this.joy, this.nub);
+      // the old zone (the capture target) is gone: capture the carried fingers on the new one so
+      // their moves / lift keep arriving wherever the thumb goes
+      for (const id of carried) {
+        try {
+          z.setPointerCapture?.(id);
+        } catch {
+          /* pointer already gone: its up / cancel arrives (or clear() on blur) */
+        }
+      }
     }
     this.stick = document.createElement('div');
     this.stick.className = 'tll-stick';
@@ -209,6 +272,16 @@ export class TouchLayer {
     this.syncPressed();
   };
 
+  /** Capture lost = treat as cancel, unless a relayout just moved it onto the new stick zone. */
+  private readonly onLostCapture = (e: PointerEvent): void => {
+    try {
+      if (this.joyZone?.hasPointerCapture?.(e.pointerId)) return;
+    } catch {
+      /* fall through */
+    }
+    this.onCancel(e);
+  };
+
   private readonly onBlur = (): void => {
     this.model.clear();
     this.syncPressed();
@@ -230,6 +303,28 @@ export class TouchLayer {
       const down = held.has(id);
       if (el.classList.contains('down') !== down) el.classList.toggle('down', down);
     }
+    const st = this.layout?.stick;
+    if (st && this.joy && this.nub) {
+      // the nub follows the finger, clamped to the base radius; centred when nobody holds the stick
+      const held = this.model.stickHeld();
+      let nx = st.cx;
+      let ny = st.cy;
+      if (held) {
+        const dx = held.x - st.cx;
+        const dy = held.y - st.cy;
+        const len = Math.hypot(dx, dy);
+        const k = len > st.r ? st.r / len : 1;
+        nx += dx * k;
+        ny += dy * k;
+      }
+      const n = Math.round(st.r * 0.8);
+      setStyle(this.nub, 'left', `${Math.round(nx - n / 2)}px`);
+      setStyle(this.nub, 'top', `${Math.round(ny - n / 2)}px`);
+      if (this.nub.classList.contains('down') !== !!held) {
+        this.nub.classList.toggle('down', !!held);
+        this.joy.classList.toggle('down', !!held);
+      }
+    }
     const drag = this.model.aimDrag();
     if (this.stick && this.knob) {
       const display = drag ? 'block' : 'none';
@@ -250,6 +345,11 @@ export class TouchLayer {
       }
     }
   }
+}
+
+/** Two layouts are the same geometry (the DOM need not be rebuilt). */
+export function sameLayout(a: TouchLayout, b: TouchLayout): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
 }
 
 function place(el: HTMLElement, r: { x: number; y: number; w: number; h: number }): void {

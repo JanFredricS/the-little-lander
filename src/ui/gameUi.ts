@@ -12,7 +12,7 @@
  */
 
 import { Container } from 'pixi.js';
-import { VIEW_WIDTH } from '../contracts';
+import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
@@ -21,11 +21,13 @@ import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } fr
 import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
 import { HudView } from './hud/hudView';
+import { MINIMAP_BORDER, MINIMAP_H, MINIMAP_W, MinimapView, minimapPlacement } from './minimap';
 import { readSaveView, type SaveView } from './levelSelect';
 import { createMenu, gridMove, type GridDir, keyToCommand, menuCommand, menuFocus, scrollBy, scrollToFocus, type MenuResult, type MenuState } from './menu';
 import { enterFullscreen } from './fullscreen';
 import { RotateHint } from './rotateHint';
-import { backAction, isUiCommand, itemAction, screenModel, type ScreenContext, type ScreenModel, type StoryContext } from './screens';
+import { backAction, isUiCommand, itemAction, nextSteering, screenModel, type ScreenContext, type ScreenModel, type StoryContext } from './screens';
+import { isDirectSteerMode } from '../shell/directSteering';
 import { ScreenView } from './screenView';
 import { detectTouch, TouchLayer } from './touch/touchLayer';
 import { nextTouchPref, touchVisible, type TouchPref } from './touch/touchModel';
@@ -58,6 +60,10 @@ export interface GameUiOptions {
   lowRes?: boolean;
   /** Low-res mode toggled in the pause menu (the App re-renders the canvas + persists). */
   onLowResChange?(on: boolean): void;
+  /** Initial minimap setting (SaveState.settings.showMinimap; default true). */
+  showMinimap?: boolean;
+  /** The pause-menu MINIMAP toggle changed (persist it). */
+  onShowMinimapChange?(on: boolean): void;
   /** Initial flight control scheme (SaveState.settings.steering; default 'engines'). */
   steering?: SteeringScheme;
   /** STEERING toggled in the pause menu (the App switches the input layer + persists). */
@@ -116,6 +122,12 @@ export class GameUi {
   private showFps: boolean;
   private lowRes: boolean;
   private steering: SteeringScheme;
+  private showMinimap: boolean;
+  private readonly minimap = new MinimapView();
+  /** Vessel pose for the minimap (copied from the last tick: no per-frame allocation). */
+  private readonly mmPose = new Float64Array(3);
+  /** Minimap frame position (virtual px), re-placed with the HUD inset (4 Hz: it reads DOM layout). */
+  private mmAt = { x: 0, y: 0 };
   private readonly fpsMeter = new FpsMeter();
   private readonly fpsLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
   /** Second FPS-counter line: terrain streaming diagnostics (in a level). */
@@ -131,7 +143,7 @@ export class GameUi {
 
   constructor(private readonly o: GameUiOptions) {
     this.screenView = new ScreenView(o.art);
-    this.layer.addChild(this.hudView.root, this.screenView.root, this.fpsLabel, this.terrainLabel);
+    this.layer.addChild(this.minimap.root, this.hudView.root, this.screenView.root, this.fpsLabel, this.terrainLabel);
     o.pixi.app.stage.addChild(this.layer);
     this.hudView.root.visible = false;
     this.touchDetected = detectTouch();
@@ -140,11 +152,12 @@ export class GameUi {
     this.showFps = o.showFps ?? false;
     this.lowRes = o.lowRes ?? false;
     this.steering = o.steering ?? 'engines';
+    this.showMinimap = o.showMinimap ?? true;
     this.fpsLabel.visible = this.showFps;
     this.terrainLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
-    this.touch.setDirectSteering(this.steering === 'direct');
+    this.touch.setSteering(this.steering);
     this.rotate = new RotateHint(o.host, () => this.touchDetected);
 
     const onKey = (e: KeyboardEvent) => this.onKey(e);
@@ -202,6 +215,7 @@ export class GameUi {
     this.unbind.forEach((u) => u());
     this.touch.dispose();
     this.rotate.dispose();
+    this.minimap.destroy(); // its baked texture too
     this.layer.destroy({ children: true });
   }
 
@@ -217,7 +231,10 @@ export class GameUi {
     if (next.id !== 'playing') this.loading = false;
     this.pauseHelp = false;
     this.press = null;
-    if (next.id !== 'playing' && next.id !== 'paused' && next.id !== 'results') this.spec = null;
+    if (next.id !== 'playing' && next.id !== 'paused' && next.id !== 'results') {
+      this.spec = null;
+      this.minimap.clear(); // out of the level: free its baked minimap texture (retry / next level bakes again)
+    }
     if (next.id === 'results') this.lastHull = this.hud.hull;
     this.refreshModel(true);
     this.syncLayers();
@@ -240,6 +257,7 @@ export class GameUi {
       showFps: this.showFps,
       lowRes: this.lowRes,
       steering: this.steering,
+      showMinimap: this.showMinimap,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
     };
@@ -267,7 +285,12 @@ export class GameUi {
     const inLevel = playing || this.state.id === 'paused' || this.state.id === 'results';
     this.hudView.root.visible = inLevel && !!this.spec;
     this.screenView.root.visible = !!this.model && !(this.state.id === 'paused' && this.pauseHelp);
-    const showTouch = playing && touchVisible(this.touchPref, this.touchDetected);
+    const touchOn = touchVisible(this.touchPref, this.touchDetected);
+    // JOYSTICK in the modes it drives: the stick shows even without touch controls (a desktop mouse drags it),
+    // then alone - no pause / restart buttons (Esc / Backspace)
+    const stickOnly = !touchOn && this.steering === 'joystick' && isDirectSteerMode(this.hud.mode);
+    this.touch.setSystemButtons(!stickOnly);
+    const showTouch = playing && (touchOn || stickOnly);
     this.touch.show(showTouch ? this.hud.mode : null);
     this.insetCache.at = -Infinity; // touch layout may have changed: re-measure the HUD inset
     // Tint first: the help card below is drawn (and cached) with the current theme border.
@@ -276,8 +299,9 @@ export class GameUi {
     this.screenView.border = this.spec ? tint : UI.accent;
     const helpTouch = touchVisible(this.touchPref, this.touchDetected);
     const direct = this.steering === 'direct';
-    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct);
-    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct);
+    const joystick = this.steering === 'joystick';
+    if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct, joystick);
+    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct, joystick);
     else this.hudView.setHelp(null, false);
   }
 
@@ -286,6 +310,11 @@ export class GameUi {
   levelStarted(spec: LevelSpec): void {
     this.spec = spec;
     this.hud = initHud(spec);
+    // the minimap's terrain is baked ONCE here (load frame) and uploaded to the GPU right away
+    this.minimap.setLevel(spec, (src) => this.o.pixi.uploadTexture(src));
+    this.mmPose[0] = spec.spawn.x;
+    this.mmPose[1] = spec.spawn.y;
+    this.mmPose[2] = spec.spawn.angle ?? 0;
     this.helpMode = spec.vesselMode;
     this.helpBlocks = true;
     this.loading = false;
@@ -302,6 +331,11 @@ export class GameUi {
   tick(v: VesselState | null, dt: number): void {
     const prevMode = this.hud.mode;
     this.hud = hudTick(this.hud, v, dt);
+    if (v) {
+      this.mmPose[0] = v.pos.x;
+      this.mmPose[1] = v.pos.y;
+      this.mmPose[2] = v.angle;
+    }
     if (this.hud.mode !== prevMode) this.showModeHelp(this.hud.mode);
     if (this.helpMode && !this.helpBlocks) {
       this.helpTtl -= dt;
@@ -365,10 +399,15 @@ export class GameUi {
     this.screenView.cssPerVirtual = this.cssPerVirtual();
     if (this.hudView.root.visible) {
       // DOM layout reads are cached (4 Hz): per-frame getBoundingClientRect can force a synchronous layout on iOS
-      if (nowMs - this.insetCache.at > 250 || nowMs < this.insetCache.at) this.insetCache = { at: nowMs, value: this.restartInset() };
+      if (nowMs - this.insetCache.at > 250 || nowMs < this.insetCache.at) {
+        this.insetCache = { at: nowMs, value: this.restartInset() };
+        this.mmAt = minimapPlacement(this.touchRectsInView(), MINIMAP_W + 2 * MINIMAP_BORDER, MINIMAP_H + 2 * MINIMAP_BORDER, VIEW_WIDTH, VIEW_HEIGHT);
+      }
       this.hudView.leftInset = this.insetCache.value;
       this.hudView.render(this.hud, nowMs);
     }
+    this.minimap.root.visible = this.hudView.root.visible && this.showMinimap && !!this.spec;
+    if (this.minimap.root.visible) this.minimap.render(this.mmPose[0]!, this.mmPose[1]!, this.mmPose[2]!, this.mmAt.x, this.mmAt.y, this.hudView.border);
     if (this.showFps) {
       // top-right corner; left of the mode badge while the HUD is up
       const right = this.hudView.root.visible ? this.hudView.badgeLeft - 4 : VIEW_WIDTH - 4;
@@ -396,6 +435,25 @@ export class GameUi {
       return Math.max(0, Math.min(200, Math.ceil(v.x) + 2));
     } catch {
       return 0;
+    }
+  }
+
+  /** The on-screen touch controls the minimap must not cover (virtual px): flight buttons, aim zone, stick base. */
+  private touchRectsInView(): { x: number; y: number; w: number; h: number }[] {
+    const layout = this.touch.isVisible ? this.touch.getLayout() : null;
+    if (!layout) return [];
+    const css: { x: number; y: number; w: number; h: number }[] = layout.buttons.filter((b) => !b.system).map((b) => b.rect);
+    if (layout.aimZone) css.push(layout.aimZone);
+    if (layout.stick) css.push({ x: layout.stick.cx - layout.stick.r, y: layout.stick.cy - layout.stick.r, w: 2 * layout.stick.r, h: 2 * layout.stick.r });
+    try {
+      const host = this.o.host.getBoundingClientRect();
+      return css.map((r) => {
+        const a = this.o.pixi.clientToView(host.left + r.x, host.top + r.y);
+        const b = this.o.pixi.clientToView(host.left + r.x + r.w, host.top + r.y + r.h);
+        return { x: a.x, y: a.y, w: b.x - a.x, h: b.y - a.y };
+      });
+    } catch {
+      return [];
     }
   }
 
@@ -450,8 +508,8 @@ export class GameUi {
       this.refreshModel(false);
       this.syncLayers();
     } else if (a.ui === 'toggleSteering') {
-      this.steering = this.steering === 'direct' ? 'engines' : 'direct';
-      this.touch.setDirectSteering(this.steering === 'direct');
+      this.steering = nextSteering(this.steering);
+      this.touch.setSteering(this.steering);
       this.o.onSteeringChange?.(this.steering);
       this.refreshModel(false);
       this.syncLayers();
@@ -465,6 +523,10 @@ export class GameUi {
       this.fpsLabel.setText(this.showFps ? fpsText(null) : '');
       this.terrainLabel.setText('');
       this.o.onShowFpsChange?.(this.showFps);
+      this.refreshModel(false);
+    } else if (a.ui === 'toggleMinimap') {
+      this.showMinimap = !this.showMinimap;
+      this.o.onShowMinimapChange?.(this.showMinimap);
       this.refreshModel(false);
     } else if (a.ui === 'toggleLowRes') {
       this.lowRes = !this.lowRes;

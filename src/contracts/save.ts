@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes; direct-steering amendment: Settings.steering). Persistent progress (localStorage key 'the-little-lander/save').
+ * FROZEN (S0; S9 amendment: Settings.swapEngineButtons; feel-pass amendments: Settings.showFps, Settings.lowRes; direct-steering amendment: Settings.steering; round 8: steering 'joystick', Settings.showMinimap). Persistent progress (localStorage key 'the-little-lander/save').
  * Readers must accept older/partial data: validate, then fill defaults.
  */
 
@@ -49,12 +49,22 @@ export interface Settings {
    * Flight control scheme (pause menu STEERING). 'engines' = the classic
    * per-engine / rotate controls. 'direct' (prototype) = hold a finger on
    * the play area (or W A S D / arrows) and the vessel thrusts toward it;
-   * see src/shell/directSteering.ts. Default 'engines'.
+   * see src/shell/directSteering.ts. 'joystick' (round 8) = the same DIRECT
+   * steering driven by a virtual stick bottom-left (touch, or a mouse drag);
+   * its keyboard is the DIRECT one. Default 'engines'.
    */
   steering: SteeringScheme;
+  /**
+   * Round 8: the minimap (bottom-right: terrain around the vessel, the exit
+   * marked). Pause-menu toggle. Default true; older saves read as true.
+   */
+  showMinimap: boolean;
 }
 
-export type SteeringScheme = 'engines' | 'direct';
+export type SteeringScheme = 'engines' | 'direct' | 'joystick';
+
+/** The pause menu's STEERING item cycles through these, in order. */
+export const STEERING_SCHEMES: readonly SteeringScheme[] = ['engines', 'direct', 'joystick'];
 
 export interface SaveState {
   version: typeof SAVE_VERSION;

@@ -34,6 +34,8 @@ export class HudView {
   private readonly warnText = new PixelText('', { color: UI.wind, outline: UI.outline });
   private readonly radText = new PixelText('', { color: UI.radiation, outline: UI.outline });
   private readonly bannerText = new PixelText('', { color: UI.light, outline: UI.outline, scale: 2 });
+  /** Round 8: inside the exit rect but a gate holds the vessel back (HudState.exitHint). */
+  private readonly exitText = new PixelText('', { color: UI.danger, outline: UI.outline, scale: 2 });
   private readonly bossLabel = new PixelText('THE KEEPER', { color: UI.ink, shadow: UI.outline });
   // help card
   private readonly help = new Container();
@@ -62,24 +64,24 @@ export class HudView {
 
   constructor() {
     for (let i = 0; i < MAX_OBJECTIVE_LINES; i++) this.objTexts.push(new PixelText('', { color: UI.ink, shadow: UI.outline }));
-    this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.bossLabel);
+    this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.exitText, this.bossLabel);
     this.help.addChild(this.helpG, this.helpTitle, this.helpBody, this.helpHint);
     this.help.visible = false;
     this.root.addChild(this.help);
   }
 
   /** Show (mode) or hide (null) the controls help card. */
-  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false): void {
+  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false, joystick = false): void {
     if (mode === null) {
       this.help.visible = false;
       this.helpKey = '';
       return;
     }
-    const key = helpCardKey(mode, touch, start, this.border, swap, direct);
+    const key = helpCardKey(mode, touch, start, this.border, swap, direct, joystick);
     this.help.visible = true;
     if (key === this.helpKey) return;
     this.helpKey = key;
-    const card = helpCard(mode, touch, start, swap, direct);
+    const card = helpCard(mode, touch, start, swap, direct, joystick);
     this.helpTitle.setText(card.title);
     this.helpBody.setText(card.lines.join('\n'));
     this.helpHint.setText(card.hint);
@@ -214,6 +216,13 @@ export class HudView {
       this.bannerText.setText(s.banner.text);
       this.bannerText.position.set(Math.round(VIEW_WIDTH / 2 - this.bannerText.width / 2), 104);
     } else this.bannerText.visible = false;
+
+    // --- exit gate hint (under the banner): never a silent failure inside the exit
+    if (s.exitHint) {
+      this.exitText.visible = true;
+      this.exitText.setText(s.exitHint);
+      this.exitText.position.set(Math.round(VIEW_WIDTH / 2 - this.exitText.width / 2), 128);
+    } else this.exitText.visible = false;
 
     // --- boss hp (bottom centre)
     this.bossLabel.visible = s.bossHp !== null;

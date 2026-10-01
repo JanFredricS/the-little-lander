@@ -35,6 +35,7 @@ import { TriggerLatch } from '../physics/env/triggers';
 import { feltGravity, resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
 import { createVessel, type FlightVessel } from '../physics/vessel';
 import { Camera } from '../shell/camera';
+import { exitGate } from './exitGate';
 
 /** How far outside the world rect (px) the vessel may go before it is lost. */
 const OUT_OF_BOUNDS_MARGIN = 64;
@@ -252,7 +253,7 @@ export class LevelSession {
       switch (o.kind) {
         case 'reachExit': {
           const exit = this.spec.entities.find((e): e is ExitDockEntity => e.kind === 'exitDock' && e.id === o.exitId);
-          done = !!exit && inExit(exit, s);
+          done = !!exit && exitGate(exit, s) === 'ok';
           break;
         }
         case 'plantBeacons':
@@ -282,12 +283,3 @@ export class LevelSession {
 
 const SUPPORTED_OBJECTIVES: ReadonlySet<string> = new Set(['reachExit', 'plantBeacons', 'collectOrbs', 'surviveBoss']);
 
-/** Exit rect: centred on (x, y) horizontally, extending h px ABOVE the landing surface. */
-function inExit(exit: ExitDockEntity, s: VesselState): boolean {
-  const inRect = s.pos.x >= exit.x - exit.w / 2 && s.pos.x <= exit.x + exit.w / 2 && s.pos.y <= exit.y && s.pos.y >= exit.y - exit.h;
-  if (!inRect) return false;
-  if (exit.requireLanding && !s.landed) return false;
-  if (exit.maxSpeed !== undefined && Math.hypot(s.vel.x, s.vel.y) > exit.maxSpeed) return false;
-  if (exit.maxAngle !== undefined && Math.abs(s.angle) > exit.maxAngle) return false;
-  return true;
-}

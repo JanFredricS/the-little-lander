@@ -556,6 +556,10 @@ export class PointerSource implements InputSource {
 export class VirtualControlsSource implements InputSource {
   private readonly controls = new LatchedKeys<ControlId>();
   private aimDir: Vec2 | null = null;
+  /** JOYSTICK steering (round 8): the virtual stick's direction while deflected past its deadzone. */
+  private steerDir: Vec2 | null = null;
+  /** The stick was deflected since the last sample (a flick shorter than a tick still steers once). */
+  private pendingSteer: Vec2 | null = null;
 
   constructor(readonly id = 'virtual') {}
 
@@ -573,6 +577,20 @@ export class VirtualControlsSource implements InputSource {
     this.controls.release(c);
   }
 
+  /**
+   * JOYSTICK steering: the stick's direction (screen = world axes, any length), or null =
+   * centred / released (coast). Read by the DIRECT steering layer like a held finger.
+   */
+  setSteer(dir: Vec2 | null): void {
+    if (dir) {
+      // reuse the held vector (the stick moves at pointer-event rate: no allocation per move)
+      const v = (this.steerDir ??= { x: 0, y: 0 });
+      v.x = dir.x;
+      v.y = dir.y;
+      this.pendingSteer = v;
+    } else this.steerDir = null;
+  }
+
   /** World-space aim direction (any length), or null to clear. */
   setAim(dir: Vec2 | null): void {
     this.aimDir = dir ? { ...dir } : null;
@@ -585,12 +603,18 @@ export class VirtualControlsSource implements InputSource {
       for (const c of s) f[c] = true;
       return f;
     };
-    return { down: toFlags(down), pressed: toFlags(pressed), aim: this.aimDir ? { dir: { ...this.aimDir }, target: null } : null };
+    const steer = this.steerDir ?? this.pendingSteer;
+    this.pendingSteer = null;
+    const out: InputSourceSample = { down: toFlags(down), pressed: toFlags(pressed), aim: this.aimDir ? { dir: { ...this.aimDir }, target: null } : null };
+    if (steer) out.steer = { x: steer.x, y: steer.y };
+    return out;
   }
 
   clear(): void {
     this.controls.clear();
     this.aimDir = null;
+    this.steerDir = null;
+    this.pendingSteer = null;
   }
 
   dispose(): void {

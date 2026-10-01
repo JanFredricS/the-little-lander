@@ -14,8 +14,8 @@
  *              the top) and 3 (rising from the floor, 460-620 slot).
  *   6040-6200  drop shaft back to the lower deck.
  *   6200-8200  final bay: crane beam, fuel, and the CSM hanging from the
- *              docking gantry at x = 7800. Dock from below: centre inside
- *              the dock box, < 45 px/s, |angle| < 0.25 rad.
+ *              docking gantry at x = 7800. Dock from below: fly the lander's
+ *              centre into the dock box (any speed / attitude: touching docks).
  *
  * Tuning notes (map 1 = forgiving; see test/maps.test.ts for the autopilot
  * playtest numbers):
@@ -183,7 +183,9 @@ const entities: EntitySpec[] = [
   { id: 'dockLightL', kind: 'staticProp', sprite: 'prop.warningLight', x: 7760, y: 906, w: 8, h: 8 },
   { id: 'dockLightR', kind: 'staticProp', sprite: 'prop.warningLight', x: 7840, y: 906, w: 8, h: 8 },
   { id: 'csm', kind: 'staticProp', sprite: 'prop.csm', x: 7800, y: 918, w: 24, h: 36, solid: true },
-  { id: 'exit', kind: 'exitDock', x: 7800, y: 1000, w: 44, h: 50, requireLanding: false, maxSpeed: 45, maxAngle: 0.25 },
+  // round 8 ("i touched it but did not progress"): touching the box docks - no speed / angle gate, and
+  // the box grew from 44×50 to 120×104 (from the CSM's underside down), a real touch target
+  { id: 'exit', kind: 'exitDock', x: 7800, y: 1040, w: 120, h: 104, requireLanding: false },
 ];
 
 export const hangarRun: LevelSpec = {

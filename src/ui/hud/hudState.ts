@@ -10,7 +10,8 @@
  * (they only advance in hudTick), so pausing freezes them.
  */
 
-import type { GameEvent, LevelId, LevelSpec, ObjectiveSpec, Vec2, VesselMode, VesselState } from '../../contracts';
+import type { ExitDockEntity, GameEvent, LevelId, LevelSpec, ObjectiveSpec, Vec2, VesselMode, VesselState } from '../../contracts';
+import { exitGate, exitHintText } from '../../game/exitGate';
 
 /** Fuel fraction below which the fuel bar flashes. */
 export const FUEL_LOW = 0.25;
@@ -26,6 +27,12 @@ export const RADIATION_GRACE = 0.5;
 export const RADIATION_HIT_FLASH = 1.5;
 /** Seconds the objective-complete banner stays on screen. */
 export const BANNER_TTL = 2.5;
+/**
+ * Seconds the vessel must stay inside the exit rect, held back by a gate, before
+ * the hint shows: a normal landing on a requireLanding pad passes through 'land'
+ * for its last moments and must not flash a centre-screen warning.
+ */
+export const EXIT_HINT_GRACE = 0.6;
 
 export interface HudObjective {
   id: string;
@@ -78,6 +85,20 @@ export interface HudState {
   banner: { text: string; ttl: number } | null;
   /** Simulation seconds since level start. */
   time: number;
+  /** The reachExit objective's exit dock (null = none): the minimap marks it, the gate hint reads it. */
+  exit: ExitDockEntity | null;
+  /** The reachExit objective's id (its exit stops hinting once it is done). */
+  exitObjectiveId: string | null;
+  /**
+   * Round 8 (no silent exit failure): the vessel is inside the exit rect but a gate
+   * (landing / speed / angle) still holds it back - why, as HUD text. null otherwise.
+   * Shown only after EXIT_HINT_GRACE s inside the rect failing a gate; once shown it
+   * stays (a bounce that briefly reads 'ok' does not blink it) until the vessel leaves
+   * the rect, crashes or the exit objective completes.
+   */
+  exitHint: string | null;
+  /** Sim seconds spent inside the exit rect held back by a gate (reset when it leaves). */
+  exitHeld: number;
 }
 
 export function objectiveLabel(o: ObjectiveSpec): string {
@@ -97,7 +118,7 @@ function objectiveTotal(o: ObjectiveSpec): number {
   return o.kind === 'plantBeacons' || o.kind === 'collectOrbs' ? o.count : 1;
 }
 
-export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives' | 'startFuel'>): HudState {
+export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives' | 'startFuel'> & Partial<Pick<LevelSpec, 'entities'>>): HudState {
   const objectives: HudObjective[] = (spec?.objectives ?? []).map((o) => ({
     id: o.id,
     kind: o.kind,
@@ -108,6 +129,8 @@ export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives
   }));
   const beaconObj = spec?.objectives.find((o) => o.kind === 'plantBeacons');
   const orbObj = spec?.objectives.find((o) => o.kind === 'collectOrbs');
+  const exitObj = spec?.objectives.find((o) => o.kind === 'reachExit');
+  const exit = exitObj && exitObj.kind === 'reachExit' ? (spec?.entities?.find((e): e is ExitDockEntity => e.kind === 'exitDock' && e.id === exitObj.exitId) ?? null) : null;
   return {
     levelId: spec?.id ?? null,
     mode: spec?.vesselMode ?? 'lander',
@@ -128,6 +151,10 @@ export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives
     bossHp: null,
     banner: null,
     time: 0,
+    exit,
+    exitObjectiveId: exit && exitObj ? exitObj.id : null,
+    exitHint: null,
+    exitHeld: 0,
   };
 }
 
@@ -219,6 +246,16 @@ export function hudTick(s: HudState, v: VesselState | null, dt: number): HudStat
     next.mode = v.mode;
     next.crashed = v.crashed;
     next.landed = v.landed;
+    const g = s.exit && !v.crashed && !s.objectives.some((o) => o.id === s.exitObjectiveId && o.done) ? exitGate(s.exit, v) : 'out';
+    if (g === 'out') {
+      next.exitHeld = 0;
+      next.exitHint = null;
+    } else if (g === 'ok') {
+      // completing this step (the objective clears it next tick) or a bounce: keep what is shown
+    } else {
+      next.exitHeld = s.exitHeld + dt;
+      if (next.exitHeld >= EXIT_HINT_GRACE - 1e-9) next.exitHint = exitHintText(g);
+    }
   }
   if (s.wind) {
     const ttl = s.wind.ttl - dt;

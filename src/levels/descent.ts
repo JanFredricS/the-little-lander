@@ -14,7 +14,7 @@
  *                 streaming down; the last 2,000 px are a full-width ember
  *                 rain - keep moving.
  *   13,300-14,000 the floor of the belt: dive through the exit gate
- *                 (< 120 px/s, |angle| < 0.6) above the rock shelf.
+ *                 above the rock shelf (touching it completes).
  *
  * Tuning notes (map 2 = gentle-to-moderate). Autopilot playtest (flies the
  * line, burns goo that comes at the nozzle, never dodges embers): complete
@@ -165,7 +165,8 @@ export const descent: LevelSpec = {
     ...fuel,
     ...goo,
     ...embers,
-    { id: 'exit', kind: 'exitDock', x: 1200, y: FLOOR - 20, w: 400, h: 240, requireLanding: false, maxSpeed: 120, maxAngle: 0.6 },
+    // round 8: touching the gate completes (no speed / angle gate - a fast or tilted pass used to fail silently)
+    { id: 'exit', kind: 'exitDock', x: 1200, y: FLOOR - 20, w: 400, h: 240, requireLanding: false },
   ],
   zones: [],
   objectives: [{ kind: 'reachExit', id: 'gate', exitId: 'exit' }],

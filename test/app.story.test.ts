@@ -64,7 +64,10 @@ const h = vi.hoisted(() => ({
   /** Optional LevelSpec patch (the chained-cutscene test adds a cutsceneBefore). */
   patch: null as null | ((spec: LevelSpec) => LevelSpec),
   /** Saved Settings.steering for the next playStory (the DIRECT-persisted test). */
-  steering: 'engines' as 'engines' | 'direct',
+  steering: 'engines' as 'engines' | 'direct' | 'joystick',
+  /** KeyboardSource / PointerSource.setDirectSteering calls (the App's per-scheme input gates). */
+  kbDirect: [] as boolean[],
+  ptrDirect: [] as boolean[],
   /** PilotKeys.engineFrames (true = like the browser autopilot; false only for the negative control). */
   pilotEngineFrames: true,
   /** GameUi.resetTerrainHistory() calls (once per LevelView, on its first rendered frame). */
@@ -128,8 +131,12 @@ vi.mock('../src/ui/gameUi', async () => {
     GameUi: class {
       holdSimulation = false;
       private state: ScreenState = { id: 'boot' };
+      private steering: NonNullable<GameUiOptions['steering']>;
+      private showMinimap: boolean;
       constructor(private readonly o: GameUiOptions) {
         h.click = (itemId) => this.activate(itemId);
+        this.steering = o.steering ?? 'engines';
+        this.showMinimap = o.showMinimap ?? true;
       }
       /** Same context GameUi.ctx() builds (lastHull only affects results text). */
       private ctx(): ScreenContext {
@@ -151,6 +158,9 @@ vi.mock('../src/ui/gameUi', async () => {
         const a = screens.itemAction(this.state, itemId, this.ctx());
         if (!screens.isUiCommand(a)) this.o.dispatch(a);
         else if (a.ui === 'continueStory') this.o.onContinueStory?.();
+        // pause-menu settings: the same callbacks the real GameUi.activate makes (the App persists / rewires)
+        else if (a.ui === 'toggleSteering') this.o.onSteeringChange?.((this.steering = screens.nextSteering(this.steering)));
+        else if (a.ui === 'toggleMinimap') this.o.onShowMinimapChange?.((this.showMinimap = !this.showMinimap));
         else throw new Error(`unexpected UI command ${a.ui}`);
       }
       enter(s: ScreenState) {
@@ -221,8 +231,10 @@ vi.mock('../src/shell/input', async (importOriginal) => {
     }
     /** The pilots emit physical engines: the swapped-keys setting does not apply to them. */
     setSwapEngines(_swap: boolean) {}
-    /** The story runs on the default ENGINES scheme (the pilots emit engine frames). */
-    setDirectSteering(_on: boolean) {}
+    /** The story runs on the default ENGINES scheme (the pilots emit engine frames); recorded for the gate test. */
+    setDirectSteering(on: boolean) {
+      h.kbDirect.push(on);
+    }
     clear() {}
     dispose() {}
   }
@@ -231,7 +243,9 @@ vi.mock('../src/shell/input', async (importOriginal) => {
     sample(): InputSourceSample {
       return { down: {}, pressed: {}, aim: null };
     }
-    setDirectSteering(_on: boolean) {}
+    setDirectSteering(on: boolean) {
+      h.ptrDirect.push(on);
+    }
     clear() {}
     dispose() {}
   }
@@ -274,6 +288,8 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
   h.uiScreens = [];
   h.levelsStarted = [];
   h.uploaded = [];
+  h.kbDirect = [];
+  h.ptrDirect = [];
   const save = new SaveStore(memoryStorage());
   if (h.steering !== 'engines') save.setSettings({ steering: h.steering }); // persisted by an earlier session
   const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {}, crashStep: -1, resultsStep: -1 };
@@ -469,6 +485,71 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(fired).toBe(false);
     expect(c.crashStep).toBe(-1);
     c.app.destroy();
+  });
+
+  /** Fly hangarRun with the virtual stick held straight up (App.virtual, as the TouchModel feeds it) and no keys. */
+  async function flyWithStickUp(steering: 'engines' | 'joystick', pauseAfter: number) {
+    const { LevelSession: Session } = await import('../src/game/session');
+    const stepped = vi.spyOn(Session.prototype, 'step');
+    h.steering = steering;
+    h.pilotEngineFrames = false; // a plain input source: the App's DIRECT gate decides
+    let pauseAt = Infinity;
+    h.pilotOverride = () => () => ({ ...emptyFrame(), pause: h.steps >= pauseAt });
+    // armed after the level's first steps: the App clears all input on the first step of a level
+    let armedAt = -1;
+    const r = await playStory((run) => {
+      if (armedAt < 0 && run.app.state.id === 'playing' && h.session && !h.loop!.paused && h.steps > 0) {
+        run.app.virtual.setSteer({ x: 0, y: -1 });
+        armedAt = stepped.mock.calls.length;
+        pauseAt = h.steps + pauseAfter; // pause before the climb reaches the hangar ceiling
+        return false;
+      }
+      return armedAt >= 0 && stepped.mock.calls.length > armedAt;
+    });
+    const frames = stepped.mock.calls.slice(armedAt).map((c) => c[0]!);
+    stepped.mockRestore();
+    return { r, frames };
+  }
+  const fires = (f: { thrust: boolean; engineLeft: boolean; engineRight: boolean; topLeft: boolean; topRight: boolean }) => f.thrust || f.engineLeft || f.engineRight || f.topLeft || f.topRight;
+
+  it('JOYSTICK through the App: a saved joystick scheme turns a held stick into engine burns; the pause menu rewires + persists', { timeout: 120_000 }, async () => {
+    const { r, frames } = await flyWithStickUp('joystick', 90);
+    expect(r.save.state.settings.steering).toBe('joystick');
+    // gates: the DIRECT keyboard scheme, the canvas pointer never steers (the stick does)
+    expect(h.kbDirect.at(-1)).toBe(true);
+    expect(h.ptrDirect.at(-1)).toBe(false);
+    expect(frames.length).toBeGreaterThan(80);
+    expect(frames.filter(fires).length).toBeGreaterThan(20); // DIRECT burns (duty-cycled pulses toward 'up')
+    expect(frames.slice(0, 60).some(fires)).toBe(true); // within the first second
+    expect(frames.filter(fires).every((f) => f.steer.x === 0 && f.steer.y === -1)).toBe(true); // (the crash hold steps empty frames)
+
+    // pause menu: MINIMAP and STEERING are persisted by the App and STEERING rewires the input gates
+    expect(r.app.state.id).toBe('paused');
+    expect(r.save.state.settings.showMinimap).toBe(true);
+    h.click!('minimap');
+    expect(r.save.state.settings.showMinimap).toBe(false);
+    h.click!('minimap');
+    expect(r.save.state.settings.showMinimap).toBe(true);
+    h.click!('steering'); // joystick -> engines
+    expect(r.save.state.settings.steering).toBe('engines');
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
+    h.click!('steering'); // -> direct
+    expect(r.save.state.settings.steering).toBe('direct');
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([true, true]);
+    h.click!('steering'); // -> joystick
+    expect(r.save.state.settings.steering).toBe('joystick');
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([true, false]);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
+  it('negative control: under ENGINES the same held stick fires nothing (the DIRECT layer is off)', { timeout: 120_000 }, async () => {
+    const { r, frames } = await flyWithStickUp('engines', 90);
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
+    expect(frames.length).toBeGreaterThan(30);
+    expect(frames.some(fires)).toBe(false);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
   });
 
   it('results NEXT plays an after + before cutscene chain inside ONE cutscene screen, then the next level', { timeout: 120_000 }, async () => {

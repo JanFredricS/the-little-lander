@@ -71,16 +71,32 @@ const DIRECT_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
   csm: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE CSM TURNS, THEN BURNS', 'LET GO TO COAST'],
 };
 
+/** JOYSTICK steering (round 8): the virtual stick bottom-left drives the DIRECT layer. */
+const JOYSTICK_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
+  lander: ['LEFT STICK: THRUST THAT WAY', 'THE LANDER TURNS ITSELF TO PUSH', 'STICK DOWN: TOP THRUSTERS', 'CENTRE OR LET GO TO COAST'],
+  csm: ['LEFT STICK: THRUST THAT WAY', 'THE CSM TURNS, THEN BURNS', 'CENTRE OR LET GO TO COAST'],
+};
+const JOYSTICK_MOUSE = 'MOUSE: DRAG THE STICK (BOTTOM LEFT)';
+
 /** Cache key for a rendered help card: content AND the theme border it was drawn with. */
-export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false, direct = false): string {
-  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}|${direct}`;
+export function helpCardKey(mode: VesselMode, touch: boolean, start: boolean, border: number, swap = false, direct = false, joystick = false): string {
+  return `${mode}|${touch}|${start}|${border.toString(16)}|${swap}|${direct}|${joystick}`;
 }
 
 /**
  * `start` = the level-start card (the level waits for the first input). `swap` = engine buttons/keys swapped (S9).
  * `direct` = DIRECT steering (modes it does not drive keep their normal card; swap does not apply to it).
  */
-export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false): HelpCard {
+export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false, joystick = false): HelpCard {
+  if (joystick && JOYSTICK_TOUCH[mode]) {
+    // touch: the stick; keyboard: the DIRECT keys (the CSM keeps its classic ones) + the mouse-draggable stick
+    const lines = touch ? JOYSTICK_TOUCH[mode]! : [...(DIRECT_KEYS[mode] ?? KEYS[mode]), JOYSTICK_MOUSE];
+    return {
+      title: `${TITLE[mode]} (JOYSTICK)`,
+      lines: [...lines, touch ? 'II  PAUSE    ↻  RESTART' : 'ESC / P   PAUSE    BKSP   RESTART'],
+      hint: start ? (touch ? 'TOUCH ANY CONTROL TO START' : 'PRESS ANY CONTROL TO START') : touch ? 'TAP TO CLOSE' : 'ANY KEY TO CLOSE',
+    };
+  }
   const directLines = direct ? (touch ? DIRECT_TOUCH[mode] : DIRECT_KEYS[mode]) : undefined;
   const touchLines = directLines ?? (touch && swap && mode === 'lander' ? TOUCH_LANDER_SWAPPED : TOUCH[mode]);
   const keyLines = directLines ?? (swap && mode === 'lander' ? KEYS_LANDER_SWAPPED : KEYS[mode]);

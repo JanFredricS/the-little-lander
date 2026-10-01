@@ -15,6 +15,14 @@
  *   DIRECT steering (Settings.steering = 'direct') in lander / csm: no flight
  *                  buttons - holding anywhere else on the play area steers
  *                  (the canvas PointerSource), so only the system buttons stay.
+ *   JOYSTICK (Settings.steering = 'joystick', round 8) in lander / csm: no
+ *                  flight buttons; a virtual stick anchored bottom-left (left
+ *                  thumb) feeds the same DIRECT steering layer. A touch that
+ *                  starts in its grab zone (the lower-left quarter-ish) owns
+ *                  it; the stick direction = the thrust direction, the centre
+ *                  deadzone (and letting go) = coast. On a desktop without
+ *                  touch controls the layout is the stick alone (no system
+ *                  buttons: Esc / Backspace) and the mouse can drag it.
  *   all modes      II pause, top centre · ↻ restart level, top-left
  *                  ("system" buttons: opaque, high-contrast, see touchLayer.ts)
  */
@@ -41,6 +49,34 @@ export interface TouchLayout {
   buttons: TouchButton[];
   /** Drag-to-aim region (harpoon modes), or null. */
   aimZone: Rect | null;
+  /** JOYSTICK steering: the virtual stick (lander / csm), or null. */
+  stick: TouchStick | null;
+}
+
+/** Virtual stick (CSS px): base centre + radius (full deflection), and the zone a touch must start in to grab it. */
+export interface TouchStick {
+  cx: number;
+  cy: number;
+  r: number;
+  zone: Rect;
+}
+
+/** Stick deadzone as a fraction of its radius: inside it the stick reads centred (coast). */
+export const STICK_DEADZONE = 0.22;
+
+/**
+ * Stick deflection for a finger at (x, y): the direction from the base centre with
+ * magnitude min(1, distance / r) (y-down, like the world: the camera never rotates),
+ * or null inside the deadzone (= coast).
+ */
+// NOTE: the DIRECT layer currently ignores the magnitude by design (no throttle): any deflection past the deadzone = full thrust that way.
+export function stickVector(stick: Pick<TouchStick, 'cx' | 'cy' | 'r'>, x: number, y: number): { x: number; y: number } | null {
+  const dx = x - stick.cx;
+  const dy = y - stick.cy;
+  const len = Math.hypot(dx, dy);
+  if (len < STICK_DEADZONE * stick.r) return null;
+  const k = Math.min(1, len / stick.r) / len;
+  return { x: dx * k, y: dy * k };
 }
 
 export interface LayoutMetrics {
@@ -63,16 +99,23 @@ export interface TouchLayoutOptions {
   swapEngines?: boolean;
   /** DIRECT steering: lander / csm show only the system buttons (the play area itself is the control). */
   direct?: boolean;
+  /** JOYSTICK steering: lander / csm show the virtual stick (bottom-left) instead of flight buttons. */
+  joystick?: boolean;
+  /** Pause / restart buttons (default true; false = the desktop joystick-only layout). */
+  systemButtons?: boolean;
 }
 
 export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchLayoutOptions = {}): TouchLayout {
   const { size: s, margin: m, gap: g } = layoutMetrics(w, h);
   const big = Math.round(s * 1.25);
   const pauseSize = Math.max(MIN_TOUCH_CSS, Math.round(s * 0.7));
-  const buttons: TouchButton[] = [
-    { id: 'pause', control: 'pause', label: 'II', kind: 'tap', system: true, rect: r((w - pauseSize) / 2, m, pauseSize, pauseSize) },
-    { id: 'restart', control: 'restart', label: '↻', kind: 'tap', system: true, rect: r(m, m, pauseSize, pauseSize) },
-  ];
+  const buttons: TouchButton[] =
+    opts.systemButtons === false
+      ? []
+      : [
+          { id: 'pause', control: 'pause', label: 'II', kind: 'tap', system: true, rect: r((w - pauseSize) / 2, m, pauseSize, pauseSize) },
+          { id: 'restart', control: 'restart', label: '↻', kind: 'tap', system: true, rect: r(m, m, pauseSize, pauseSize) },
+        ];
   let aimZone: Rect | null = null;
 
   const bottom = h - m;
@@ -98,7 +141,18 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
     return { left: rel.x, top: inB.y };
   };
 
-  if (opts.direct && isDirectSteerMode(mode)) return { mode, buttons, aimZone };
+  if (opts.joystick && isDirectSteerMode(mode)) {
+    // left thumb: base clear of the corner by a quarter radius; grab zone = the lower-left area
+    // under the system buttons, at most half the width (the right half stays free: minimap)
+    const R = Math.round(s * 0.85);
+    const pad = Math.round(R * 0.25);
+    const cx = m + pad + R;
+    const cy = bottom - pad - R;
+    const top = Math.max(m + pauseSize + g, cy - 2 * R);
+    const zone = r(0, top, Math.min(w / 2, cx + 2 * R), h - top);
+    return { mode, buttons, aimZone, stick: { cx, cy, r: R, zone } };
+  }
+  if (opts.direct && isDirectSteerMode(mode)) return { mode, buttons, aimZone, stick: null };
   switch (mode) {
     case 'csm':
       rotateLeft();
@@ -137,7 +191,7 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
       break;
     }
   }
-  return { mode, buttons, aimZone };
+  return { mode, buttons, aimZone, stick: null };
 }
 
 export function contains(rect: Rect, x: number, y: number): boolean {

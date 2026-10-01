@@ -14,10 +14,21 @@
  *  - A pointer that starts in the aim zone (not on a button) drives the aim:
  *    dir = current - start once past AIM_DEADZONE. The last aim sticks after
  *    the finger lifts (aim, then fire with the other thumb) until clear().
+ *  - JOYSTICK (round 8): a pointer that starts in the stick's grab zone (not
+ *    on a button) owns the stick: every move reports the steer =
+ *    stickVector() (null inside the deadzone = coast); lifting / cancelling
+ *    centres it (steer null). Unlike the aim, a steer never sticks.
+ *    A second finger that starts in the zone while the stick is held cannot
+ *    steal it: it waits (tracked, captured). When the owner lifts, a waiting
+ *    finger that is still inside the zone takes the stick over from where it is.
+ *  - relayout() (viewport resize - e.g. mobile Safari's toolbar, which the
+ *    bottom-edge thumb summons - rotation, a settings rebuild) keeps the stick
+ *    finger(s) when the new layout still has a stick; everything else is
+ *    released as with setLayout().
  */
 
 import type { ControlId, Vec2 } from '../../contracts';
-import { contains, type TouchButton, type TouchLayout } from './touchLayout';
+import { contains, stickVector, type TouchButton, type TouchLayout } from './touchLayout';
 
 /** CSS px a drag must travel before it aims (matches TOUCH_AIM_DEADZONE in shell/input.ts). */
 export const AIM_DEADZONE = 8;
@@ -27,9 +38,17 @@ export interface ControlSink {
   press(c: ControlId): void;
   release(c: ControlId): void;
   setAim(dir: Vec2 | null): void;
+  /** JOYSTICK steering: the stick's thrust direction (any length), or null = centred / released (coast). */
+  setSteer?(dir: Vec2 | null): void;
 }
 
-type Owner = { kind: 'button'; button: TouchButton } | { kind: 'aim'; sx: number; sy: number; x: number; y: number } | { kind: 'none' };
+type Owner =
+  | { kind: 'button'; button: TouchButton }
+  | { kind: 'aim'; sx: number; sy: number; x: number; y: number }
+  | { kind: 'stick'; x: number; y: number }
+  /** Started in the stick zone while another finger held the stick: takes over when that one lifts. */
+  | { kind: 'stickWait'; x: number; y: number }
+  | { kind: 'none' };
 
 export class TouchModel {
   private layout: TouchLayout | null = null;
@@ -43,6 +62,28 @@ export class TouchModel {
   setLayout(layout: TouchLayout | null): void {
     this.clear();
     this.layout = layout;
+  }
+
+  /**
+   * New layout for the same session of touches (resize / rotation / rebuild). When both the old
+   * and the new layout have a stick, the stick finger (and any waiting one) stay tracked and the
+   * steer is re-read against the new stick; everything else is released (setLayout). Returns the
+   * pointer ids kept, which the DOM layer re-captures on its new elements.
+   */
+  relayout(layout: TouchLayout | null): number[] {
+    const keep: [number, Owner][] = [];
+    if (layout?.stick && this.layout?.stick) for (const [id, o] of this.pointers) if (o.kind === 'stick' || o.kind === 'stickWait') keep.push([id, o]);
+    if (keep.length === 0) {
+      this.setLayout(layout);
+      return [];
+    }
+    for (const [id] of keep) this.pointers.delete(id); // clear() must not centre the stick
+    this.clear();
+    this.layout = layout;
+    for (const [id, o] of keep) this.pointers.set(id, o);
+    const held = this.stickHeld();
+    if (held) this.sink.setSteer?.(stickVector(layout!.stick!, held.x, held.y));
+    return keep.map(([id]) => id);
   }
 
   getLayout(): TouchLayout | null {
@@ -59,6 +100,12 @@ export class TouchModel {
   /** Active aim drag (start/current) for the aim-stick visual, or null. */
   aimDrag(): { sx: number; sy: number; x: number; y: number } | null {
     for (const o of this.pointers.values()) if (o.kind === 'aim') return { sx: o.sx, sy: o.sy, x: o.x, y: o.y };
+    return null;
+  }
+
+  /** The finger on the virtual stick (for the nub visual), or null when nobody holds it. */
+  stickHeld(): { x: number; y: number } | null {
+    for (const o of this.pointers.values()) if (o.kind === 'stick') return o;
     return null;
   }
 
@@ -81,6 +128,16 @@ export class TouchModel {
       this.hold(b.control);
       return true;
     }
+    const stick = this.layout.stick;
+    if (stick && contains(stick.zone, x, y)) {
+      if (this.stickHeld()) {
+        this.pointers.set(id, { kind: 'stickWait', x, y }); // no stealing: waits for the owner to lift
+        return true;
+      }
+      this.pointers.set(id, { kind: 'stick', x, y });
+      this.sink.setSteer?.(stickVector(stick, x, y));
+      return true;
+    }
     if (this.layout.aimZone && contains(this.layout.aimZone, x, y)) {
       this.pointers.set(id, { kind: 'aim', sx: x, sy: y, x, y });
       return true;
@@ -91,6 +148,12 @@ export class TouchModel {
   move(id: number, x: number, y: number): void {
     const o = this.pointers.get(id);
     if (!o) return;
+    if (o.kind === 'stick' || o.kind === 'stickWait') {
+      o.x = x;
+      o.y = y;
+      if (o.kind === 'stick' && this.layout?.stick) this.sink.setSteer?.(stickVector(this.layout.stick, x, y));
+      return;
+    }
     if (o.kind === 'aim') {
       o.x = x;
       o.y = y;
@@ -121,6 +184,18 @@ export class TouchModel {
     if (!o) return;
     this.pointers.delete(id);
     if (o.kind === 'button') this.unhold(o.button.control);
+    else if (o.kind === 'stick') {
+      // a finger already resting in the zone takes the stick over; else it centres
+      const stick = this.layout?.stick;
+      for (const [nid, n] of this.pointers) {
+        if (n.kind === 'stickWait' && stick && contains(stick.zone, n.x, n.y)) {
+          this.pointers.set(nid, { kind: 'stick', x: n.x, y: n.y });
+          this.sink.setSteer?.(stickVector(stick, n.x, n.y));
+          return;
+        }
+      }
+      this.sink.setSteer?.(null);
+    }
   }
 
   /** pointercancel: release everything this pointer held. */
@@ -132,7 +207,9 @@ export class TouchModel {
   clear(): void {
     for (const [c, n] of this.holds) if (n > 0) this.sink.release(c);
     this.holds.clear();
+    const stickHeld = !!this.stickHeld();
     this.pointers.clear();
+    if (stickHeld) this.sink.setSteer?.(null);
     if (this.lastAim) this.sink.setAim(null);
     this.lastAim = null;
   }

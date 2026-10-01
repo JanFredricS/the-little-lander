@@ -22,6 +22,8 @@ export interface ScreenContext {
   lowRes?: boolean;
   /** Flight control scheme (Settings.steering; default 'engines'). */
   steering?: SteeringScheme;
+  /** Minimap shown (Settings.showMinimap; default true). */
+  showMinimap?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
   lastHull: number | null;
   /**
@@ -55,7 +57,7 @@ export interface ScreenModel {
 }
 
 /** UI-local commands (not state-machine actions). */
-export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'toggleSteering' } | { ui: 'continueStory' } | { ui: 'none' };
+export type UiCommand = { ui: 'controls' } | { ui: 'toggleTouch' } | { ui: 'toggleSwap' } | { ui: 'toggleFps' } | { ui: 'toggleLowRes' } | { ui: 'toggleSteering' } | { ui: 'toggleMinimap' } | { ui: 'continueStory' } | { ui: 'none' };
 
 export const CRASH_TEXT: Record<CrashCause, string> = {
   impact: 'HIT THE GROUND TOO HARD',
@@ -82,7 +84,16 @@ export function lowResLabel(on: boolean): string {
 }
 
 export function steeringLabel(s: SteeringScheme): string {
-  return `STEERING: ${s === 'direct' ? 'DIRECT' : 'ENGINES'}`;
+  return `STEERING: ${s === 'direct' ? 'DIRECT' : s === 'joystick' ? 'JOYSTICK' : 'ENGINES'}`;
+}
+
+/** The STEERING item's next scheme: ENGINES -> DIRECT -> JOYSTICK -> ENGINES. */
+export function nextSteering(s: SteeringScheme): SteeringScheme {
+  return s === 'engines' ? 'direct' : s === 'direct' ? 'joystick' : 'engines';
+}
+
+export function minimapLabel(on: boolean): string {
+  return `MINIMAP: ${on ? 'ON' : 'OFF'}`;
 }
 
 export function swapLabel(swap: boolean): string {
@@ -155,6 +166,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
           { id: 'steering', label: steeringLabel(ctx.steering ?? 'engines'), enabled: true },
+          { id: 'minimap', label: minimapLabel(ctx.showMinimap ?? true), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },
           { id: 'lowres', label: lowResLabel(ctx.lowRes ?? false), enabled: true },
@@ -219,6 +231,7 @@ export function itemAction(state: ScreenState, id: string, ctx: ScreenContext): 
       if (id === 'touch') return { ui: 'toggleTouch' };
       if (id === 'swap') return { ui: 'toggleSwap' };
       if (id === 'steering') return { ui: 'toggleSteering' };
+      if (id === 'minimap') return { ui: 'toggleMinimap' };
       if (id === 'fps') return { ui: 'toggleFps' };
       if (id === 'lowres') return { ui: 'toggleLowRes' };
       return { ui: 'none' };
