@@ -12,7 +12,7 @@
  */
 
 import { Container } from 'pixi.js';
-import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
+import { resolveSteering, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
@@ -64,10 +64,13 @@ export interface GameUiOptions {
   showMinimap?: boolean;
   /** The pause-menu MINIMAP toggle changed (persist it). */
   onShowMinimapChange?(on: boolean): void;
-  /** Initial flight control scheme (SaveState.settings.steering; default 'engines'). */
-  steering?: SteeringScheme;
+  /** SaveState.settings.steering: the explicit choice, or null / unset = never chosen (resolved per level: resolveSteering). */
+  steering?: SteeringScheme | null;
   /** STEERING toggled in the pause menu (the App switches the input layer + persists). */
-  onSteeringChange?(s: SteeringScheme): void;
+  /** The new Settings.steering (null = AUTO: back to the per-level default). */
+  onSteeringChange?(s: SteeringScheme | null): void;
+  /** Audio state line for the FPS readout (round 9: iPhone audio reports), e.g. getAudio().diag. */
+  audioDiag?(): string;
   /** The first real touch of the page (a device the startup detection took for desktop). */
   onTouchDetected?(): void;
   /** Story flow hooks for the title CONTINUE / results NEXT items (S3). */
@@ -121,7 +124,10 @@ export class GameUi {
   private swapEngines: boolean;
   private showFps: boolean;
   private lowRes: boolean;
+  /** The scheme in use on the current level (what the pause menu shows). */
   private steering: SteeringScheme;
+  /** The player's explicit choice, or null = never chosen (per-level default). */
+  private steeringSetting: SteeringScheme | null;
   private showMinimap: boolean;
   private readonly minimap = new MinimapView();
   /** Vessel pose for the minimap (copied from the last tick: no per-frame allocation). */
@@ -133,6 +139,9 @@ export class GameUi {
   /** Second FPS-counter line: terrain streaming diagnostics (in a level). */
   private readonly terrainLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
   private readonly terrainMeter = new TerrainDiagMeter();
+  /** Third FPS-counter line: audio context state (when the App passes audioDiag). */
+  private readonly audioLabel = new PixelText('', { color: UI.ink, outline: UI.outline });
+  private terrainLine = false;
   /** Cached HUD left inset (virtual px) + when it was measured: measuring reads DOM layout, so not every frame. */
   private insetCache = { at: -Infinity, value: 0 };
   private lastHull: number | null = null;
@@ -143,7 +152,7 @@ export class GameUi {
 
   constructor(private readonly o: GameUiOptions) {
     this.screenView = new ScreenView(o.art);
-    this.layer.addChild(this.minimap.root, this.hudView.root, this.screenView.root, this.fpsLabel, this.terrainLabel);
+    this.layer.addChild(this.minimap.root, this.hudView.root, this.screenView.root, this.fpsLabel, this.terrainLabel, this.audioLabel);
     o.pixi.app.stage.addChild(this.layer);
     this.hudView.root.visible = false;
     this.touchDetected = detectTouch();
@@ -151,10 +160,12 @@ export class GameUi {
     this.swapEngines = o.swapEngineButtons ?? true;
     this.showFps = o.showFps ?? false;
     this.lowRes = o.lowRes ?? false;
-    this.steering = o.steering ?? 'engines';
+    this.steeringSetting = o.steering ?? null;
+    this.steering = resolveSteering(this.steeringSetting, null);
     this.showMinimap = o.showMinimap ?? true;
     this.fpsLabel.visible = this.showFps;
     this.terrainLabel.visible = this.showFps;
+    this.audioLabel.visible = this.showFps;
     this.touch = new TouchLayer(o.host, o.virtual);
     this.touch.setSwapEngines(this.swapEngines);
     this.touch.setSteering(this.steering);
@@ -256,7 +267,7 @@ export class GameUi {
       swapEngines: this.swapEngines,
       showFps: this.showFps,
       lowRes: this.lowRes,
-      steering: this.steering,
+      steering: this.steeringSetting,
       showMinimap: this.showMinimap,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
@@ -310,6 +321,9 @@ export class GameUi {
   levelStarted(spec: LevelSpec): void {
     this.spec = spec;
     this.hud = initHud(spec);
+    // never-chosen steering: per level (ENGINES on Descent - touch buttons too - JOYSTICK elsewhere)
+    this.steering = resolveSteering(this.steeringSetting, spec.id);
+    this.touch.setSteering(this.steering);
     // the minimap's terrain is baked ONCE here (load frame) and uploaded to the GPU right away
     this.minimap.setLevel(spec, (src) => this.o.pixi.uploadTexture(src));
     this.mmPose[0] = spec.spawn.x;
@@ -391,7 +405,9 @@ export class GameUi {
     this.fpsLabel.setText(fpsText(this.fpsMeter.reading)); // no-op unless a new reading was published
     if (published) {
       // terrain line (in a level): which streaming path fired - for player reports from the deployed build
+      this.terrainLine = !!terrain;
       this.terrainLabel.setText(terrain ? terrainText(this.terrainMeter.publish()) : '');
+      this.audioLabel.setText(this.o.audioDiag?.() ?? '');
     }
   }
 
@@ -413,6 +429,8 @@ export class GameUi {
       const right = this.hudView.root.visible ? this.hudView.badgeLeft - 4 : VIEW_WIDTH - 4;
       this.fpsLabel.position.set(Math.round(right - this.fpsLabel.width), 5);
       this.terrainLabel.position.set(Math.round(right - this.terrainLabel.width), 5 + Math.ceil(this.fpsLabel.height) + 2);
+      const ay = this.terrainLine ? this.terrainLabel.y + Math.ceil(this.terrainLabel.height) + 2 : this.terrainLabel.y;
+      this.audioLabel.position.set(Math.round(right - this.audioLabel.width), ay);
     }
     if (this.screenView.root.visible && this.model) {
       this.screenView.render(this.menu, nowMs);
@@ -508,15 +526,18 @@ export class GameUi {
       this.refreshModel(false);
       this.syncLayers();
     } else if (a.ui === 'toggleSteering') {
-      this.steering = nextSteering(this.steering);
+      // ENGINES -> DIRECT -> JOYSTICK -> AUTO (null: the per-level default again) -> ENGINES
+      this.steeringSetting = nextSteering(this.steeringSetting);
+      this.steering = resolveSteering(this.steeringSetting, this.spec?.id ?? null);
       this.touch.setSteering(this.steering);
-      this.o.onSteeringChange?.(this.steering);
+      this.o.onSteeringChange?.(this.steeringSetting);
       this.refreshModel(false);
       this.syncLayers();
     } else if (a.ui === 'toggleFps') {
       this.showFps = !this.showFps;
       this.fpsLabel.visible = this.showFps;
       this.terrainLabel.visible = this.showFps;
+      this.audioLabel.visible = this.showFps;
       // no stale reading (or a first window spanning the time it was off) when it comes back
       this.fpsMeter.reset();
       this.terrainMeter.reset();

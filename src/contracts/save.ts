@@ -6,7 +6,13 @@
 import type { LevelId } from './common';
 import type { CutsceneId } from './cutscene';
 
-export const SAVE_VERSION = 1;
+/**
+ * 2 (round 9): Settings.steering became nullable (null = never chosen -> JOYSTICK).
+ * A version-1 save stored 'engines' for every player who never touched STEERING,
+ * so on read a v1 'engines' migrates to null; a v1 'direct' / 'joystick' was a
+ * deliberate choice and is kept.
+ */
+export const SAVE_VERSION = 2;
 export const SAVE_STORAGE_KEY = 'the-little-lander/save';
 
 export interface LevelBest {
@@ -51,9 +57,12 @@ export interface Settings {
    * the play area (or W A S D / arrows) and the vessel thrusts toward it;
    * see src/shell/directSteering.ts. 'joystick' (round 8) = the same DIRECT
    * steering driven by a virtual stick bottom-left (touch, or a mouse drag);
-   * its keyboard is the DIRECT one. Default 'engines'.
+   * its keyboard is the DIRECT one.
+   * Round 9: null = the player never chose (like lowRes): resolved to
+   * DEFAULT_STEERING ('joystick') at use; only the pause-menu cycle saves a
+   * scheme. See SAVE_VERSION for the migration of older saves.
    */
-  steering: SteeringScheme;
+  steering: SteeringScheme | null;
   /**
    * Round 8: the minimap (bottom-right: terrain around the vessel, the exit
    * marked). Pause-menu toggle. Default true; older saves read as true.
@@ -65,6 +74,26 @@ export type SteeringScheme = 'engines' | 'direct' | 'joystick';
 
 /** The pause menu's STEERING item cycles through these, in order. */
 export const STEERING_SCHEMES: readonly SteeringScheme[] = ['engines', 'direct', 'joystick'];
+
+/** Round 9: what a player who never picked a scheme flies with (outside ENGINES_DEFAULT_LEVELS). */
+// Deliberately the default on desktop too (user's explicit request): there the keyboard flies the DIRECT rotate+thrust keys.
+export const DEFAULT_STEERING: SteeringScheme = 'joystick';
+
+/**
+ * Round 9 (user: "for decent default control should be engines mode. Works best
+ * there"): levels where a never-chosen setting flies the classic ENGINES scheme
+ * (touch buttons too). An explicit choice still applies here.
+ */
+export const ENGINES_DEFAULT_LEVELS: readonly string[] = ['descent'];
+
+/**
+ * Settings.steering -> the scheme in use on `levelId` (null / undefined setting =
+ * never chosen: ENGINES on ENGINES_DEFAULT_LEVELS, else DEFAULT_STEERING).
+ */
+export function resolveSteering(s: SteeringScheme | null | undefined, levelId?: string | null): SteeringScheme {
+  if (s) return s;
+  return levelId && ENGINES_DEFAULT_LEVELS.includes(levelId) ? 'engines' : DEFAULT_STEERING;
+}
 
 export interface SaveState {
   version: typeof SAVE_VERSION;

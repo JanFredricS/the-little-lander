@@ -103,4 +103,26 @@ export interface AudioDriver {
   loop(l: LoopSpec): LoopHandle;
   /** Create a fadeable sub-bus on `bus` (starts at gain 1). */
   group(bus: BusId): GroupHandle;
+  /**
+   * Round 9 (iOS): called SYNCHRONOUSLY inside a user-gesture handler, before any
+   * await. Creates the context if needed, calls resume() and plays a silent
+   * buffer right there (iOS only honours these within the gesture's own call
+   * stack), and starts the iOS silent-switch keep-alive. Idempotent and cheap.
+   */
+  gestureUnlock?(): void;
+  /** True while another gesture is still needed (context not running, or the iOS keep-alive not playing). */
+  readonly needsGesture?: boolean;
+  /** Context state changes (running / suspended / iOS 'interrupted'). Returns an unsubscribe. */
+  onStateChange?(fn: () => void): () => void;
+  /** One-line state for the debug readout, e.g. "ctx:running ka:on". */
+  readonly diag?: string;
+  /**
+   * Round 9 audit: true = the game claims the media "playback" audio session (plays
+   * through the iOS silent switch; the keep-alive runs; the player's own music stops),
+   * false = 'ambient' (mixes with other apps, keep-alive paused) - used while muted.
+   * Call it from the (un)mute gesture so the keep-alive may start.
+   */
+  setPlayback?(on: boolean): void;
+  /** Release page resources (the keep-alive element). */
+  dispose?(): void;
 }

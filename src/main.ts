@@ -37,7 +37,7 @@ if (route) {
   const touchPref = touchParam === 'on' || touchParam === 'off' || touchParam === 'auto' ? touchParam : undefined;
   const audio = getAudio();
   const app = new App(host, {
-    ui: { showDebugLevels: params.has('debug'), touchPref },
+    ui: { showDebugLevels: params.has('debug'), touchPref, audioDiag: () => audio.diag },
     onEvent: (e) => {
       audio.handle(e);
       if (import.meta.env.DEV && (e.type === 'crash' || e.type === 'levelComplete')) console.info('[event]', e);

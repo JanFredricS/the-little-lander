@@ -566,19 +566,22 @@ describe('DIRECT steering: UI, touch layout, setting', () => {
     for (const mode of ['harpoon', 'harpoonThrust'] as const) expect(touchLayout(mode, 844, 390, { direct: true })).toEqual(touchLayout(mode, 844, 390));
   });
 
-  it('pause menu STEERING item toggles and reflects the setting (default ENGINES)', () => {
+  it('pause menu STEERING item toggles and reflects the setting (round 9 default: JOYSTICK, ENGINES on Descent)', () => {
     const c = (p: Partial<ScreenContext> = {}): ScreenContext => ({ levels: {}, save: null, showDebug: false, touchPref: 'auto', lastHull: null, ...p });
-    const label = (ctx: ScreenContext) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx).items.find((i) => i.id === 'steering')!.label;
-    expect(label(c())).toBe('STEERING: ENGINES');
+    const label = (ctx: ScreenContext, levelId: 'testpad' | 'descent' = 'testpad') => screenModel({ id: 'paused', levelId }, ctx).items.find((i) => i.id === 'steering')!.label;
+    expect(label(c())).toBe('STEERING: AUTO (JOYSTICK)');
+    expect(label(c(), 'descent')).toBe('STEERING: AUTO (ENGINES)');
+    expect(label(c({ steering: null }), 'descent')).toBe('STEERING: AUTO (ENGINES)');
+    expect(label(c({ steering: 'joystick' }), 'descent')).toBe('STEERING: JOYSTICK');
     expect(label(c({ steering: 'engines' }))).toBe('STEERING: ENGINES');
     expect(label(c({ steering: 'direct' }))).toBe('STEERING: DIRECT');
     expect(itemAction({ id: 'paused', levelId: 'testpad' }, 'steering', c())).toEqual({ ui: 'toggleSteering' });
   });
 
-  it('Settings.steering defaults to engines, old / bad saves read engines, direct round-trips', () => {
-    expect(DEFAULT_SETTINGS.steering).toBe('engines');
-    expect(parseSave({ settings: { swapEngineButtons: false } })!.settings.steering).toBe('engines');
-    expect(parseSave({ settings: { steering: 'wheel' } })!.settings.steering).toBe('engines');
+  it('Settings.steering defaults to null (never chosen), old / bad saves read null, direct round-trips', () => {
+    expect(DEFAULT_SETTINGS.steering).toBeNull();
+    expect(parseSave({ settings: { swapEngineButtons: false } })!.settings.steering).toBeNull();
+    expect(parseSave({ settings: { steering: 'wheel' } })!.settings.steering).toBeNull();
     expect(parseSave({ settings: { steering: 'direct' } })!.settings.steering).toBe('direct');
   });
 

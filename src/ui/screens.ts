@@ -4,7 +4,7 @@
  * machine, or a UI-local command). Views only draw these; tests drive them.
  */
 
-import type { CrashCause, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme } from '../contracts';
+import { resolveSteering, type CrashCause, type LevelId, type LevelSpec, type ScreenAction, type ScreenState, type SteeringScheme } from '../contracts';
 import { formatTime, levelEntries, levelMenuItems, nextStoryLevel, STORY_TITLES, type SaveView } from './levelSelect';
 import type { MenuItem } from './menu';
 import type { TouchPref } from './touch/touchModel';
@@ -20,8 +20,8 @@ export interface ScreenContext {
   showFps?: boolean;
   /** Low-res render mode (Settings.lowRes). */
   lowRes?: boolean;
-  /** Flight control scheme (Settings.steering; default 'engines'). */
-  steering?: SteeringScheme;
+  /** Settings.steering: an explicit scheme, or null / unset = AUTO (resolved per level: resolveSteering). */
+  steering?: SteeringScheme | null;
   /** Minimap shown (Settings.showMinimap; default true). */
   showMinimap?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
@@ -83,13 +83,21 @@ export function lowResLabel(on: boolean): string {
   return `LOW-RES MODE: ${on ? 'ON' : 'OFF'}`;
 }
 
-export function steeringLabel(s: SteeringScheme): string {
-  return `STEERING: ${s === 'direct' ? 'DIRECT' : s === 'joystick' ? 'JOYSTICK' : 'ENGINES'}`;
+function schemeName(s: SteeringScheme): string {
+  return s === 'direct' ? 'DIRECT' : s === 'joystick' ? 'JOYSTICK' : 'ENGINES';
 }
 
-/** The STEERING item's next scheme: ENGINES -> DIRECT -> JOYSTICK -> ENGINES. */
-export function nextSteering(s: SteeringScheme): SteeringScheme {
-  return s === 'engines' ? 'direct' : s === 'direct' ? 'joystick' : 'engines';
+/**
+ * The STEERING item for `setting` on level `levelId`: an explicit scheme by name, or
+ * AUTO (null = never chosen) with the scheme it resolves to there, e.g. "AUTO (ENGINES)" on Descent.
+ */
+export function steeringLabel(setting: SteeringScheme | null, levelId?: string | null): string {
+  return `STEERING: ${setting ? schemeName(setting) : `AUTO (${schemeName(resolveSteering(null, levelId))})`}`;
+}
+
+/** The STEERING item's next setting: ENGINES -> DIRECT -> JOYSTICK -> AUTO (null: per-level default) -> ENGINES. */
+export function nextSteering(s: SteeringScheme | null): SteeringScheme | null {
+  return s === 'engines' ? 'direct' : s === 'direct' ? 'joystick' : s === 'joystick' ? null : 'engines';
 }
 
 export function minimapLabel(on: boolean): string {
@@ -165,7 +173,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'retry', label: 'RESTART', enabled: true },
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
-          { id: 'steering', label: steeringLabel(ctx.steering ?? 'engines'), enabled: true },
+          { id: 'steering', label: steeringLabel(ctx.steering ?? null, state.levelId), enabled: true },
           { id: 'minimap', label: minimapLabel(ctx.showMinimap ?? true), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },

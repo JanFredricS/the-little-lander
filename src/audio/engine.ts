@@ -38,8 +38,17 @@ const DUCK = 0.35;
 /** Seconds a fully faded sequencer is kept after its fade ends (release / echo tails). */
 const TAIL = 0.5;
 
-/** DOM events that count as a user gesture for the autoplay policy. */
-export const GESTURE_EVENTS = ['pointerdown', 'mousedown', 'touchstart', 'touchend', 'keydown'] as const;
+/**
+ * DOM events that count as a user gesture for the autoplay policy. iOS Safari only
+ * treats the END of a touch (touchend / pointerup / click) as an activation, so
+ * those must be here; the down events let desktop unlock a little earlier.
+ */
+export const GESTURE_EVENTS = ['pointerdown', 'mousedown', 'touchstart', 'touchend', 'pointerup', 'mouseup', 'click', 'keydown'] as const;
+/** Context state transitions kept for the debug readout. */
+const LOG_SIZE = 3;
+/** The audio debug line stays within this many characters (the FPS corner; 640 px view). */
+export const AUDIO_DIAG_MAX = 70;
+const SHORT_STATE: Record<string, string> = { running: 'run', suspended: 'susp', uninit: 'none' };
 
 export class AudioEngine {
   private _settings: AudioSettings;
@@ -57,6 +66,11 @@ export class AudioEngine {
   private readonly lastPlayed = new Map<SfxId, number>();
   private readonly cleanups: (() => void)[] = [];
   private readonly listeners = new Set<() => void>();
+  /** A gesture's unlock is queued and has not run yet (one at a time, however many events arrive). */
+  private gestureQueued = false;
+  /** Recent context state transitions (debug readout: engine.diag). */
+  private readonly stateLog: string[] = [];
+  private lastState = '';
 
   constructor(
     readonly driver: AudioDriver,
@@ -66,6 +80,45 @@ export class AudioEngine {
     this._settings = loadSettings(this.storage);
     this.thrusters = new Thrusters(driver);
     this.applyGains(0);
+    this.driver.setPlayback?.(!this._settings.muted);
+    const offState = driver.onStateChange?.(() => this.onDriverState());
+    if (offState) this.cleanups.push(offState);
+  }
+
+  /** One line for the FPS / debug readout: driver state + recent transitions. */
+  get diag(): string {
+    const d = this.driver.diag ?? `ctx:${this.driver.state}`;
+    const line = `AUDIO ${d}${this.unlocked ? '' : ' TAP'}${this.stateLog.length ? ` | ${this.stateLog.join('>')}` : ''}`;
+    return line.length > AUDIO_DIAG_MAX ? line.slice(0, AUDIO_DIAG_MAX) : line;
+  }
+
+  private noteState(): void {
+    const s = this.driver.state;
+    if (s === this.lastState) return;
+    this.lastState = s;
+    this.stateLog.push(SHORT_STATE[s] ?? s);
+    if (this.stateLog.length > LOG_SIZE) this.stateLog.shift();
+  }
+
+  /**
+   * The context changed state by itself: a pending resume() landed late, or iOS
+   * interrupted / restored it (call, Siri, ring switch, backgrounding).
+   */
+  private onDriverState(): void {
+    this.noteState();
+    this.emitChange();
+    if (this.running && this.hidden) {
+      // a gesture's resume() landed after the hide path ran: suspend again
+      void this.enqueue(() => this.reconcile(false));
+    } else if (this.running && this.unlocked) {
+      // came back running on its own while visible (iOS interruption ended): held engines sound again
+      this.applyGains(0);
+      this.thrusters.relight();
+      if (!this.timer && this.opts.autoTick !== false) void this.enqueue(() => this.reconcile(false));
+    } else if (!this.running && !this.hidden) {
+      // dropped out while visible (interrupted): engines go quiet; the next gesture unlocks again
+      this.thrusters.silence();
+    }
   }
 
   // ------------------------------------------------------------ lifecycle
@@ -93,7 +146,8 @@ export class AudioEngine {
   private async reconcile(gesture: boolean): Promise<void> {
     if (this.hidden) {
       this.thrusters.silence(); // keeps the engine flags so the show path can relight them
-      if (this.driver.state === 'running') await this.driver.suspend();
+      // always (once created): the state may still read 'suspended' while a gesture's resume() lands
+      if (this.driver.state !== 'uninit') await this.driver.suspend();
       return;
     }
     if (!gesture && !this.unlocked) return; // never unlocked: wait for a gesture
@@ -105,6 +159,7 @@ export class AudioEngine {
     // resume() resolved: the gesture unlock succeeded. Record it before any
     // bail-out so a later visibility restore may resume without a new gesture.
     this.unlocked = true;
+    this.noteState();
     if (this.hidden || !this.running) return; // hidden again meanwhile: the queued hide handles it
     this.applyGains(0);
     if (this.opts.autoTick !== false && !this.timer) this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -114,23 +169,52 @@ export class AudioEngine {
     this.emitChange();
   }
 
-  /** Unlock on the first pointer / touch / key gesture on `target` (window). */
+  /**
+   * Unlock on pointer / touch / key gestures on `target` (window). The listeners
+   * stay bound for the page's life: after an iOS interruption (call, Siri,
+   * backgrounding) the context needs a NEW gesture, so every gesture checks
+   * (cheaply) and re-unlocks while the driver still needs one. The driver's
+   * gestureUnlock() runs synchronously in the handler (iOS only honours
+   * resume() / play() inside the gesture's own call stack); the engine's
+   * bookkeeping follows through the serial queue.
+   */
   bindGestures(target: EventTarget): void {
-    const handler = () => {
-      void this.unlock().then(() => {
-        if (this.running) off();
-      });
-    };
+    const handler = () => this.gesture();
     const off = () => GESTURE_EVENTS.forEach((t) => target.removeEventListener(t, handler, true));
     GESTURE_EVENTS.forEach((t) => target.addEventListener(t, handler, { capture: true, passive: true }));
     this.cleanups.push(off);
   }
 
-  /** Suspend the context while the tab is hidden; resume when visible again. */
-  bindVisibility(doc: Document): void {
+  /** One user gesture (also callable directly from the input layer). No-op while fully unlocked. */
+  gesture(): void {
+    if (this.hidden) return;
+    if (this.unlocked && this.running && !(this.driver.needsGesture ?? false)) return;
+    this.driver.gestureUnlock?.(); // synchronous: still inside the gesture
+    // context already running (only the iOS keep-alive needed a retry): no engine bookkeeping to redo
+    if (this.unlocked && this.running) return;
+    if (this.gestureQueued) return;
+    this.gestureQueued = true;
+    void this.enqueue(async () => {
+      this.gestureQueued = false;
+      await this.reconcile(true);
+    });
+  }
+
+  /**
+   * Suspend the context while the tab is hidden; resume when visible again.
+   * iOS: pagehide / pageshow (bfcache) too, since visibilitychange is not always sent.
+   */
+  bindVisibility(doc: Document, win?: EventTarget): void {
     const onVis = () => this.setHidden(doc.visibilityState === 'hidden');
+    const onHide = () => this.setHidden(true);
     doc.addEventListener('visibilitychange', onVis);
-    this.cleanups.push(() => doc.removeEventListener('visibilitychange', onVis));
+    win?.addEventListener('pagehide', onHide);
+    win?.addEventListener('pageshow', onVis);
+    this.cleanups.push(() => {
+      doc.removeEventListener('visibilitychange', onVis);
+      win?.removeEventListener('pagehide', onHide);
+      win?.removeEventListener('pageshow', onVis);
+    });
   }
 
   setHidden(hidden: boolean): Promise<void> {
@@ -145,6 +229,7 @@ export class AudioEngine {
     this.timer = null;
     this.thrusters.stopAll();
     this.cleanups.splice(0).forEach((c) => c());
+    this.driver.dispose?.();
   }
 
   /** Scheduler tick: render music up to the lookahead horizon. */
@@ -196,6 +281,8 @@ export class AudioEngine {
   private persist(): void {
     saveSettings(this.storage, this._settings);
     this.applyGains();
+    // muted: give the media session back (the player's own music keeps playing); unmute (a gesture) claims it again
+    this.driver.setPlayback?.(!this._settings.muted);
     this.emitChange();
   }
 

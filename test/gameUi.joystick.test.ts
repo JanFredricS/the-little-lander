@@ -53,7 +53,7 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  async function make(o: Partial<GameUiOptions> & { touchPref?: 'auto' | 'on' | 'off'; steering?: SteeringScheme }) {
+  async function make(o: Partial<GameUiOptions> & { touchPref?: 'auto' | 'on' | 'off'; steering?: SteeringScheme | null }) {
     const { GameUi } = await import('../src/ui/gameUi');
     const virtual = new VirtualControlsSource();
     const m = new InputMapper();
@@ -108,8 +108,51 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
     ui.destroy();
   });
 
+  it('round 9: never-chosen steering = the stick on hangarRun, the classic CSM buttons on Descent; the pause menu shows what is active; an explicit choice applies on Descent too', async () => {
+    const steer: (SteeringScheme | null)[] = [];
+    const { ui } = await make({ touchPref: 'on', steering: null, onSteeringChange: (s) => steer.push(s) });
+    playHangarRun(ui as never);
+    expect(ui.touchLayer.getLayout()!.stick).not.toBeNull();
+    ui.enter({ id: 'playing', levelId: 'descent' } as never);
+    ui.levelStarted(getLevel('descent')! as never);
+    const l = ui.touchLayer.getLayout()!;
+    expect(l.stick).toBeNull();
+    expect(l.buttons.map((b) => b.control).sort()).toEqual(['pause', 'restart', 'rotateCCW', 'rotateCW', 'thrust']);
+    ui.enter({ id: 'paused', levelId: 'descent' } as never);
+    const label = () => ui.currentModel!.items.find((i) => i.id === 'steering')!.label;
+    expect(label()).toBe('STEERING: AUTO (ENGINES)');
+    const activate = () => (ui as unknown as { activate(id: string): void }).activate('steering');
+    /** The in-flight layout (the touch layer relayouts when play resumes), then back to the pause menu. */
+    const flying = () => {
+      ui.enter({ id: 'playing', levelId: 'descent' } as never);
+      const l = ui.touchLayer.getLayout()!;
+      ui.enter({ id: 'paused', levelId: 'descent' } as never);
+      return { flight: l.buttons.map((b) => b.control).filter((c) => c !== 'pause' && c !== 'restart').length, stick: l.stick !== null };
+    };
+    activate(); // AUTO -> ENGINES (explicit; same scheme here)
+    expect(steer).toEqual(['engines']);
+    expect(label()).toBe('STEERING: ENGINES');
+    activate(); // -> DIRECT
+    expect(steer).toEqual(['engines', 'direct']);
+    expect(label()).toBe('STEERING: DIRECT');
+    expect(flying()).toEqual({ flight: 0, stick: false });
+    activate(); // -> JOYSTICK
+    expect(flying()).toEqual({ flight: 0, stick: true });
+    activate(); // -> AUTO: stored as null, Descent's per-level default (the CSM buttons) again
+    expect(steer).toEqual(['engines', 'direct', 'joystick', null]);
+    expect(label()).toBe('STEERING: AUTO (ENGINES)');
+    expect(flying()).toEqual({ flight: 3, stick: false });
+    ui.destroy();
+    // explicit JOYSTICK: the stick on Descent too
+    const j = await make({ touchPref: 'on', steering: 'joystick' });
+    j.ui.enter({ id: 'playing', levelId: 'descent' } as never);
+    j.ui.levelStarted(getLevel('descent')! as never);
+    expect(j.ui.touchLayer.getLayout()!.stick).not.toBeNull();
+    j.ui.destroy();
+  });
+
   it('pause menu STEERING cycles to JOYSTICK (persisted) and the stick appears; MINIMAP toggles + persists; leaving frees the minimap texture', async () => {
-    const steer: SteeringScheme[] = [];
+    const steer: (SteeringScheme | null)[] = [];
     const mini: boolean[] = [];
     const { ui } = await make({ touchPref: 'off', steering: 'direct', onSteeringChange: (s) => steer.push(s), onShowMinimapChange: (on) => mini.push(on) });
     playHangarRun(ui as never);

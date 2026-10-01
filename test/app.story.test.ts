@@ -28,7 +28,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
-import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState } from '../src/contracts';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState, SteeringScheme } from '../src/contracts';
 import type { LevelSession } from '../src/game/session';
 import type { GameUiOptions } from '../src/ui/gameUi';
 import type { ScreenContext } from '../src/ui/screens';
@@ -64,7 +64,7 @@ const h = vi.hoisted(() => ({
   /** Optional LevelSpec patch (the chained-cutscene test adds a cutsceneBefore). */
   patch: null as null | ((spec: LevelSpec) => LevelSpec),
   /** Saved Settings.steering for the next playStory (the DIRECT-persisted test). */
-  steering: 'engines' as 'engines' | 'direct' | 'joystick',
+  steering: null as null | 'engines' | 'direct' | 'joystick',
   /** KeyboardSource / PointerSource.setDirectSteering calls (the App's per-scheme input gates). */
   kbDirect: [] as boolean[],
   ptrDirect: [] as boolean[],
@@ -131,11 +131,11 @@ vi.mock('../src/ui/gameUi', async () => {
     GameUi: class {
       holdSimulation = false;
       private state: ScreenState = { id: 'boot' };
-      private steering: NonNullable<GameUiOptions['steering']>;
+      private steering: SteeringScheme | null;
       private showMinimap: boolean;
       constructor(private readonly o: GameUiOptions) {
         h.click = (itemId) => this.activate(itemId);
-        this.steering = o.steering ?? 'engines';
+        this.steering = o.steering ?? null;
         this.showMinimap = o.showMinimap ?? true;
       }
       /** Same context GameUi.ctx() builds (lastHull only affects results text). */
@@ -291,7 +291,7 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
   h.kbDirect = [];
   h.ptrDirect = [];
   const save = new SaveStore(memoryStorage());
-  if (h.steering !== 'engines') save.setSettings({ steering: h.steering }); // persisted by an earlier session
+  if (h.steering !== null) save.setSettings({ steering: h.steering }); // persisted by an earlier session (null = never chosen)
   const r: Run = { app: null!, save, events: [], screens: [], seen: [], fuel: {}, crashStep: -1, resultsStep: -1 };
   r.app = new App({} as HTMLElement, {
     art: {} as ArtApi, // no preload: cutscenes start synchronously
@@ -358,7 +358,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     errors.length = 0;
     h.patch = null;
     h.pilotOverride = null;
-    h.steering = 'engines';
+    h.steering = null;
     h.pilotEngineFrames = true;
     h.terrainResets = 0;
     vi.spyOn(console, 'error').mockImplementation((...a) => void errors.push(a));
@@ -382,6 +382,11 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
       'keeper', 'keeperFalls', 'madDash', 'finale',
     ]);
     expect(h.levelsStarted).toEqual([...STORY_LEVELS]);
+    // round 9: a never-chosen steering setting stays null and resolves per level: JOYSTICK (DIRECT keys, canvas off),
+    // ENGINES on Descent only (classic keys + buttons), back to JOYSTICK on the next map
+    expect(save.state.settings.steering).toBeNull();
+    expect(h.kbDirect).toEqual([true, false, true]);
+    expect(h.ptrDirect).toEqual([false, false, false]);
     // every level's textures were pre-uploaded at load (LevelView enumeration -> PixiHost.uploadTexture)
     expect(h.uploaded).toEqual(STORY_LEVELS.map((level) => ({ level })));
     // App-owned side effects: save progress, cutscenes marked seen, cutsceneDone events
@@ -530,7 +535,10 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(r.save.state.settings.showMinimap).toBe(false);
     h.click!('minimap');
     expect(r.save.state.settings.showMinimap).toBe(true);
-    h.click!('steering'); // joystick -> engines
+    h.click!('steering'); // joystick -> AUTO: stored as null; hangarRun's default is JOYSTICK, so the gates stay
+    expect(r.save.state.settings.steering).toBeNull();
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([true, false]);
+    h.click!('steering'); // -> engines
     expect(r.save.state.settings.steering).toBe('engines');
     expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
     h.click!('steering'); // -> direct
@@ -548,6 +556,58 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
     expect(frames.length).toBeGreaterThan(30);
     expect(frames.some(fires)).toBe(false);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
+  it('round 9 audit: STEERING cycled on Descent (AUTO -> ENGINES) is an explicit choice: the next map keeps ENGINES', { timeout: 300_000 }, async () => {
+    // the reference pilots, plus one PAUSE press 30 steps into Descent
+    let pausedOnce = false;
+    h.pilotOverride = (id) => {
+      const p = pilotFor(id);
+      if (id !== 'descent') return p;
+      return (s, t) => {
+        const f = p(s, t);
+        if (pausedOnce || t !== 30) return f;
+        pausedOnce = true;
+        return { ...f, pause: true };
+      };
+    };
+    const r = await playStory((run) => run.app.state.id === 'paused');
+    expect(r.app.state).toMatchObject({ id: 'paused', levelId: 'descent' });
+    expect(r.save.state.settings.steering).toBeNull();
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]); // AUTO on Descent = ENGINES
+    h.click!('steering'); // AUTO -> ENGINES: now an explicit choice
+    expect(r.save.state.settings.steering).toBe('engines');
+    const gates = h.kbDirect.length;
+    h.click!('resume');
+    // fly Descent out and on to the next map
+    const atNext = () => r.app.state.id === 'playing' && r.app.state.levelId === 'floatingIsles' && h.session?.spec.id === 'floatingIsles';
+    for (let guard = 0; guard < 5000 && !atNext(); guard++) {
+      await flush();
+      if (h.pending) {
+        const c = h.pending;
+        h.pending = null;
+        c.onDone(false);
+        continue;
+      }
+      const s = r.app.state;
+      if (s.id === 'playing') {
+        if (!h.session || h.loop!.paused) continue;
+        for (let i = 0; i < 600 && r.app.state.id === 'playing' && !h.loop!.paused; i++) {
+          h.loop!.step();
+          h.steps++;
+        }
+      } else if (s.id === 'results') {
+        expect(s.outcome, `${s.levelId}: ${JSON.stringify(s.outcome)}`).toMatchObject({ kind: 'complete' });
+        h.click!('next');
+      }
+    }
+    expect(atNext()).toBe(true);
+    // the explicit ENGINES carried over: no rewire to the JOYSTICK default on floatingIsles
+    expect(h.kbDirect.length).toBe(gates);
+    expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
+    expect(r.save.state.settings.steering).toBe('engines');
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
   });

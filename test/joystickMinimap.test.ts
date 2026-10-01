@@ -8,7 +8,8 @@ import { describe, expect, it } from 'vitest';
 import type { InputFrame, InputSampleContext, LevelSpec, Rect } from '../src/contracts';
 import { DirectSteering } from '../src/shell/directSteering';
 import { InputMapper, VirtualControlsSource } from '../src/shell/input';
-import { DEFAULT_SETTINGS, parseSave } from '../src/story/save';
+import { DEFAULT_SETTINGS, defaultSave, parseSave } from '../src/story/save';
+import { DEFAULT_STEERING, resolveSteering, SAVE_VERSION, STEERING_SCHEMES } from '../src/contracts';
 import { LEVELS } from '../src/levels/registry';
 import { helpCard } from '../src/ui/controlsHelp';
 import { itemAction, nextSteering, screenModel, type ScreenContext } from '../src/ui/screens';
@@ -187,17 +188,123 @@ describe('JOYSTICK: setting', () => {
   const c = (p: Partial<ScreenContext> = {}): ScreenContext => ({ levels: {}, save: null, showDebug: false, touchPref: 'auto', lastHull: null, ...p });
   const label = (ctx: ScreenContext, id: string) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx).items.find((i) => i.id === id)!.label;
 
-  it('STEERING cycles ENGINES -> DIRECT -> JOYSTICK -> ENGINES', () => {
+  it('STEERING cycles ENGINES -> DIRECT -> JOYSTICK -> AUTO (null) -> ENGINES', () => {
     expect(nextSteering('engines')).toBe('direct');
     expect(nextSteering('direct')).toBe('joystick');
-    expect(nextSteering('joystick')).toBe('engines');
+    expect(nextSteering('joystick')).toBeNull();
+    expect(nextSteering(null)).toBe('engines');
     expect(label(c({ steering: 'joystick' }), 'steering')).toBe('STEERING: JOYSTICK');
   });
 
-  it('Settings.steering joystick round-trips through the save; unknown values read engines', () => {
-    const saved = JSON.parse(JSON.stringify({ settings: { ...DEFAULT_SETTINGS, steering: 'joystick' } }));
+  it('round 9 audit: AUTO shows the scheme it resolves to on the paused level; explicit values are shown as-is everywhere', () => {
+    const at = (steering: ScreenContext['steering'], levelId: 'descent' | 'hangarRun' | 'testpad') =>
+      screenModel({ id: 'paused', levelId }, c({ steering })).items.find((i) => i.id === 'steering')!.label;
+    expect(at(null, 'descent')).toBe('STEERING: AUTO (ENGINES)');
+    expect(at(null, 'hangarRun')).toBe('STEERING: AUTO (JOYSTICK)');
+    expect(at(undefined, 'testpad')).toBe('STEERING: AUTO (JOYSTICK)');
+    for (const lv of ['descent', 'hangarRun'] as const) {
+      expect(at('engines', lv)).toBe('STEERING: ENGINES');
+      expect(at('direct', lv)).toBe('STEERING: DIRECT');
+      expect(at('joystick', lv)).toBe('STEERING: JOYSTICK');
+    }
+    // a full lap returns to AUTO and visits every explicit scheme once
+    const seen: (string | null)[] = [];
+    let s: ReturnType<typeof nextSteering> = null;
+    for (let i = 0; i < 4; i++) seen.push((s = nextSteering(s)));
+    expect(seen).toEqual(['engines', 'direct', 'joystick', null]);
+  });
+
+  it('Settings.steering joystick round-trips through the save; unknown values read as never chosen (null)', () => {
+    const saved = JSON.parse(JSON.stringify({ version: SAVE_VERSION, settings: { ...DEFAULT_SETTINGS, steering: 'joystick' } }));
     expect(parseSave(saved)!.settings.steering).toBe('joystick');
-    expect(parseSave({ settings: { steering: 'stick' } })!.settings.steering).toBe('engines');
+    expect(parseSave({ version: SAVE_VERSION, settings: { steering: 'stick' } })!.settings.steering).toBeNull();
+  });
+
+  it('round 9: JOYSTICK is the default - new saves store null (never chosen), resolved to joystick at use', () => {
+    expect(DEFAULT_STEERING).toBe('joystick');
+    expect(DEFAULT_SETTINGS.steering).toBeNull();
+    expect(defaultSave().version).toBe(2);
+    expect(resolveSteering(null)).toBe('joystick');
+    expect(resolveSteering(undefined)).toBe('joystick');
+    for (const s of STEERING_SCHEMES) expect(resolveSteering(s)).toBe(s);
+    // a fresh save survives the JSON round trip as null
+    expect(parseSave(JSON.parse(JSON.stringify(defaultSave())))!.settings.steering).toBeNull();
+    // the pause menu shows AUTO with the resolved scheme; the cycle leaves AUTO for ENGINES
+    const c = (p: Partial<ScreenContext> = {}): ScreenContext => ({ levels: {}, save: null, showDebug: false, touchPref: 'auto', lastHull: null, ...p });
+    expect(screenModel({ id: 'paused', levelId: 'testpad' }, c()).items.find((i) => i.id === 'steering')!.label).toBe('STEERING: AUTO (JOYSTICK)');
+    expect(nextSteering(null)).toBe('engines');
+  });
+
+  it('round 9: the never-chosen default is per level - ENGINES on Descent, JOYSTICK elsewhere; an explicit choice applies everywhere', () => {
+    expect(resolveSteering(null, 'descent')).toBe('engines');
+    for (const id of ['hangarRun', 'floatingIsles', 'throat', 'vaults', 'hollow', 'keeper', 'madDash', 'testpad']) expect(resolveSteering(null, id), id).toBe('joystick');
+    for (const s of STEERING_SCHEMES) {
+      expect(resolveSteering(s, 'descent')).toBe(s);
+      expect(resolveSteering(s, 'hangarRun')).toBe(s);
+    }
+  });
+
+  it('round 9 migration: a v1 save\'s "engines" was the old default -> null (joystick); a v1 direct / joystick was a choice and is kept; a v2 explicit engines is kept', () => {
+    const v1 = (steering: unknown) => parseSave({ version: 1, settings: { steering } })!.settings.steering;
+    expect(v1('engines')).toBeNull();
+    expect(v1('direct')).toBe('direct');
+    expect(v1('joystick')).toBe('joystick');
+    expect(v1(undefined)).toBeNull();
+    expect(parseSave({ settings: { steering: 'engines' } })!.settings.steering).toBeNull(); // no version at all = legacy
+    // the player cycles to ENGINES after the update: v2 keeps it across reloads
+    const chosen = { ...defaultSave(), settings: { ...DEFAULT_SETTINGS, steering: 'engines' as const } };
+    const back = parseSave(JSON.parse(JSON.stringify(chosen)))!;
+    expect(back.settings.steering).toBe('engines');
+    expect(back.version).toBe(2);
+    // and the re-saved v1 data is written as v2 (the migration happens once)
+    const migrated = parseSave(JSON.parse(JSON.stringify(parseSave({ version: 1, settings: { steering: 'engines' } }))))!;
+    expect(migrated.settings.steering).toBeNull();
+  });
+
+  it('round 9 audit: legacy iff the version is not a finite number >= 2 (string / NaN / Infinity / missing)', () => {
+    const steer = (version: unknown) => parseSave({ version, settings: { steering: 'engines' } })!.settings.steering;
+    expect(steer(2)).toBe('engines');
+    expect(steer(3)).toBe('engines');
+    expect(steer(1)).toBeNull();
+    expect(steer('2')).toBeNull();
+    expect(steer(NaN)).toBeNull();
+    expect(steer(Infinity)).toBeNull();
+    expect(steer(-Infinity)).toBeNull();
+    expect(steer(undefined)).toBeNull();
+    expect(steer(null)).toBeNull();
+  });
+
+  it('round 9 audit: a full v1 save migrates with progress and every other setting intact; only the old default steering changes', () => {
+    const v1 = {
+      version: 1,
+      unlocked: ['hangarRun', 'descent', 'floatingIsles'],
+      best: { hangarRun: { timeSec: 41.5, score: 1200, orbs: 3 }, descent: { timeSec: 88.25, score: 2400, orbs: 5 } },
+      seenCutscenes: ['briefing', 'meetIo', 'descentAwe'],
+      settings: {
+        musicVolume: 0.3,
+        sfxVolume: 0.6,
+        reducedMotion: true,
+        touchControls: 'on',
+        debugOverlay: true,
+        swapEngineButtons: false,
+        showFps: true,
+        lowRes: true,
+        steering: 'engines',
+        showMinimap: false,
+      },
+    };
+    const back = parseSave(JSON.parse(JSON.stringify(v1)))!;
+    expect(back.version).toBe(SAVE_VERSION);
+    expect(back.unlocked).toEqual(v1.unlocked);
+    expect(back.best).toEqual(v1.best);
+    expect(back.seenCutscenes).toEqual(v1.seenCutscenes);
+    const { steering, ...rest } = back.settings;
+    expect(steering).toBeNull();
+    const { steering: _old, ...v1rest } = v1.settings;
+    expect(rest).toEqual({ ...v1rest });
+    // a v1 player who chose DIRECT keeps it alongside everything else
+    const d = parseSave({ ...v1, settings: { ...v1.settings, steering: 'direct' } })!;
+    expect(d.settings).toEqual({ ...v1.settings, steering: 'direct' });
   });
 
   it('help card: JOYSTICK touch lines; keyboard keeps the DIRECT keys plus the mouse stick', () => {

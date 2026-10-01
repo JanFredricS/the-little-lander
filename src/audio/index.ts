@@ -20,7 +20,7 @@ export function getAudio(): AudioEngine {
   if (!engine) {
     engine = new AudioEngine(new WebAudioDriver(), { storage: defaultStorage() });
     if (typeof window !== 'undefined') engine.bindGestures(window);
-    if (typeof document !== 'undefined') engine.bindVisibility(document);
+    if (typeof document !== 'undefined') engine.bindVisibility(document, typeof window !== 'undefined' ? window : undefined);
   }
   return engine;
 }

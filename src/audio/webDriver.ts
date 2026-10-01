@@ -5,6 +5,24 @@
  *
  * Every voice is built from short-lived nodes that stop themselves; nothing
  * here decides WHAT to play.
+ *
+ * iOS Safari (round 9: "audio never worked on iPhone, works on Mac"):
+ *  - gestureUnlock() runs synchronously inside the gesture handler: it creates
+ *    the context, calls resume() and starts a 1-sample silent buffer in the
+ *    gesture's own call stack (a resume() from a later microtask / promise
+ *    chain is not a gesture on iOS and stays pending).
+ *  - the hardware ring/silent switch mutes Web Audio (the "ambient" audio
+ *    session). navigator.audioSession.type = 'playback' fixes it on Safari 17+;
+ *    for older iOS a looping silent <audio playsinline> element is started from
+ *    the same gesture, which switches the page to the media "playback" session
+ *    so Web Audio ignores the switch. iOS only; paused while the page is hidden.
+ *  - the context can drop to 'suspended' / 'interrupted' (calls, Siri, other
+ *    apps, backgrounding): onStateChange tells the engine, and the next gesture
+ *    unlocks it again (needsGesture).
+ *  - while the game is MUTED (setPlayback(false)) it gives the playback session
+ *    back: audioSession 'ambient', keep-alive paused, so the player's own music /
+ *    podcasts keep playing and the game leaves Now Playing.
+ * There is no decodeAudioData / OfflineAudioContext path: every sound is synthesised.
  */
 
 import type { AudioDriver, BusId, GroupHandle, LoopHandle, LoopSpec, NoiseSpec, ToneSpec } from './driver';
@@ -29,6 +47,43 @@ class WebGroup implements GroupHandle {
 
 type Ctor = typeof AudioContext;
 
+/** iPhone / iPod / iPad (iPadOS reports a Mac with touch points). */
+export function isIOS(nav: { userAgent?: string; platform?: string; maxTouchPoints?: number } | undefined = globalThis.navigator): boolean {
+  if (!nav) return false;
+  const ua = nav.userAgent ?? '';
+  return /iPad|iPhone|iPod/.test(ua) || (nav.platform === 'MacIntel' && (nav.maxTouchPoints ?? 0) > 1);
+}
+
+/** A tiny silent 8-bit mono WAV (0.25 s at 8 kHz) as a data URI: the iOS keep-alive loop. */
+export function silentWavUri(): string {
+  const n = 2000;
+  const b = new Uint8Array(44 + n);
+  const dv = new DataView(b.buffer);
+  const str = (o: number, s: string) => [...s].forEach((c, i) => (b[o + i] = c.charCodeAt(0)));
+  str(0, 'RIFF');
+  dv.setUint32(4, 36 + n, true);
+  str(8, 'WAVE');
+  str(12, 'fmt ');
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true); // PCM
+  dv.setUint16(22, 1, true); // mono
+  dv.setUint32(24, 8000, true);
+  dv.setUint32(28, 8000, true);
+  dv.setUint16(32, 1, true);
+  dv.setUint16(34, 8, true);
+  str(36, 'data');
+  dv.setUint32(40, n, true);
+  b.fill(128, 44); // 8-bit PCM silence
+  let bin = '';
+  for (const x of b) bin += String.fromCharCode(x);
+  return `data:audio/wav;base64,${btoa(bin)}`;
+}
+
+export interface WebAudioDriverOptions {
+  /** The iOS silent-switch keep-alive <audio> element: 'auto' (default) = iOS only. */
+  keepAlive?: 'auto' | 'on' | 'off';
+}
+
 function audioContextCtor(): Ctor | null {
   const w = globalThis as unknown as { AudioContext?: Ctor; webkitAudioContext?: Ctor };
   return w.AudioContext ?? w.webkitAudioContext ?? null;
@@ -38,6 +93,118 @@ const MIN_GAIN = 0.0001;
 
 export class WebAudioDriver implements AudioDriver {
   private ctx: AudioContext | null = null;
+  private keepAliveEl: HTMLAudioElement | null = null;
+  private readonly wantKeepAlive: boolean;
+  /** The page is hidden (suspend()ed): the keep-alive stays paused until resume(). */
+  private parked = false;
+  /** setPlayback(): claim the media playback session (false while muted). */
+  private playback = true;
+  private readonly stateFns = new Set<() => void>();
+
+  constructor(opts: WebAudioDriverOptions = {}) {
+    const k = opts.keepAlive ?? 'auto';
+    this.wantKeepAlive = k === 'on' || (k === 'auto' && isIOS());
+  }
+
+  get needsGesture(): boolean {
+    if (!this.ctx || this.ctx.state !== 'running') return true;
+    return this.wantKeepAlive && this.playback && (!this.keepAliveEl || this.keepAliveEl.paused);
+  }
+
+  /** Short (the FPS corner): the session only when it is not the one asked for, clipped. */
+  get diag(): string {
+    const ka = !this.wantKeepAlive ? '' : !this.keepAliveEl ? ' ka:none' : this.keepAliveEl.paused ? ' ka:paused' : ' ka:on';
+    const sess = (globalThis.navigator as { audioSession?: { type: string } } | undefined)?.audioSession?.type;
+    const odd = sess && this.ctx && sess !== this.sessionType ? ` sess:${sess.slice(0, 8)}` : '';
+    return `ctx:${this.ctx ? this.ctx.state : 'none'}${ka}${odd}`;
+  }
+
+  private get sessionType(): string {
+    return this.playback ? 'playback' : 'ambient';
+  }
+
+  /** iOS Safari 16.4+: 'playback' plays through the silent switch; 'ambient' mixes with other apps' audio. */
+  private applySession(): void {
+    try {
+      const sess = (globalThis.navigator as { audioSession?: { type: string } } | undefined)?.audioSession;
+      if (sess && sess.type !== this.sessionType) sess.type = this.sessionType;
+    } catch {
+      /* older browsers: no audioSession */
+    }
+  }
+
+  setPlayback(on: boolean): void {
+    if (on === this.playback) return;
+    this.playback = on;
+    if (!this.ctx) return; // build() applies it
+    this.applySession();
+    if (on) this.playKeepAlive(); // from the unmute gesture
+    else this.keepAliveEl?.pause();
+  }
+
+  dispose(): void {
+    const el = this.keepAliveEl;
+    this.keepAliveEl = null;
+    this.stateFns.clear();
+    if (!el) return;
+    try {
+      el.pause();
+      el.removeAttribute('src');
+      el.load();
+    } catch {
+      /* ignore */
+    }
+  }
+
+  onStateChange(fn: () => void): () => void {
+    this.stateFns.add(fn);
+    return () => this.stateFns.delete(fn);
+  }
+
+  gestureUnlock(): void {
+    if (!this.ctx) this.build();
+    const ctx = this.ctx;
+    if (ctx && ctx.state !== 'running') {
+      // resume() + a started source INSIDE the gesture: what iOS needs to let the context run
+      ctx.resume().catch(() => {});
+      try {
+        const src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+        src.connect(ctx.destination);
+        src.start(0);
+      } catch {
+        /* best effort */
+      }
+    }
+    this.parked = false;
+    this.playKeepAlive();
+  }
+
+  private playKeepAlive(): void {
+    if (!this.wantKeepAlive || !this.playback || this.parked || typeof document === 'undefined') return;
+    let el = this.keepAliveEl;
+    if (!el) {
+      try {
+        el = document.createElement('audio');
+        el.setAttribute('playsinline', '');
+        el.setAttribute('webkit-playsinline', '');
+        el.setAttribute('x-webkit-airplay', 'deny');
+        el.preload = 'auto';
+        el.loop = true;
+        el.src = silentWavUri();
+        this.keepAliveEl = el;
+      } catch {
+        return;
+      }
+    }
+    if (!el.paused) return;
+    try {
+      const p = el.play();
+      if (p) p.catch(() => {}); // not in a gesture: the next one retries (needsGesture)
+    } catch {
+      /* ignore */
+    }
+  }
   private master!: GainNode;
   private buses!: Record<BusId, GainNode>;
   private noiseBuf!: AudioBuffer;
@@ -56,26 +223,31 @@ export class WebAudioDriver implements AudioDriver {
     if (!this.ctx) this.build();
     // Always call resume(): a suspend() still in flight reports 'running', and
     // AudioContext queues resume after it, so skipping here would leave it suspended.
+    this.parked = false;
+    this.playKeepAlive(); // back from hidden: may be refused outside a gesture (the next gesture retries)
     if (this.ctx) await this.ctx.resume();
   }
 
   async suspend(): Promise<void> {
-    if (this.ctx && this.ctx.state === 'running') await this.ctx.suspend();
+    this.parked = true;
+    this.keepAliveEl?.pause(); // hidden page: give the media session back
+    // always: a gesture's resume() may still be landing (state not yet 'running'); suspend() is ordered after it
+    if (this.ctx) await this.ctx.suspend();
   }
 
   private build(): void {
     const C = audioContextCtor();
     if (!C) return;
-    // iOS Safari 16.4+: without this, WebAudio is muted by the ring/silent
-    // hardware switch. 'playback' opts the page into media-style audio.
-    try {
-      const sess = (navigator as { audioSession?: { type: string } }).audioSession;
-      if (sess) sess.type = 'playback';
-    } catch {
-      /* older browsers: no audioSession */
-    }
+    // iOS Safari 16.4+: without 'playback', WebAudio is muted by the ring/silent
+    // hardware switch ('ambient' while the game is muted: see setPlayback).
+    this.applySession();
     const ctx = new C({ latencyHint: 'interactive' });
     this.ctx = ctx;
+    try {
+      ctx.addEventListener('statechange', () => this.stateFns.forEach((f) => f()));
+    } catch {
+      /* old webkitAudioContext: no statechange (the gesture path still retries) */
+    }
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -12;
     comp.ratio.value = 4;

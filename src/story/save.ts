@@ -35,7 +35,7 @@ export const DEFAULT_SETTINGS: Settings = {
   swapEngineButtons: true,
   showFps: false,
   lowRes: null,
-  steering: 'engines',
+  steering: null,
   showMinimap: true,
 };
 
@@ -63,7 +63,8 @@ function parseBest(v: unknown): LevelBest | null {
   return { timeSec, orbs: Math.floor(num(v.orbs, 0, 1e6, 0)), score: Math.floor(num(v.score, 0, Number.MAX_SAFE_INTEGER, 0)) };
 }
 
-function parseSettings(v: unknown): Settings {
+/** `legacy` = a pre-v2 save: its 'engines' was the old default, not a choice (see SAVE_VERSION). */
+function parseSettings(v: unknown, legacy = false): Settings {
   const d = DEFAULT_SETTINGS;
   if (!isObj(v)) return { ...d };
   const tc = v.touchControls;
@@ -76,7 +77,7 @@ function parseSettings(v: unknown): Settings {
     swapEngineButtons: typeof v.swapEngineButtons === 'boolean' ? v.swapEngineButtons : d.swapEngineButtons,
     showFps: typeof v.showFps === 'boolean' ? v.showFps : d.showFps,
     lowRes: typeof v.lowRes === 'boolean' ? v.lowRes : d.lowRes,
-    steering: v.steering === 'direct' || v.steering === 'engines' || v.steering === 'joystick' ? v.steering : d.steering,
+    steering: v.steering === 'direct' || v.steering === 'joystick' || (v.steering === 'engines' && !legacy) ? v.steering : d.steering,
     showMinimap: typeof v.showMinimap === 'boolean' ? v.showMinimap : d.showMinimap,
   };
 }
@@ -106,7 +107,7 @@ export function parseSave(raw: unknown): SaveState | null {
     unlocked,
     best,
     seenCutscenes: idList(raw.seenCutscenes, CUTSCENE_IDS),
-    settings: parseSettings(raw.settings),
+    settings: parseSettings(raw.settings, !(typeof raw.version === 'number' && Number.isFinite(raw.version) && raw.version >= 2)),
   };
 }
 

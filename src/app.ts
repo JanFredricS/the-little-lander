@@ -8,7 +8,7 @@
  * src/story/flow.ts so the default cutscene hooks and chains apply.
  */
 
-import { FIXED_DT, VESSEL_MODES } from './contracts';
+import { DEFAULT_STEERING, FIXED_DT, resolveSteering, VESSEL_MODES } from './contracts';
 import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, LevelId, ScreenAction, ScreenState, SteeringScheme, StillId } from './contracts';
 import { createArt, hasPreload } from './art/art';
 import { STILL_IDS } from './art/stills';
@@ -42,7 +42,7 @@ export interface AppOptions {
    * UI options (debug levels in level select, touch preference override).
    * Save access and touch-preference persistence default to `save`.
    */
-  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'showMinimap' | 'onShowMinimapChange' | 'save'>;
+  ui?: Pick<GameUiOptions, 'showDebugLevels' | 'touchPref' | 'onTouchPrefChange' | 'swapEngineButtons' | 'onSwapEngineButtonsChange' | 'showFps' | 'onShowFpsChange' | 'lowRes' | 'onLowResChange' | 'steering' | 'onSteeringChange' | 'showMinimap' | 'onShowMinimapChange' | 'audioDiag' | 'save'>;
 }
 
 /**
@@ -102,7 +102,12 @@ export class App {
   private readonly unbind: (() => void)[] = [];
   /** DIRECT steering layer (Settings.steering = 'direct' / 'joystick'): steer command -> engine pulses, once per fixed step. */
   private readonly direct = new DirectSteering();
-  private steering: SteeringScheme = 'engines';
+  /** The scheme in use on the current level (resolved from steeringSetting; see resolveSteering). */
+  private steering: SteeringScheme = DEFAULT_STEERING;
+  /** Settings.steering: the player's explicit choice, or null = never chosen (per-level default). */
+  private steeringSetting: SteeringScheme | null = null;
+  /** Switch the input layer to a scheme (set in start()). */
+  private applySteering: (s: SteeringScheme) => void = () => {};
   /** Reused terrain diagnostics record (FPS counter terrain line). */
   /** A new level view has not rendered yet (its load frame is dropped from the terrain readout). */
   private terrainDiagFresh = false;
@@ -132,7 +137,9 @@ export class App {
       Object.entries(this.options.ui ?? {}).filter(([, v]) => v !== undefined),
     ) as NonNullable<AppOptions['ui']>;
     const swapEngines = uiOpts.swapEngineButtons ?? this.save.state.settings.swapEngineButtons;
-    this.steering = uiOpts.steering ?? this.save.state.settings.steering;
+    // null = never chosen: resolved per level (JOYSTICK; ENGINES on Descent) - see resolveSteering
+    this.steeringSetting = uiOpts.steering !== undefined ? uiOpts.steering : this.save.state.settings.steering;
+    this.steering = resolveSteering(this.steeringSetting, null);
     // Low-res render mode. Until the player toggles it (saved lowRes stays null) it follows the device:
     // ON for touch, OFF for desktop, re-detected every start, and switched ON by the first real touch.
     // Resolved BEFORE the Pixi host exists so the first backbuffer is already the low-res one.
@@ -148,14 +155,14 @@ export class App {
     // S9 swapped engines apply to the keyboard too (not only the touch buttons): same initial value as the UI's
     keyboard.setSwapEngines(swapEngines);
     const pointer = new PointerSource(this.pixi.canvas);
-    const setSteering = (s: SteeringScheme) => {
+    this.applySteering = (s: SteeringScheme) => {
       this.steering = s;
       // JOYSTICK: the DIRECT keyboard; the canvas never steers (the virtual stick does, via this.virtual)
       keyboard.setDirectSteering(s !== 'engines');
       pointer.setDirectSteering(s === 'direct');
       this.direct.reset();
     };
-    setSteering(this.steering);
+    this.applySteering(this.steering);
     this.input.add(keyboard);
     this.input.add(this.virtual);
     this.input.add(pointer);
@@ -186,10 +193,12 @@ export class App {
       },
       onShowFpsChange: (on) => (onShowFpsChange ? onShowFpsChange(on) : this.save.setSettings({ showFps: on })),
       onShowMinimapChange: (on) => (onShowMinimapChange ? onShowMinimapChange(on) : this.save.setSettings({ showMinimap: on })),
-      steering: this.steering,
+      steering: this.steeringSetting,
       // the input layer switches at once (toggled while paused; resume clears input); a caller's callback replaces persistence only
       onSteeringChange: (st) => {
-        setSteering(st);
+        // an explicit choice applies on every level from now on; null (AUTO) = the per-level default again
+        this.steeringSetting = st;
+        this.applySteering(resolveSteering(st, 'levelId' in this.state ? this.state.levelId : null));
         if (onSteeringChange) onSteeringChange(st);
         else this.save.setSettings({ steering: st });
       },
@@ -287,6 +296,9 @@ export class App {
       return;
     }
     this.session = session;
+    // never-chosen steering resolves per level (ENGINES on Descent, JOYSTICK elsewhere)
+    const scheme = resolveSteering(this.steeringSetting, levelId);
+    if (scheme !== this.steering) this.applySteering(scheme);
     this.direct.setLanderTuning(session.tuning.lander); // DIRECT keyboard couple balanced for this level's lander
     session.on((e) => this.ui.onEvent(e));
     if (this.options.onEvent) session.on(this.timedOnEvent);
