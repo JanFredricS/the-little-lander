@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FpsMeter, fpsText } from '../src/ui/fpsMeter';
+import { CAUSE_EXT, FpsMeter, fpsText, FRAME_PHASES, PHASE_AUDIO, PHASE_PAINT, PHASE_STEP } from '../src/ui/fpsMeter';
 
 describe('FPS meter', () => {
   it('publishes averaged fps / frame ms / cpu ms once per window', () => {
@@ -48,6 +48,47 @@ describe('FPS meter', () => {
     m.reset();
     for (let i = 0; i <= 31; i++) m.frame(t + i * (1000 / 60), 1);
     expect(m.reading!.hitches).toBe(0);
+  });
+
+  it('tags a hitch with the previous frame slowest phase, or EXT when no phase explains it', () => {
+    const m = new FpsMeter(500);
+    const ph = new Float64Array(FRAME_PHASES.length);
+    let t = 0;
+    const steady = (n: number): void => {
+      ph.fill(0);
+      ph[PHASE_STEP] = 1;
+      for (let i = 0; i < n; i++) m.frame((t += 1000 / 60), 2, ph);
+    };
+    m.frame(t, 1, ph);
+    steady(40);
+    expect(m.reading!.lastCause).toBe(-1);
+    expect(fpsText(m.reading)).toBe('60 FPS 16.7MS CPU 2.0 MAX 17 HITCH 0');
+    // a frame whose terrain paint took 60 ms -> the NEXT interval is the hitch, blamed on PAINT
+    ph[PHASE_PAINT] = 60;
+    ph[PHASE_AUDIO] = 4;
+    m.frame((t += 1000 / 60), 66, ph);
+    ph.fill(0);
+    m.frame((t += 70), 1, ph); // the late rAF
+    steady(40);
+    expect(m.reading!.hitches).toBe(1);
+    expect(m.reading!.lastCause).toBe(PHASE_PAINT);
+    expect(fpsText(m.reading)).toMatch(/HITCH 1 LAST PAINT 60$/);
+    // a 120 ms gap with only ~1 ms of timed work: GC / compositor / timers -> EXT
+    m.frame((t += 120), 1, ph);
+    steady(40);
+    expect(m.reading!.lastCause).toBe(CAUSE_EXT);
+    expect(fpsText(m.reading)).toMatch(/HITCH 2 LAST EXT 120$/);
+    // audio-heavy frame
+    ph[PHASE_AUDIO] = 45;
+    m.frame((t += 1000 / 60), 46, ph);
+    ph.fill(0);
+    m.frame((t += 60), 1, ph);
+    steady(40);
+    expect(fpsText(m.reading)).toMatch(/LAST AUDIO 45$/);
+    m.reset();
+    expect(m.reading).toBeNull();
+    for (let i = 0; i <= 31; i++) m.frame(t + i * (1000 / 60), 1, ph);
+    expect(m.reading!.lastCause).toBe(-1);
   });
 
   it('reset() drops the reading and the open window', () => {

@@ -60,6 +60,12 @@ interface BodyRecord {
   shapeKeys: number[];
   prev: Pose;
   curr: Pose;
+  /** Box2D reported the body awake after the last step (sleeping bodies' poses are not re-read). */
+  awake: boolean;
+  /** Linear velocity cache (vx, vy) valid until the next step / velocity write. */
+  velOk: boolean;
+  vx: number;
+  vy: number;
 }
 
 interface JointRecord {
@@ -131,6 +137,19 @@ export class PhysicsWorld implements PhysicsApi {
     this._steps++;
     for (const rec of this.bodies.values()) {
       if (!rec.dynamic) continue;
+      rec.velOk = false;
+      // A body asleep before AND after this step did not move: skip the two
+      // embind wrappers of a pose read (stutter round 2: per-step garbage).
+      const awake = this.b2.b2Body_IsAwake(rec.id);
+      if (!awake && !rec.awake) {
+        const p = rec.prev;
+        const c = rec.curr;
+        p.x = c.x;
+        p.y = c.y;
+        p.angle = c.angle;
+        continue;
+      }
+      rec.awake = awake;
       const t = rec.prev;
       rec.prev = rec.curr;
       rec.curr = t;
@@ -205,7 +224,7 @@ export class PhysicsWorld implements PhysicsApi {
     const handle = this.nextBody++;
     const pose: Pose = { x: 0, y: 0, angle: 0 };
     this.readPose(id, pose);
-    this.bodies.set(handle, { id, tag: def.tag, dynamic: def.type !== 'static', shapeKeys: [], prev: { ...pose }, curr: pose });
+    this.bodies.set(handle, { id, tag: def.tag, dynamic: def.type !== 'static', shapeKeys: [], prev: { ...pose }, curr: pose, awake: true, velOk: false, vx: 0, vy: 0 });
     return handle;
   }
 
@@ -386,17 +405,28 @@ export class PhysicsWorld implements PhysicsApi {
     // A teleport must not be interpolated across.
     this.readPose(rec.id, rec.curr);
     rec.prev = { ...rec.curr };
+    rec.awake = true;
+    rec.velOk = false;
   }
 
+  /** Cached per step (each Box2D read allocates an embind wrapper; several systems poll the same body). */
   getLinearVelocity(h: BodyHandle): Vec2 {
-    const v = this.b2.b2Body_GetLinearVelocity(this.body(h).id);
-    const out = { x: v.x, y: v.y };
-    v.delete();
-    return out;
+    const rec = this.body(h);
+    if (!rec.velOk) {
+      const v = this.b2.b2Body_GetLinearVelocity(rec.id);
+      rec.vx = v.x;
+      rec.vy = v.y;
+      v.delete();
+      rec.velOk = true;
+    }
+    return { x: rec.vx, y: rec.vy };
   }
 
   setLinearVelocity(h: BodyHandle, v: Vec2): void {
-    this.b2.b2Body_SetLinearVelocity(this.body(h).id, this.vec(this.v1, v.x, v.y));
+    const rec = this.body(h);
+    this.b2.b2Body_SetLinearVelocity(rec.id, this.vec(this.v1, v.x, v.y));
+    rec.velOk = false;
+    rec.awake = true;
   }
 
   getAngularVelocity(h: BodyHandle): number {
@@ -434,7 +464,10 @@ export class PhysicsWorld implements PhysicsApi {
   }
 
   applyImpulse(h: BodyHandle, impulse: Vec2, point?: Vec2): void {
-    const id = this.body(h).id;
+    const rec = this.body(h);
+    rec.velOk = false;
+    rec.awake = true;
+    const id = rec.id;
     if (point) this.b2.b2Body_ApplyLinearImpulse(id, this.vec(this.v1, impulse.x, impulse.y), this.vec(this.v2, point.x, point.y), true);
     else this.b2.b2Body_ApplyLinearImpulseToCenter(id, this.vec(this.v1, impulse.x, impulse.y), true);
   }

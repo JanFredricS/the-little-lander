@@ -86,6 +86,14 @@ export interface InputFrame {
    * never read it.
    */
   steer: Vec2;
+  /**
+   * Direct-steering amendment (Task 11): multiplier on the lander's MAIN
+   * engine thrust this step (absent = 1). Set only by the DirectSteering
+   * layer (DIRECT_LANDER_THRUST_SCALE) so the automatic pulse train has
+   * decisive power without raising lander.thrust for the ENGINES scheme,
+   * whose one-engine-must-not-hover invariant stays intact.
+   */
+  engineScale?: number;
 }
 
 /** Semantic digital controls, 1:1 with InputFrame's boolean fields. */

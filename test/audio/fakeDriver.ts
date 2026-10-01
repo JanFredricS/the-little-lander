@@ -5,6 +5,7 @@ export type Call =
   | { kind: 'noise'; spec: NoiseSpec }
   | { kind: 'loop'; spec: LoopSpec; id: number }
   | { kind: 'loopStop'; id: number }
+  | { kind: 'loopSet'; id: number; gain?: number }
   | { kind: 'gain'; target: BusId | 'master'; value: number };
 
 export type VoiceCall = Extract<Call, { kind: 'tone' | 'noise' }>;
@@ -38,6 +39,14 @@ export class FakeDriver implements AudioDriver {
   calls: Call[] = [];
   gains: Record<string, number> = {};
   liveLoops = new Set<number>();
+  /** Current target gain of each live loop (spec gain at creation, then loop.set({ gain })). */
+  loopGain = new Map<number, number>();
+  /** Live loops with a non-zero target gain (engine voices gated silent are live but not audible). */
+  audibleLoops(): number {
+    let n = 0;
+    for (const id of this.liveLoops) if ((this.loopGain.get(id) ?? 0) > 0) n++;
+    return n;
+  }
   private nextLoop = 1;
   /** Make resume() reject (autoplay denied). */
   denyResume = false;
@@ -91,11 +100,16 @@ export class FakeDriver implements AudioDriver {
   loop(spec: LoopSpec): LoopHandle {
     const id = this.nextLoop++;
     this.liveLoops.add(id);
+    this.loopGain.set(id, spec.gain);
     this.calls.push({ kind: 'loop', spec, id });
     return {
-      set: () => {},
+      set: (p) => {
+        if (p.gain !== undefined) this.loopGain.set(id, p.gain);
+        this.calls.push({ kind: 'loopSet', id, gain: p.gain });
+      },
       stop: () => {
         this.liveLoops.delete(id);
+        this.loopGain.delete(id);
         this.calls.push({ kind: 'loopStop', id });
       },
     };

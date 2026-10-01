@@ -341,9 +341,9 @@ export class GameUi {
    * One animation frame's timing for the FPS counter: rAF time + CPU ms of the
    * frame's work (the App measures steps + render). Cheap when the counter is off.
    */
-  noteFrameTiming(nowMs: number, workMs: number): void {
+  noteFrameTiming(nowMs: number, workMs: number, phases?: ArrayLike<number>): void {
     if (!this.showFps) return;
-    this.fpsMeter.frame(nowMs, workMs);
+    this.fpsMeter.frame(nowMs, workMs, phases);
     this.fpsLabel.setText(fpsText(this.fpsMeter.reading)); // no-op unless a new reading was published
   }
 

@@ -129,6 +129,11 @@ export class LevelView {
     } else this.hud = null;
   }
 
+  /** Wall ms the last render() spent in terrain chunk painting (FPS-counter hitch attribution). */
+  get terrainPaintMs(): number {
+    return this.terrain.msLastUpdate;
+  }
+
   render(alpha: number, nowMs: number, paused: boolean): void {
     const s = this.session;
     const cam = s.camera.interpolated(alpha, this.camScratch);

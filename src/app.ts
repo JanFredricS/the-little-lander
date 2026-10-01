@@ -28,6 +28,7 @@ import { getCutscene } from './story/scripts';
 import { GameUi, type GameUiOptions } from './ui/gameUi';
 import type { StoryContext } from './ui/screens';
 import { detectTouch } from './ui/touch/touchLayer';
+import { FRAME_PHASES, PHASE_AUDIO, PHASE_DRAW, PHASE_PAINT, PHASE_STEP, PHASE_SUBMIT } from './ui/fpsMeter';
 
 export interface AppOptions {
   art?: ArtApi;
@@ -88,6 +89,16 @@ export class App {
   private endHoldSteps: number | null = null;
   /** performance.now() at the first fixed step of the current animation frame (FPS counter CPU time). */
   private frameT0: number | null = null;
+  /** This frame's ms per FRAME_PHASES (FPS-counter hitch attribution; reused, no allocation). */
+  private readonly phases = new Float64Array(FRAME_PHASES.length);
+  /** ms spent in options.onEvent (audio) since the last render. */
+  private audioMs = 0;
+  /** Timed wrapper around options.onEvent (audio + main.ts side effects). */
+  private readonly timedOnEvent = (e: GameEvent): void => {
+    const t = performance.now();
+    this.options.onEvent?.(e);
+    this.audioMs += performance.now() - t;
+  };
   private readonly unbind: (() => void)[] = [];
   /** DIRECT steering layer (Settings.steering = 'direct'): steer command -> engine pulses, once per fixed step. */
   private readonly direct = new DirectSteering();
@@ -194,7 +205,9 @@ export class App {
     this.loop = new FrameLoop({
       step: (i) => {
         if (i === 0) this.frameT0 = performance.now();
+        const t = performance.now();
         this.step();
+        this.phases[PHASE_STEP]! += performance.now() - t;
       },
       render: (alpha) => this.render(alpha),
       onPauseChange: (paused, cause) => this.onPauseChange(paused, cause),
@@ -268,7 +281,7 @@ export class App {
     }
     this.session = session;
     session.on((e) => this.ui.onEvent(e));
-    if (this.options.onEvent) session.on(this.options.onEvent);
+    if (this.options.onEvent) session.on(this.timedOnEvent);
     const midCutscene = modeSwitchCutscene(levelId, spec);
     if (midCutscene) {
       // warm the mid-level cutscene's stills in background so the switch doesn't hitch
@@ -362,9 +375,21 @@ export class App {
     this.frameT0 = null;
     this.view?.render(alpha, now, this.loop.paused);
     this.ui.render(now);
+    const tSubmit = performance.now();
     this.pixi.app.render();
-    // FPS counter (pause menu): rAF cadence + this frame's CPU work (fixed steps + render + Pixi submit)
-    this.ui.noteFrameTiming(now, performance.now() - t0);
+    const end = performance.now();
+    // FPS counter (pause menu): rAF cadence + this frame's CPU work (fixed steps + render + Pixi submit),
+    // split per phase so a hitch can be tagged with its slowest phase
+    const ph = this.phases;
+    const paint = this.view?.terrainPaintMs ?? 0;
+    ph[PHASE_AUDIO] = this.audioMs;
+    ph[PHASE_STEP] = Math.max(0, ph[PHASE_STEP]! - this.audioMs);
+    ph[PHASE_PAINT] = paint;
+    ph[PHASE_DRAW] = Math.max(0, tSubmit - now - paint);
+    ph[PHASE_SUBMIT] = end - tSubmit;
+    this.ui.noteFrameTiming(now, end - t0, ph);
+    ph.fill(0);
+    this.audioMs = 0;
   }
 
   private onPauseChange(paused: boolean, cause: PauseCause): void {

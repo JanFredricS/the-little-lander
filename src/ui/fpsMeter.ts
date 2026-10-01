@@ -9,10 +9,36 @@
  * ~2 s (a ring of the last HISTORY_WINDOWS window maxima) and a running count
  * of hitches (rAF intervals over HITCH_MS) since the counter was switched on.
  * No per-frame allocation: the reading object is reused.
+ *
+ * Hitch cause (stutter round 2): the App also hands in the frame's time per
+ * phase (FRAME_PHASES, a reused Float64Array). A rAF interval spans the
+ * PREVIOUS frame's work, so a hitch is blamed on the previous frame's
+ * slowest phase - or on EXT (GC, audio timer, browser / compositor, GPU
+ * wait) when no phase explains at least half of the overrun. The readout
+ * shows the last hitch's cause and its ms ("LAST PAINT 23").
  */
 
 /** A rAF interval above this (ms) counts as a hitch (3 missed 60 Hz frames). */
 export const HITCH_MS = 50;
+/**
+ * Per-frame phases the App times (indices into the phases array):
+ * STEP fixed steps (minus audio), AUDIO game-event audio handlers, PAINT
+ * terrain chunk painting, DRAW view + UI render (minus paint), SUBMIT Pixi
+ * render / GPU submit (texture uploads land here).
+ */
+export const FRAME_PHASES = ['STEP', 'AUDIO', 'PAINT', 'DRAW', 'SUBMIT'] as const;
+export const PHASE_STEP = 0;
+export const PHASE_AUDIO = 1;
+export const PHASE_PAINT = 2;
+export const PHASE_DRAW = 3;
+export const PHASE_SUBMIT = 4;
+/** Hitch cause index: nothing the game timed explains it (GC, timers, compositor, GPU wait). */
+export const CAUSE_EXT = FRAME_PHASES.length;
+/** Labels by cause index (FRAME_PHASES + EXT). */
+export const CAUSE_LABELS: readonly string[] = [...FRAME_PHASES, 'EXT'];
+/** Nominal frame (ms) subtracted from a hitch interval to get its overrun. */
+const NOMINAL_FRAME_MS = 1000 / 60;
+
 /** Windows kept for the "worst of the last ~2 s" readout (4 × 500 ms). */
 const HISTORY_WINDOWS = 4;
 
@@ -29,6 +55,10 @@ export interface FpsReading {
   worstRecentMs: number;
   /** Frames longer than HITCH_MS since the meter started / was reset. */
   hitches: number;
+  /** Cause index of the last hitch (FRAME_PHASES index or CAUSE_EXT), -1 = none yet. */
+  lastCause: number;
+  /** The last hitch cause's ms (the phase time, or the hitch interval for EXT). */
+  lastCauseMs: number;
 }
 
 export class FpsMeter {
@@ -40,7 +70,11 @@ export class FpsMeter {
   private hitches = 0;
   private readonly history = new Float64Array(HISTORY_WINDOWS);
   private historyAt = 0;
-  private readonly out: FpsReading = { fps: 0, frameMs: 0, workMs: 0, worstMs: 0, worstRecentMs: 0, hitches: 0 };
+  private readonly out: FpsReading = { fps: 0, frameMs: 0, workMs: 0, worstMs: 0, worstRecentMs: 0, hitches: 0, lastCause: -1, lastCauseMs: 0 };
+  /** The previous frame's phase times (a hitch interval spans that frame's work). */
+  private readonly prevPhases = new Float64Array(FRAME_PHASES.length);
+  private lastCause = -1;
+  private lastCauseMs = 0;
   private _reading: FpsReading | null = null;
 
   constructor(private readonly windowMs = 500) {}
@@ -50,8 +84,12 @@ export class FpsMeter {
     return this._reading;
   }
 
-  /** One animation frame at `nowMs` whose game work took `workMs`. Returns true when a new reading was published. */
-  frame(nowMs: number, workMs: number): boolean {
+  /**
+   * One animation frame at `nowMs` whose game work took `workMs` (split per
+   * FRAME_PHASES in `phases`, optional). Returns true when a new reading was
+   * published.
+   */
+  frame(nowMs: number, workMs: number, phases?: ArrayLike<number>): boolean {
     if (this.lastMs !== null) {
       const dt = nowMs - this.lastMs;
       // a long gap (tab hidden, paused rAF) is not a frame: restart the window
@@ -60,10 +98,14 @@ export class FpsMeter {
         return false;
       }
       this.worst = Math.max(this.worst, dt);
-      if (dt > HITCH_MS) this.hitches++;
+      if (dt > HITCH_MS) {
+        this.hitches++;
+        this.blame(dt);
+      }
       this.frames++;
       this.work += Math.max(0, workMs);
     }
+    if (phases) for (let i = 0; i < this.prevPhases.length; i++) this.prevPhases[i] = phases[i] ?? 0;
     this.lastMs = nowMs;
     this.windowStart ??= nowMs;
     const span = nowMs - this.windowStart;
@@ -79,6 +121,8 @@ export class FpsMeter {
     r.worstMs = this.worst;
     r.worstRecentMs = recent;
     r.hitches = this.hitches;
+    r.lastCause = this.lastCause;
+    r.lastCauseMs = this.lastCauseMs;
     this._reading = r;
     this.windowStart = nowMs;
     this.frames = 0;
@@ -95,9 +139,32 @@ export class FpsMeter {
     this.work = 0;
     this.worst = 0;
     this.hitches = 0;
+    this.lastCause = -1;
+    this.lastCauseMs = 0;
+    this.prevPhases.fill(0);
     this.history.fill(0);
     this.historyAt = 0;
     this._reading = null;
+  }
+
+  /** Blame a hitch interval `dt` on the previous frame's slowest phase, or EXT. */
+  private blame(dt: number): void {
+    let best = -1;
+    let bestMs = 0;
+    for (let i = 0; i < this.prevPhases.length; i++) {
+      if (this.prevPhases[i]! > bestMs) {
+        bestMs = this.prevPhases[i]!;
+        best = i;
+      }
+    }
+    const overrun = dt - NOMINAL_FRAME_MS;
+    if (best < 0 || bestMs < overrun / 2) {
+      this.lastCause = CAUSE_EXT;
+      this.lastCauseMs = dt;
+    } else {
+      this.lastCause = best;
+      this.lastCauseMs = bestMs;
+    }
   }
 
   private restartWindow(nowMs: number): void {
@@ -109,8 +176,12 @@ export class FpsMeter {
   }
 }
 
-/** Compact readout, e.g. "60 FPS 16.7MS CPU 3.2 MAX 34 HITCH 2" (MAX = worst frame ms of the last ~2 s). */
+/**
+ * Compact readout, e.g. "60 FPS 16.7MS CPU 3.2 MAX 34 HITCH 2 LAST PAINT 23"
+ * (MAX = worst frame ms of the last ~2 s; LAST = the last hitch's cause + ms).
+ */
 export function fpsText(r: FpsReading | null): string {
   if (!r) return '-- FPS';
-  return `${Math.round(r.fps)} FPS ${r.frameMs.toFixed(1)}MS CPU ${r.workMs.toFixed(1)} MAX ${Math.round(r.worstRecentMs)} HITCH ${r.hitches}`;
+  const base = `${Math.round(r.fps)} FPS ${r.frameMs.toFixed(1)}MS CPU ${r.workMs.toFixed(1)} MAX ${Math.round(r.worstRecentMs)} HITCH ${r.hitches}`;
+  return r.lastCause >= 0 ? `${base} LAST ${CAUSE_LABELS[r.lastCause]} ${Math.round(r.lastCauseMs)}` : base;
 }

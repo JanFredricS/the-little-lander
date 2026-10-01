@@ -197,6 +197,86 @@ describe('PhysicsWorld', () => {
     expect(w.getInterpolatedTransform(b, 0)).toEqual(w.getInterpolatedTransform(b, 1));
   });
 
+  it('sleeping bodies skip the pose read but always report the true pose (sleep, teleport, wake)', async () => {
+    const w = await world();
+    const ground = w.createBody({ type: 'static', position: { x: 0, y: 0 } });
+    w.addChain(ground, [{ x: -10, y: 5 }, { x: 10, y: 5 }], false);
+    const b = w.createBody({ type: 'dynamic', position: { x: 0, y: 4 } }); // sleep enabled (default)
+    w.addBox(b, 0.5, 0.5);
+    const priv = w as unknown as {
+      b2: { b2Body_IsAwake(id: unknown): boolean };
+      bodies: Map<number, { id: unknown }>;
+      readPose(id: unknown, out: { x: number; y: number; angle: number }): void;
+    };
+    const id = priv.bodies.get(b)!.id;
+    const awake = () => priv.b2.b2Body_IsAwake(id);
+    const native = () => {
+      const p = { x: 0, y: 0, angle: 0 };
+      priv.readPose(id, p);
+      return p;
+    };
+    const matches = () => {
+      expect(w.getTransform(b)).toEqual(native());
+      const n = native();
+      const ip = w.getInterpolatedTransform(b, 1); // lerp rounding: compare to 1e-9
+      for (const k of ['x', 'y', 'angle'] as const) expect(ip[k]).toBeCloseTo(n[k], 9);
+    };
+    let slept = false;
+    for (let i = 0; i < 600 && !slept; i++) {
+      w.step(FIXED_DT);
+      matches();
+      slept = !awake();
+    }
+    expect(slept).toBe(true);
+    // asleep for several steps: pose unchanged and NOT interpolated (prev == curr)
+    run(w, 5);
+    matches();
+    expect(w.getInterpolatedTransform(b, 0)).toEqual(w.getInterpolatedTransform(b, 1));
+    expect(w.getTransform(b).y).toBeCloseTo(4.5, 1);
+
+    // teleport while asleep: the next steps report the new pose, whether or not Box2D woke it
+    w.setTransform(b, { x: 3, y: 1 }, 0.3);
+    expect(w.getTransform(b)).toEqual(native());
+    for (let i = 0; i < 5; i++) {
+      w.step(FIXED_DT);
+      matches();
+    }
+    expect(w.getTransform(b).x).toBeCloseTo(3, 3);
+
+    // let it settle again, then wake it with an impulse: it moves and the pose follows
+    for (let i = 0; i < 900 && awake(); i++) w.step(FIXED_DT);
+    expect(awake()).toBe(false);
+    const rest = w.getTransform(b);
+    w.applyImpulse(b, { x: w.getMass(b) * 4, y: -w.getMass(b) * 4 });
+    run(w, 10);
+    matches();
+    expect(w.getTransform(b).x).toBeGreaterThan(rest.x + 0.3);
+    expect(w.getInterpolatedTransform(b, 0)).not.toEqual(w.getInterpolatedTransform(b, 1));
+  });
+
+  it('linear velocity reads are cached per step but invalidated by every velocity write', async () => {
+    const w = await world();
+    const b = ball(w);
+    run(w, 10);
+    const v0 = w.getLinearVelocity(b);
+    expect(w.getLinearVelocity(b)).toEqual(v0); // cached read, same step
+    const copy = w.getLinearVelocity(b);
+    copy.x = 123; // a copy: callers cannot corrupt the cache
+    expect(w.getLinearVelocity(b)).toEqual(v0);
+    w.setLinearVelocity(b, { x: 5, y: -2 });
+    expect(w.getLinearVelocity(b)).toEqual({ x: 5, y: -2 }); // not the cached v0
+    const m = w.getMass(b);
+    w.applyImpulse(b, { x: m, y: 0 });
+    expect(w.getLinearVelocity(b).x).toBeCloseTo(6, 5);
+    w.applyImpulse(b, { x: 0, y: m * 2 }, w.getTransform(b));
+    expect(w.getLinearVelocity(b).y).toBeCloseTo(0, 5);
+    w.setTransform(b, { x: 1, y: 1 }, 0); // teleport keeps velocity, still reads fresh
+    expect(w.getLinearVelocity(b).x).toBeCloseTo(6, 5);
+    const before = w.getLinearVelocity(b);
+    w.step(FIXED_DT); // gravity: the step invalidates the cache
+    expect(w.getLinearVelocity(b).y).toBeCloseTo(before.y + 10 * FIXED_DT, 4);
+  });
+
   it('is deterministic across worlds', async () => {
     const sim = async () => {
       const w = await world();

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { GameEvent } from '../../src/contracts';
 import { AudioEngine, GESTURE_EVENTS } from '../../src/audio/engine';
+import { thrusterSpec } from '../../src/audio/thrusters';
 import { DEFAULT_SETTINGS, loadSettings, SETTINGS_KEY } from '../../src/audio/settings';
 import { FakeDriver, MemStorage } from './fakeDriver';
 import { SAMPLE_EVENTS } from './samples';
@@ -216,13 +217,96 @@ describe('engine lifecycle + wiring', () => {
     e.handle({ type: 'enginesChanged', main: false, left: true, right: true });
     expect(d.liveLoops.size).toBe(2);
     e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
-    expect(d.liveLoops.size).toBe(1);
+    // the cut engine's voice stays built, gated silent (no node churn on pulse trains)
+    expect(d.liveLoops.size).toBe(2);
+    expect(d.audibleLoops()).toBe(1);
+    expect(e.thrusters.active).toEqual(['left']);
     e.onScreen({ id: 'paused', levelId: 'hangarRun' });
     expect(d.liveLoops.size).toBe(0);
     e.handle({ type: 'enginesChanged', main: true, left: false, right: false });
     expect(d.liveLoops.size).toBe(1);
     e.handle(SAMPLE_EVENTS.crash);
     expect(d.liveLoops.size).toBe(0);
+  });
+
+  it('engine pulse trains reuse the voices: no loop or pop per flicker, pop only after a real pause', async () => {
+    const { d, e } = mk();
+    await e.unlock();
+    e.handle({ type: 'levelStarted', levelId: 'hangarRun', themeId: 'hangar', mode: 'lander' });
+    d.time = 1;
+    d.clear();
+    // 60 ticks of DIRECT-style flicker between left, right and both
+    for (let i = 0; i < 60; i++) {
+      d.time = 1 + i / 60;
+      const k = i % 3;
+      e.handle({ type: 'enginesChanged', main: false, left: k !== 1, right: k !== 0 });
+    }
+    expect(d.calls.filter((c) => c.kind === 'loop').length).toBe(2); // one voice per engine, built once
+    expect(d.calls.filter((c) => c.kind === 'loopStop').length).toBe(0);
+    expect(d.voices().filter((v) => v.kind === 'noise').length).toBe(2); // the two first ignitions only
+    expect(e.thrusters.voiceCount).toBe(2);
+    // a real pause (> IGNITION_POP_MIN_OFF_SEC dark) pops again on relight
+    e.handle({ type: 'enginesChanged', main: false, left: false, right: false });
+    expect(d.audibleLoops()).toBe(0);
+    d.time += 0.5;
+    d.clear();
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
+    expect(d.calls.filter((c) => c.kind === 'loop').length).toBe(0);
+    expect(d.voices().filter((v) => v.kind === 'noise').length).toBe(1);
+    expect(d.audibleLoops()).toBe(1);
+  });
+
+  it('ignition pop follows the engine, not the voice: rebuilds of a still-lit engine never pop', async () => {
+    const { d, e } = mk();
+    await e.unlock();
+    e.handle({ type: 'levelStarted', levelId: 'hangarRun', themeId: 'hangar', mode: 'lander' });
+    d.time = 1;
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
+    const pops = () => d.voices().filter((v) => v.kind === 'noise').length;
+    expect(pops()).toBe(1); // first real ignition
+
+    // tab hidden while firing, back 2 s later still firing: voice rebuilt, no pop
+    d.clear();
+    e.setHidden(true);
+    await Promise.resolve();
+    expect(d.liveLoops.size).toBe(0);
+    d.time = 3;
+    await e.setHidden(false);
+    expect(d.calls.filter((c) => c.kind === 'loop').length).toBe(1);
+    expect(pops()).toBe(0);
+
+    // mode change while the engine keeps firing: new timbre, no pop
+    d.clear();
+    d.time = 4;
+    e.thrusters.setMode('csm');
+    const rebuilt = d.calls.filter((c) => c.kind === 'loop');
+    expect(rebuilt.length).toBe(1);
+    expect(rebuilt[0]!.kind === 'loop' && rebuilt[0]!.spec.wave).toBe(thrusterSpec('csm', 'left').wave);
+    expect(d.audibleLoops()).toBe(1);
+    expect(pops()).toBe(0);
+
+    // the engine cuts during a mode change -> a later relight after a real gap pops
+    e.handle({ type: 'enginesChanged', main: false, left: false, right: false });
+    d.time = 4.05;
+    e.thrusters.setMode('lander');
+    d.time = 4.1; // only 0.1 s dark: a flicker, no pop
+    d.clear();
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
+    expect(pops()).toBe(0);
+
+    // stopAll (pause) is a real cut-off: an immediate relight (< 0.15 s) does not pop ...
+    e.thrusters.stopAll();
+    d.time = 4.2;
+    d.clear();
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
+    expect(d.calls.filter((c) => c.kind === 'loop').length).toBe(1);
+    expect(pops()).toBe(0);
+    // ... but one after a real gap does
+    e.thrusters.stopAll();
+    d.time = 5;
+    d.clear();
+    e.handle({ type: 'enginesChanged', main: false, left: true, right: false });
+    expect(pops()).toBe(1);
   });
 
   it('thruster timbre differs per mode', async () => {

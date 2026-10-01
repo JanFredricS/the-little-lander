@@ -172,12 +172,43 @@ function overlaps(p: PreparedPiece, r: PaintRect, pad: number): boolean {
   return p.bbox.x1 + pad >= r.x && p.bbox.x0 - pad <= r.x + r.w && p.bbox.y1 + pad >= r.y && p.bbox.y0 - pad <= r.y + r.h;
 }
 
+/** Whether paintPieces could draw anything inside `r` (cheap bbox test; lets callers skip empty chunks). */
+export function piecesTouch(pieces: readonly PreparedPiece[], r: PaintRect): boolean {
+  for (const p of pieces) if (overlaps(p, r, T * 2)) return true;
+  return false;
+}
+
 /**
  * Paint `pieces` into `ctx` (already translated so world coords draw in
  * place), limited to `r`. Returns whether anything was drawn. `cracks`:
  * world rects (brittle regions) whose rock surfaces get crack art, painted
  * inside the piece clip so it never spills into open air.
  */
+/**
+ * Reach (px) of anything painted for a surface edge beyond the edge line
+ * itself: strip tiles (T), decor standing on it (T), outline (1), cracks
+ * (≤ 19 px into the solid). Edges farther than this from the paint rect
+ * contribute no pixels and are skipped (frame budget: a long edge above or
+ * below a chunk used to issue one clipped-away drawImage per pixel column).
+ */
+const EDGE_REACH = 2 * T + 4;
+/**
+ * Reach (px) of one crack ALONG its surface from its anchor: up to 19 steps
+ * with ±1 sideways jitter each, plus a 3 px branch (+ the 1 px highlight).
+ */
+const CRACK_REACH = 24;
+
+/** Whether anything painted for edge `e` can land inside `r`. */
+function edgeNear(e: SurfaceEdge, r: PaintRect): boolean {
+  const { a, b } = e;
+  return (
+    Math.max(a.x, b.x) + EDGE_REACH >= r.x &&
+    Math.min(a.x, b.x) - EDGE_REACH <= r.x + r.w &&
+    Math.max(a.y, b.y) + EDGE_REACH >= r.y &&
+    Math.min(a.y, b.y) - EDGE_REACH <= r.y + r.h
+  );
+}
+
 export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: TileSource, r: PaintRect, cracks: readonly PaintRect[] = []): boolean {
   let drew = false;
   ctx.imageSmoothingEnabled = false;
@@ -197,14 +228,14 @@ export function paintPieces(ctx: Ctx, pieces: readonly PreparedPiece[], tiles: T
     const gy1 = Math.floor(Math.min(r.y + r.h, p.bbox.y1) / T);
     const fillKind = `${mat}:fill` as TileKind;
     for (let gy = gy0; gy <= gy1; gy++) for (let gx = gx0; gx <= gx1; gx++) ctx.drawImage(tiles.tile(fillKind, hash(gx, gy, p.seed) & 3), gx * T, gy * T);
-    if (p.style.surface !== false) for (const e of p.surfaces) paintStrip(ctx, e, mat, p.seed, tiles, r);
-    for (const z of cracks) for (const e of p.surfaces) paintCracks(ctx, e, z, p.seed, tiles, r);
+    if (p.style.surface !== false) for (const e of p.surfaces) if (edgeNear(e, r)) paintStrip(ctx, e, mat, p.seed, tiles, r);
+    for (const z of cracks) for (const e of p.surfaces) if (edgeNear(e, r)) paintCracks(ctx, e, z, p.seed, tiles, r);
     ctx.restore();
     if (p.style.surface !== false) {
       ctx.fillStyle = tiles.outline;
-      for (const e of p.surfaces) paintOutline(ctx, e, r);
+      for (const e of p.surfaces) if (edgeNear(e, r)) paintOutline(ctx, e, r);
       const density = p.style.decorDensity ?? 0.2;
-      if (density > 0) for (const e of p.surfaces) if (e.n.y <= -0.85) paintDecor(ctx, e, mat, p.seed, density, tiles, r);
+      if (density > 0) for (const e of p.surfaces) if (e.n.y <= -0.85 && edgeNear(e, r)) paintDecor(ctx, e, mat, p.seed, density, tiles, r);
     }
   }
   return drew;
@@ -218,8 +249,11 @@ function paintStrip(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, tiles: 
     const x0 = Math.max(Math.floor(xa), Math.floor(r.x) - 1);
     const x1 = Math.min(Math.ceil(xb), Math.ceil(r.x + r.w) + 1);
     const kind = `${mat}:${e.role}` as TileKind;
+    const ry0 = r.y - T - 1;
+    const ry1 = r.y + r.h + 1;
     for (let x = x0; x < x1; x++) {
       const y = lerpAt(a, b, x + 0.5, 'x');
+      if (y < ry0 || y > ry1 + T) continue; // this column's T px strip misses the rect
       const img = tiles.tile(kind, hash(Math.floor(x / T), seed, 7) & 3);
       const sx = ((x % T) + T) % T;
       if (e.role === 'top') ctx.drawImage(img, sx, 0, 1, T, x, Math.floor(y), 1, T);
@@ -232,8 +266,11 @@ function paintStrip(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, tiles: 
     const y1 = Math.min(Math.ceil(yb), Math.ceil(r.y + r.h) + 1);
     const kind = `${mat}:side` as TileKind;
     const right = e.n.x > 0; // surface faces right: mirror (side tiles face left)
+    const rx0 = r.x - T - 1;
+    const rx1 = r.x + r.w + T + 1;
     for (let y = y0; y < y1; y++) {
       const x = lerpAt(a, b, y + 0.5, 'y');
+      if (x < rx0 || x > rx1) continue; // this row's T px strip misses the rect
       const v = hash(Math.floor(y / T), seed, 11) & 3;
       const sy = ((y % T) + T) % T;
       if (right) ctx.drawImage(tiles.sideMirrored(kind, v), 0, sy, T, 1, Math.ceil(x) - T, y, T, 1);
@@ -283,6 +320,12 @@ function paintDecor(ctx: Ctx, e: SurfaceEdge, mat: string, seed: number, density
  * crumbling rim (a warm dithered band + glints just inside the surface)
  * and hashed pixel cracks running 8-19 px into the solid, some
  * with a short branch. Deterministic per edge / seed; clipped by the caller.
+ *
+ * Every pixel is a pure function of the edge, zone and seed - never of the
+ * paint rect `r`, which only bounds the work: the crack walk always starts
+ * at the zone / edge start (skipping, without drawing, the anchors too far
+ * from `r` to reach it), so a chunk painted in bands, or split differently
+ * into chunks, gets exactly the same pixels as one full-chunk paint.
  */
 function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles: TileSource, r: PaintRect): void {
   const horiz = e.role !== 'side';
@@ -291,10 +334,14 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
   const eb = horiz ? e.b.x : e.b.y;
   const za = horiz ? z.x : z.y;
   const zb = horiz ? z.x + z.w : z.y + z.h;
-  const ra = (horiz ? r.x : r.y) - 16;
-  const rb = (horiz ? r.x + r.w : r.y + r.h) + 16;
-  const lo = Math.max(Math.min(ea, eb), za, ra);
-  const hi = Math.min(Math.max(ea, eb), zb, rb);
+  // the art's own extent along the surface: independent of the paint rect
+  const lo0 = Math.max(Math.min(ea, eb), za);
+  const hi0 = Math.min(Math.max(ea, eb), zb);
+  // anchors farther than CRACK_REACH along the surface from `r` cannot touch it
+  const ra = (horiz ? r.x : r.y) - CRACK_REACH;
+  const rb = (horiz ? r.x + r.w : r.y + r.h) + CRACK_REACH;
+  const lo = Math.max(lo0, ra);
+  const hi = Math.min(hi0, rb);
   if (!(lo < hi)) return;
   const ix = -e.n.x; // into the solid
   const iy = -e.n.y;
@@ -334,11 +381,11 @@ function paintCracks(ctx: Ctx, e: SurfaceEdge, z: PaintRect, seed: number, tiles
   // cracks
   const px = -iy; // along the surface
   const py = ix;
-  let u = Math.floor(lo) + (hash(seed, Math.floor(za), 41) % 6);
+  let u = Math.floor(lo0) + (hash(seed, Math.floor(za), 41) % 6);
   while (u < hi) {
     const h = hash(u, seed, 37);
     const q = at(u + 0.5);
-    if (inZone(q.x, q.y)) {
+    if (u >= ra && inZone(q.x, q.y)) {
       const depth = 8 + (h % 12);
       let x = q.x + ix;
       let y = q.y + iy;

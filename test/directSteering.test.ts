@@ -11,7 +11,20 @@ import type { InputFrame, InputSampleContext, VesselMode, VesselState } from '..
 import { PhysicsWorld } from '../src/physics/engine';
 import { resolveTuning } from '../src/physics/tuning';
 import { createVessel } from '../src/physics/vessel';
-import { commandAngle, DIRECT_CROSSOVER_HYSTERESIS, DIRECT_LEAD_SEC, DIRECT_TOP_CROSSOVER, DirectSteering, wrapAngle } from '../src/shell/directSteering';
+import {
+  commandAngle,
+  compressTilt,
+  DIRECT_BURN_GATE,
+  DIRECT_CROSSOVER_HYSTERESIS,
+  DIRECT_LANDER_THRUST_SCALE,
+  DIRECT_LEAD_SEC,
+  DIRECT_THRUST_BAND,
+  DIRECT_TILT_CAP,
+  DIRECT_TOP_CROSSOVER,
+  DirectSteering,
+  trailingDuty,
+  wrapAngle,
+} from '../src/shell/directSteering';
 import { emptyFrame, InputMapper, KeyboardSource, PointerSource } from '../src/shell/input';
 import { DEFAULT_SETTINGS, parseSave } from '../src/story/save';
 import { frameHasInput, helpCard } from '../src/ui/controlsHelp';
@@ -55,10 +68,10 @@ async function rig(mode: VesselMode, spawn: { angle?: number } = {}) {
 }
 
 describe('DIRECT steering: angle hold (lander, real physics)', () => {
-  it.each([30, 45, -60, 90, -95])('a %i° command pulses the main engines until the lander points there, then burns along it', async (deg) => {
+  it.each([30, 45, -60, 90, -95])('a %i° command pulses the main engines until the lander points there (upper arc compressed), then burns along it', async (deg) => {
     const r = await rig('lander');
     const end = r.hold(dirAt(deg), 180); // 3 s
-    expect(Math.abs(wrapAngle(end.angle - deg * DEG)) / DEG).toBeLessThan(5);
+    expect(Math.abs(wrapAngle(end.angle - compressTilt(deg * DEG))) / DEG).toBeLessThan(5);
     expect(Math.abs(end.angularVel)).toBeLessThan(0.5);
     // pulses: single-engine ticks both ways (turn + brake) and both-engine ticks (push); only main engines
     const f = r.frames;
@@ -87,6 +100,129 @@ describe('DIRECT steering: angle hold (lander, real physics)', () => {
     expect(r.frames.every((f) => f.engineLeft && f.engineRight)).toBe(true);
     expect(Math.abs(end.angle)).toBeLessThan(1e-3);
     expect(end.vel.y).toBeLessThan(0); // climbing
+  });
+});
+
+describe('DIRECT steering: power (Task 11)', () => {
+  it('upper-arc compression: identity to 40°, near-horizontal fingers tilt ~55-65°, horizontal capped ~67°; sign kept', () => {
+    expect(compressTilt(30 * DEG) / DEG).toBeCloseTo(30, 9);
+    expect(compressTilt(-40 * DEG) / DEG).toBeCloseTo(-40, 9);
+    for (const deg of [75, 80, 85]) {
+      const t = compressTilt(deg * DEG) / DEG;
+      expect(t).toBeGreaterThanOrEqual(55);
+      expect(t).toBeLessThanOrEqual(65);
+      expect(compressTilt(-deg * DEG) / DEG).toBeCloseTo(-t, 9);
+    }
+    const h = compressTilt(90 * DEG) / DEG;
+    expect(h).toBeGreaterThanOrEqual(65);
+    expect(h).toBeLessThanOrEqual(70);
+    expect(compressTilt(108 * DEG)).toBe(DIRECT_TILT_CAP); // held main set past 100°: still capped
+    // monotonic
+    let prev = -Infinity;
+    for (let d = 0; d <= 110; d += 1) {
+      const t = compressTilt(d * DEG);
+      expect(t).toBeGreaterThanOrEqual(prev);
+      prev = t;
+    }
+  });
+
+  it('downward arc (top thrusters) is not compressed', () => {
+    const l = new DirectSteering();
+    // 135° command -> target body angle -45° exactly: on target and still = both top thrusters
+    const f = l.apply({ ...emptyFrame(), steer: dirAt(135) }, { mode: 'lander', angle: -45 * DEG, angularVel: 0 });
+    expect(f.topLeft && f.topRight).toBe(true);
+    expect(f.engineScale).toBeUndefined();
+  });
+
+  it('trailing-engine duty: full inside the band, ramps to 0 at the gate (15-20°)', () => {
+    expect(DIRECT_BURN_GATE / DEG).toBeGreaterThanOrEqual(15);
+    expect(DIRECT_BURN_GATE / DEG).toBeLessThanOrEqual(20);
+    expect(trailingDuty(0)).toBe(1);
+    expect(trailingDuty(DIRECT_THRUST_BAND)).toBe(1);
+    expect(trailingDuty(DIRECT_BURN_GATE)).toBe(0);
+    expect(trailingDuty(40 * DEG)).toBe(0);
+    const mid = trailingDuty((DIRECT_THRUST_BAND + DIRECT_BURN_GATE) / 2);
+    expect(mid).toBeCloseTo(0.5, 9);
+  });
+
+  it('differential burn: ~10° off and still, the leading engine always fires and the trailing one joins part-time', () => {
+    const l = new DirectSteering();
+    const frames = Array.from({ length: 60 }, () => l.apply({ ...emptyFrame(), steer: dirAt(30) }, { mode: 'lander', angle: 20 * DEG, angularVel: 0 }));
+    expect(frames.every((f) => f.engineLeft)).toBe(true); // clockwise turn toward +30°: left engine leads
+    const both = frames.filter((f) => f.engineLeft && f.engineRight).length / frames.length;
+    const expected = trailingDuty(10 * DEG);
+    expect(both).toBeGreaterThan(expected - 0.05);
+    expect(both).toBeLessThan(expected + 0.05);
+  });
+
+  it('no both-engine thrust far off-axis: across a sweep of real turns, both engines fire only within the gate of the target', async () => {
+    for (const deg of [45, -60, 80, 135, -150]) {
+      const r = await rig('lander');
+      r.hold(dirAt(deg), 180);
+      const top = Math.abs(deg) > 100;
+      const target = top ? wrapAngle(deg * DEG - Math.PI) : compressTilt(deg * DEG);
+      let prev = r.states[0]!;
+      for (let i = 1; i < r.frames.length; i++) {
+        const f = r.frames[i]!;
+        if ((f.engineLeft && f.engineRight) || (f.topLeft && f.topRight)) expect(Math.abs(wrapAngle(prev.angle - target)), `${deg}° tick ${i}`).toBeLessThanOrEqual(DIRECT_BURN_GATE + 1e-9);
+        prev = r.states[i]!;
+      }
+    }
+  });
+
+  it('a held 45° command delivers most of both-engine thrust quickly and climbs while pushing sideways', async () => {
+    const r = await rig('lander');
+    r.hold(dirAt(45), 60);
+    const firstSecond = r.frames.reduce((a, f) => a + (+f.engineLeft + +f.engineRight) / 2, 0) / 60;
+    expect(firstSecond).toBeGreaterThan(0.65);
+    const s1 = r.state();
+    r.hold(dirAt(45), 120);
+    const s3 = r.state();
+    // after settling: both engines nearly every tick, and it climbs (y-down: vy decreases) while accelerating right
+    const late = r.frames.slice(120).filter((f) => f.engineLeft && f.engineRight).length / 60;
+    expect(late).toBeGreaterThan(0.9);
+    expect(s3.vel.y).toBeLessThan(s1.vel.y);
+    expect(s3.vel.x).toBeGreaterThan(s1.vel.x);
+  });
+
+  it('straight up is decisively stronger than gravity: main engines run at DIRECT_LANDER_THRUST_SCALE (≥ 1.2 g net at G 3.2)', async () => {
+    expect(DIRECT_LANDER_THRUST_SCALE).toBeGreaterThan(1);
+    const r = await rig('lander');
+    r.hold(dirAt(0), 60);
+    expect(r.frames.every((f) => f.engineScale === DIRECT_LANDER_THRUST_SCALE)).toBe(true);
+    const a = r.states[59]!;
+    const b = r.states[29]!;
+    const netUp = -(a.vel.y - b.vel.y) / 0.5; // px/s², y-down
+    // gravity G m/s² at 30 px/m: T/W both = 2 × 0.9 × scale -> net (2 × 0.9 × scale - 1) g
+    expect(netUp / (G * 30)).toBeGreaterThan(1.15);
+  });
+
+  it('a near-horizontal finger (80°) roughly holds altitude instead of sinking', async () => {
+    const r = await rig('lander');
+    r.hold(dirAt(80), 60);
+    const s1 = r.state();
+    r.hold(dirAt(80), 120);
+    const s3 = r.state();
+    const vertAccel = (s3.vel.y - s1.vel.y) / 2 / (G * 30); // in g, + = sinking
+    expect(Math.abs(vertAccel)).toBeLessThan(0.2);
+    expect(s3.vel.x - s1.vel.x).toBeGreaterThan(0);
+  });
+
+  it('ENGINES scheme thrust is untouched: frames without engineScale fly exactly as before', async () => {
+    const run = async (scale?: number) => {
+      const physics = await PhysicsWorld.create({ gravity: { x: 0, y: G }, hitSpeedThreshold: 0.5 });
+      cleanup.push(() => physics.destroy());
+      const v = createVessel('lander', physics, { pos: { x: 0, y: 0 } }, () => {}, { tuning: resolveTuning(), refGravity: G, harpoonGuns: 1 });
+      for (let i = 0; i < 60; i++) {
+        v.applyInput({ ...emptyFrame(), thrust: true, ...(scale === undefined ? {} : { engineScale: scale }) }, FIXED_DT);
+        physics.step(FIXED_DT);
+      }
+      return v.state().vel.y;
+    };
+    const plain = await run();
+    expect(await run(1)).toBe(plain);
+    expect(await run(DIRECT_LANDER_THRUST_SCALE)).toBeLessThan(plain); // faster climb (y-down)
+    expect(resolveTuning().lander.thrust).toBeLessThan(1); // one engine alone still must not hover
   });
 });
 

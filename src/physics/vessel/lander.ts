@@ -61,7 +61,7 @@ export class LanderController extends VesselBase {
     this.setEngines(false, left, right, topL, topR);
     const n = (left ? 1 : 0) + (right ? 1 : 0) + (topL ? 1 : 0) + (topR ? 1 : 0);
     if (n === 0) return;
-    const f = t.thrust * this.weight;
+    const f = t.thrust * this.weight * (frame.engineScale ?? 1); // engineScale: DIRECT steering only
     if (left) this.thrustAt(f, { x: -t.engineOffset, y: t.height / 2 });
     if (right) this.thrustAt(f, { x: t.engineOffset, y: t.height / 2 });
     const ft = t.topThrust * this.weight;
