@@ -318,9 +318,15 @@ function checkZone(
       if (z.gusts.length === 0) err(`${what}: no gusts`);
       for (const g of z.gusts) {
         if (!(fin(g.atSec) && g.atSec >= 0 && pos(g.durationSec) && vecOk(g.accel))) err(`${what}: gust needs atSec >= 0, durationSec > 0, finite accel`);
+        if (g.silent !== undefined && typeof g.silent !== 'boolean') err(`${what}: gust silent must be a boolean`);
         if (g.warnSec !== undefined && !(fin(g.warnSec) && g.warnSec >= 0)) err(`${what}: warnSec must be >= 0`);
       }
       if (z.repeatEverySec !== undefined && !pos(z.repeatEverySec)) err(`${what}: repeatEverySec must be positive`);
+      if (z.fade && !(fin(z.fade.y0) && fin(z.fade.y1) && z.fade.y0 !== z.fade.y1)) err(`${what}: fade needs finite y0 !== y1`);
+      if (z.turbulence && !(fin(z.turbulence.seed) && fin(z.turbulence.amount) && z.turbulence.amount >= 0 && fin(z.turbulence.lateral) && z.turbulence.lateral >= 0 && pos(z.turbulence.hz)))
+        err(`${what}: turbulence needs finite seed, amount >= 0, lateral >= 0, hz > 0`);
+      if (z.speedCap !== undefined && !pos(z.speedCap)) err(`${what}: speedCap must be positive`);
+      if (z.telegraphMargin !== undefined && !(fin(z.telegraphMargin) && z.telegraphMargin >= 0)) err(`${what}: telegraphMargin must be >= 0`);
       break;
     case 'radiationEmitter':
       if (!inside(z)) err(`${what}: emitter outside the world`);

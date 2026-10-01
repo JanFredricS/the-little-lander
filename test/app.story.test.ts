@@ -28,12 +28,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { STORY_LEVELS } from '../src/contracts';
-import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState, SteeringScheme } from '../src/contracts';
+import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputFrame, InputSampleContext, InputSourceSample, LevelId, LevelSpec, ScreenState, SteeringScheme } from '../src/contracts';
 import type { LevelSession } from '../src/game/session';
 import type { GameUiOptions } from '../src/ui/gameUi';
 import type { ScreenContext } from '../src/ui/screens';
 import { SaveStore, type StorageLike } from '../src/story/save';
 import { emptyFrame } from '../src/shell/input';
+import { frameHasInput } from '../src/ui/controlsHelp';
 import { FIXED_DT } from '../src/contracts';
 import { MIN_COMPLETION_FUEL, pilotFor, type Pilot } from './support/storyPilots';
 
@@ -72,6 +73,12 @@ const h = vi.hoisted(() => ({
   pilotEngineFrames: true,
   /** GameUi.resetTerrainHistory() calls (once per LevelView, on its first rendered frame). */
   terrainResets: 0,
+  /** Fake GameUi mirrors the real mid-level controls card hold (vesselModeChanged -> hold until the first input). */
+  holdOnSwitch: false,
+  /** Session sim time of every App input.clear() (PilotKeys.clear), -1 outside a level. */
+  inputClears: [] as number[],
+  /** Fake GameUi: start a controls-card hold once the session reaches this sim time (no switch / cutscene around it). */
+  holdAtSim: null as number | null,
 }));
 
 vi.mock('../src/levels/registry', async (importOriginal) => {
@@ -129,7 +136,10 @@ vi.mock('../src/ui/gameUi', async () => {
   const screens = await import('../src/ui/screens');
   return {
     GameUi: class {
-      holdSimulation = false;
+      private held = false;
+      get holdSimulation() {
+        return this.held;
+      }
       private state: ScreenState = { id: 'boot' };
       private steering: SteeringScheme | null;
       private showMinimap: boolean;
@@ -168,10 +178,19 @@ vi.mock('../src/ui/gameUi', async () => {
         h.uiScreens.push(s.id);
       }
       setLoading() {}
-      onEvent() {}
+      onEvent(e: GameEvent) {
+        if (h.holdOnSwitch && e.type === 'vesselModeChanged') this.held = true;
+      }
       levelStarted() {}
-      noteFrame() {}
-      tick() {}
+      noteFrame(f: InputFrame) {
+        if (this.held && frameHasInput(f)) this.held = false;
+      }
+      tick() {
+        if (h.holdAtSim !== null && h.session && h.session.simTime >= h.holdAtSim) {
+          h.holdAtSim = null;
+          this.held = true;
+        }
+      }
       render() {}
       noteFrameTiming() {}
       resetTerrainHistory() {
@@ -235,7 +254,9 @@ vi.mock('../src/shell/input', async (importOriginal) => {
     setDirectSteering(on: boolean) {
       h.kbDirect.push(on);
     }
-    clear() {}
+    clear() {
+      h.inputClears.push(h.session?.simTime ?? -1);
+    }
     dispose() {}
   }
   class NoPointer {
@@ -361,6 +382,9 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     h.steering = null;
     h.pilotEngineFrames = true;
     h.terrainResets = 0;
+    h.holdOnSwitch = false;
+    h.inputClears = [];
+    h.holdAtSim = null;
     vi.spyOn(console, 'error').mockImplementation((...a) => void errors.push(a));
     vi.spyOn(console, 'warn').mockImplementation((...a) => void errors.push(a));
     vi.stubGlobal('window', { addEventListener() {}, removeEventListener() {} });
@@ -608,6 +632,75 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(h.kbDirect.length).toBe(gates);
     expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
     expect(r.save.state.settings.steering).toBe('engines');
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
+  it('round 10: floatingIsles detach - AUTO steering rewires from ENGINES (CSM) to JOYSTICK at the switch, and the controls card holds the sim until the first input', { timeout: 300_000 }, async () => {
+    h.holdOnSwitch = true;
+    let kbAtIslesStart: boolean[] | null = null;
+    let kbAtSwitch: boolean[] | null = null;
+    let quiet = 120; // the player reads the card: no input for 2 s of steps
+    const heldPoses: string[] = [];
+    let releasedAt = -1;
+    h.pilotOverride = (id) => {
+      const p = pilotFor(id);
+      if (id !== 'floatingIsles') return p;
+      return (s, t) => {
+        kbAtIslesStart ??= [...h.kbDirect];
+        if (s.state.mode !== 'lander') return p(s, t);
+        kbAtSwitch ??= [...h.kbDirect];
+        if (quiet-- > 0) {
+          heldPoses.push(`${s.simTime.toFixed(4)} ${s.state.pos.x.toFixed(3)} ${s.state.pos.y.toFixed(3)}`);
+          return emptyFrame();
+        }
+        if (releasedAt < 0) releasedAt = s.simTime;
+        return p(s, t);
+      };
+    };
+    const r = await playStory(() => releasedAt >= 0 && h.session !== null && h.session.simTime > releasedAt + 1);
+    // CSM phase on floatingIsles: ENGINES (no rewire from Descent's ENGINES at level start) ...
+    expect(kbAtIslesStart).toEqual([true, false]);
+    // ... JOYSTICK (the DIRECT keys) from the detach on
+    expect(kbAtSwitch).toEqual([true, false, true]);
+    expect(h.ptrDirect.at(-1)).toBe(false);
+    expect(r.save.state.settings.steering).toBeNull();
+    // held: 120 steps without input, the vessel frozen (no physics step)
+    expect(heldPoses).toHaveLength(120);
+    expect(new Set(heldPoses).size).toBe(1);
+    // the first input released it and the level flies on
+    expect(h.session!.simTime).toBeGreaterThan(releasedAt + 1);
+    expect(r.app.state).toMatchObject({ id: 'playing', levelId: 'floatingIsles' });
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
+  it('round 10 audit: a hold beginning mid-level drops the held input (input.clear + direct.reset) on its first held step', { timeout: 300_000 }, async () => {
+    const { DirectSteering } = await import('../src/shell/directSteering');
+    const resets: number[] = [];
+    const orig = DirectSteering.prototype.reset;
+    vi.spyOn(DirectSteering.prototype, 'reset').mockImplementation(function (this: InstanceType<typeof DirectSteering>) {
+      resets.push(h.session?.simTime ?? -1);
+      return orig.call(this);
+    });
+    // a hold in the middle of hangarRun's flight: no level start, switch, cutscene or pause around it
+    h.holdAtSim = 5;
+    let heldAt = -1;
+    let quiet = 30;
+    h.pilotOverride = (id) => {
+      const p = pilotFor(id);
+      return (s, t) => {
+        if (s.simTime < 5) return p(s, t);
+        if (heldAt < 0) heldAt = s.simTime;
+        return quiet-- > 0 ? emptyFrame() : p(s, t);
+      };
+    };
+    const r = await playStory(() => heldAt >= 0 && quiet < -60);
+    expect(heldAt).toBeGreaterThanOrEqual(5);
+    // exactly once, at the frozen hold time (the sim does not advance while held)
+    expect(h.inputClears.filter((t) => t === heldAt)).toHaveLength(1);
+    expect(resets.filter((t) => t === heldAt)).toHaveLength(1);
+    expect(h.session!.simTime).toBeGreaterThan(heldAt); // the first input released it
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();
   });

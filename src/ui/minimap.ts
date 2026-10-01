@@ -5,6 +5,10 @@
  * lifted / shifted clear of any on-screen touch control (minimapPlacement).
  * Always on by default; pause-menu MINIMAP toggle (Settings.showMinimap).
  *
+ * Round 10: every plantBeacons site gets an amber diamond (solid = still to
+ * plant, hollow + dimmed = planted), edge-pinned with its own arrow like the
+ * exit. Marker objects are made in setLevel; per frame they only move.
+ *
  * PERF (stutter hunt): the WHOLE level is baked ONCE per level start
  * (bakeMinimap: a scanline fill of the terrain pieces at 1/MINIMAP_SCALE plus a
  * 1 px outline, straight into an RGBA buffer - no canvas, no antialiasing)
@@ -23,7 +27,7 @@
  */
 
 import { BufferImageSource, Container, Graphics, Rectangle, Sprite, Texture } from 'pixi.js';
-import type { ExitDockEntity, LevelSpec, Rect, Vec2 } from '../contracts';
+import type { BeaconSiteEntity, ExitDockEntity, LevelSpec, Rect, Vec2 } from '../contracts';
 import { UI } from './uiTheme';
 
 /** World px per minimap px. */
@@ -120,6 +124,59 @@ export function bakeMinimap(spec: Pick<LevelSpec, 'worldSize' | 'terrain'>): Min
   return { w, h, data };
 }
 
+/** A marker inside the window, pinned to the edge inset (with an arrow) when its target is out of range. Reused per frame. */
+export interface MinimapMarker {
+  x: number;
+  y: number;
+  inside: boolean;
+  /** Direction vessel -> target (screen radians, 0 = right, y-down). */
+  angle: number;
+  /** Edge arrow centre (pinned only), clamped so the whole arrow stays inside the window. */
+  ax: number;
+  ay: number;
+}
+
+export function createMinimapMarker(): MinimapMarker {
+  return { x: 0, y: 0, inside: false, angle: 0, ax: 0, ay: 0 };
+}
+
+/** Target (tx, ty) in window px, seen from the vessel at (vx, vy): inside the inset box, or pinned to it along the ray. Writes `out`. */
+export function pinMarker(out: MinimapMarker, tx: number, ty: number, vx: number, vy: number): MinimapMarker {
+  const W = MINIMAP_W;
+  const H = MINIMAP_H;
+  const lo = EDGE_INSET;
+  const hiX = W - EDGE_INSET;
+  const hiY = H - EDGE_INSET;
+  out.angle = Math.atan2(ty - vy, tx - vx);
+  out.inside = tx >= lo && tx <= hiX && ty >= lo && ty <= hiY;
+  if (out.inside) {
+    out.x = tx;
+    out.y = ty;
+    return out;
+  }
+  // pin to the inset box along the ray from the vessel (which is inside it)
+  const dx = tx - vx;
+  const dy = ty - vy;
+  let t = 1;
+  if (dx > 0) t = Math.min(t, (hiX - vx) / dx);
+  else if (dx < 0) t = Math.min(t, (lo - vx) / dx);
+  if (dy > 0) t = Math.min(t, (hiY - vy) / dy);
+  else if (dy < 0) t = Math.min(t, (lo - vy) / dy);
+  t = Math.max(0, t);
+  out.x = Math.min(hiX, Math.max(lo, vx + dx * t));
+  out.y = Math.min(hiY, Math.max(lo, vy + dy * t));
+  out.ax = Math.min(W - ARROW_HALF, Math.max(ARROW_HALF, out.x + ARROW_OFFSET * Math.cos(out.angle)));
+  out.ay = Math.min(H - ARROW_HALF, Math.max(ARROW_HALF, out.y + ARROW_OFFSET * Math.sin(out.angle)));
+  return out;
+}
+
+const exitScratch = createMinimapMarker();
+
+/** A beacon site (its landing-surface centre, world px) in the window `l` (after minimapLayout this frame). Writes `out`. */
+export function minimapSiteMarker(out: MinimapMarker, l: MinimapLayout, site: Pick<BeaconSiteEntity, 'x' | 'y'>): MinimapMarker {
+  return pinMarker(out, site.x / MINIMAP_SCALE - l.winX, site.y / MINIMAP_SCALE - l.winY, l.vx, l.vy);
+}
+
 /** Per-frame minimap geometry (all minimap / virtual px; reused, never reallocated). */
 export interface MinimapLayout {
   /** Window origin in baked px (integer). */
@@ -181,31 +238,13 @@ export function minimapLayout(out: MinimapLayout, texW: number, texH: number, ve
   out.vy = vy;
   out.hasExit = !!exit;
   if (!exit) return out;
-  const ex = exit.x / S - winX;
-  const ey = (exit.y - exit.h / 2) / S - winY;
-  const lo = EDGE_INSET;
-  const hiX = W - EDGE_INSET;
-  const hiY = H - EDGE_INSET;
-  out.exitAngle = Math.atan2(ey - vy, ex - vx);
-  out.exitInside = ex >= lo && ex <= hiX && ey >= lo && ey <= hiY;
-  if (out.exitInside) {
-    out.ex = ex;
-    out.ey = ey;
-    return out;
-  }
-  // pin to the inset box along the ray from the vessel (which is inside it)
-  const dx = ex - vx;
-  const dy = ey - vy;
-  let t = 1;
-  if (dx > 0) t = Math.min(t, (hiX - vx) / dx);
-  else if (dx < 0) t = Math.min(t, (lo - vx) / dx);
-  if (dy > 0) t = Math.min(t, (hiY - vy) / dy);
-  else if (dy < 0) t = Math.min(t, (lo - vy) / dy);
-  t = Math.max(0, t);
-  out.ex = Math.min(hiX, Math.max(lo, vx + dx * t));
-  out.ey = Math.min(hiY, Math.max(lo, vy + dy * t));
-  out.ax = Math.min(W - ARROW_HALF, Math.max(ARROW_HALF, out.ex + ARROW_OFFSET * Math.cos(out.exitAngle)));
-  out.ay = Math.min(H - ARROW_HALF, Math.max(ARROW_HALF, out.ey + ARROW_OFFSET * Math.sin(out.exitAngle)));
+  const m = pinMarker(exitScratch, exit.x / S - winX, (exit.y - exit.h / 2) / S - winY, vx, vy);
+  out.ex = m.x;
+  out.ey = m.y;
+  out.exitInside = m.inside;
+  out.exitAngle = m.angle;
+  out.ax = m.ax;
+  out.ay = m.ay;
   return out;
 }
 
@@ -237,6 +276,31 @@ export function minimapPlacement(avoid: readonly Rect[], w: number, h: number, v
   return { x: corner.x, y: Math.max(minTop, Math.round(y)) };
 }
 
+/** Beacon sites: amber-yellow (not the vessel's amber arrow, not the exit's green square). */
+export const MINIMAP_BEACON_COLOR = 0xffe040;
+const BEACON = MINIMAP_BEACON_COLOR;
+/** Planted sites are hollow and dimmed. */
+const PLANTED_ALPHA = 0.55;
+
+interface SiteMark {
+  id: string;
+  x: number;
+  y: number;
+  planted: boolean;
+  /** The state the marker graphic was last drawn for. */
+  drawn: boolean;
+  mark: Graphics;
+  arrow: Graphics;
+  m: MinimapMarker;
+}
+
+/** Site diamond (±3): solid = still to plant, hollow = planted. */
+function drawSite(g: Graphics, planted: boolean): Graphics {
+  const d = [0, -3, 3, 0, 0, 3, -3, 0];
+  if (planted) return g.poly(d).stroke({ color: BEACON, width: 1, alignment: 0.5 });
+  return g.poly(d).fill(BEACON).stroke({ color: UI.outline, width: 1, alignment: 1 });
+}
+
 /**
  * The Pixi minimap. setLevel() bakes the level once; render() per frame only
  * moves the texture frame, the sprite and the markers.
@@ -253,6 +317,9 @@ export class MinimapView {
   private texW = 0;
   private texH = 0;
   private exit: ExitDockEntity | null = null;
+  /** plantBeacons sites of this level, markers made once in setLevel. */
+  private sites: SiteMark[] = [];
+  private readonly siteLayer = new Container();
   private border = NaN;
   private readonly layout = createMinimapLayout();
   /** Last applied texture frame (re-UV only when it changes). */
@@ -262,7 +329,7 @@ export class MinimapView {
 
   constructor() {
     this.map.position.set(MINIMAP_BORDER, MINIMAP_BORDER);
-    this.map.addChild(this.sprite, this.exitMark, this.exitArrow, this.vessel);
+    this.map.addChild(this.sprite, this.siteLayer, this.exitMark, this.exitArrow, this.vessel);
     this.root.addChild(this.frameG, this.map);
     // markers: drawn once, only moved / rotated per frame
     this.vessel.poly([0, -3, 3, 3, 0, 1.5, -3, 3]).fill(UI.accent).stroke({ color: UI.outline, width: 1, alignment: 1 });
@@ -288,11 +355,51 @@ export class MinimapView {
     this.lastFrame.fill(NaN);
     const o = spec.objectives.find((x) => x.kind === 'reachExit');
     this.exit = o && o.kind === 'reachExit' ? (spec.entities.find((e): e is ExitDockEntity => e.kind === 'exitDock' && e.id === o.exitId) ?? null) : null;
+    this.setSites(spec);
     try {
       upload?.(source);
     } catch {
       /* best effort: the first render uploads it otherwise */
     }
+  }
+
+  /**
+   * Markers for every plantBeacons site (made here, once per level; per frame they only move).
+   * Sites past a satisfied count (more sites than `count`) keep their solid marker: moot today
+   * (every shipped level has count === siteIds.length).
+   */
+  private setSites(spec: Pick<LevelSpec, 'objectives' | 'entities'>): void {
+    this.clearSites();
+    const ids = new Set<string>();
+    for (const o of spec.objectives) if (o.kind === 'plantBeacons') for (const id of o.siteIds) ids.add(id);
+    for (const e of spec.entities) {
+      if (e.kind !== 'beaconSite' || !ids.has(e.id)) continue;
+      const mark = new Graphics();
+      const arrow = new Graphics();
+      drawSite(mark, false);
+      arrow.poly([3, 0, -2, -3, -2, 3]).fill(BEACON);
+      this.siteLayer.addChild(mark, arrow);
+      this.sites.push({ id: e.id, x: e.x, y: e.y, planted: false, drawn: false, mark, arrow, m: createMinimapMarker() });
+    }
+  }
+
+  private clearSites(): void {
+    for (const st of this.sites) {
+      st.mark.destroy();
+      st.arrow.destroy();
+    }
+    this.sites = [];
+  }
+
+  /** A beacon was planted at `siteId` (beaconPlanted event): its marker turns hollow and dim. */
+  setPlanted(siteId: string): void {
+    const st = this.sites.find((q) => q.id === siteId);
+    if (st) st.planted = true;
+  }
+
+  /** Beacon site markers as last rendered (tests / diagnostics). */
+  get siteMarkers(): readonly { id: string; planted: boolean; x: number; y: number; inside: boolean; arrow: boolean; alpha: number }[] {
+    return this.sites.map((st) => ({ id: st.id, planted: st.planted, x: st.mark.x, y: st.mark.y, inside: st.m.inside, arrow: st.arrow.visible, alpha: st.mark.alpha }));
   }
 
   /** Baked texture size (minimap px), 0 × 0 before the first level. */
@@ -352,6 +459,21 @@ export class MinimapView {
         this.exitArrow.rotation = l.exitAngle;
       }
     }
+    for (const st of this.sites) {
+      if (st.drawn !== st.planted) {
+        // redrawn only on the state change (once per plant), not per frame
+        st.drawn = st.planted;
+        drawSite(st.mark.clear(), st.planted);
+        st.mark.alpha = st.arrow.alpha = st.planted ? PLANTED_ALPHA : 1;
+      }
+      const m = minimapSiteMarker(st.m, l, st);
+      st.mark.position.set(Math.round(m.x), Math.round(m.y));
+      st.arrow.visible = !m.inside;
+      if (!m.inside) {
+        st.arrow.position.set(Math.round(m.ax), Math.round(m.ay));
+        st.arrow.rotation = m.angle;
+      }
+    }
   }
 
   /** Leaving the level (menus): free the baked texture (up to ~0.85 MB) and hide; the next setLevel bakes again. */
@@ -361,6 +483,7 @@ export class MinimapView {
     this.texture = null;
     this.texW = this.texH = 0;
     this.exit = null;
+    this.clearSites();
     this.lastFrame.fill(NaN);
     this.root.visible = false;
   }

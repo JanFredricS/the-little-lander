@@ -364,13 +364,17 @@ export class FlightView {
     const wind = this.wind;
     wind.begin();
     for (const a of env.wind.active) {
-      const dir = Math.sign(a.gust.accel.x) || 1;
       const warning = a.phase === 'warning';
+      // round 10: mostly-vertical wind (floatingIsles' sky ceiling / low turbulence) streaks up or down
+      const vertical = Math.abs(a.accel.y) > Math.abs(a.accel.x);
+      const dir = (vertical ? Math.sign(a.accel.y) : Math.sign(a.accel.x)) || 1;
       for (let i = 0; i < (warning ? 2 : 5); i++) {
-        const y = vs.pos.y - 40 + i * 20;
-        const x = vs.pos.x - 60 * dir + (((nowMs / 3) * dir + i * 37) % 120);
+        const along = -60 * dir + (((nowMs / 3) * dir + i * 37) % 120);
+        const x = vertical ? vs.pos.x - 40 + i * 20 : vs.pos.x + along;
+        const y = vertical ? vs.pos.y + along : vs.pos.y - 40 + i * 20;
         const sp = wind.next('fx.windStreak', Math.floor(nowMs / 90) + i, Math.round(x), Math.round(y));
-        sp.scale.x = dir;
+        sp.scale.x = vertical ? 1 : dir;
+        sp.rotation = vertical ? (dir * Math.PI) / 2 : 0;
         sp.alpha = warning ? 0.6 : 0.9;
         if (warning) sp.tint = 0xffe060;
       }

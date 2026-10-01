@@ -108,6 +108,8 @@ export class App {
   private steeringSetting: SteeringScheme | null = null;
   /** Switch the input layer to a scheme (set in start()). */
   private applySteering: (s: SteeringScheme) => void = () => {};
+  /** ui.holdSimulation on the previous step (a hold that just began clears input). */
+  private heldLastStep = false;
   /** Reused terrain diagnostics record (FPS counter terrain line). */
   /** A new level view has not rendered yet (its load frame is dropped from the terrain readout). */
   private terrainDiagFresh = false;
@@ -198,7 +200,7 @@ export class App {
       onSteeringChange: (st) => {
         // an explicit choice applies on every level from now on; null (AUTO) = the per-level default again
         this.steeringSetting = st;
-        this.applySteering(resolveSteering(st, 'levelId' in this.state ? this.state.levelId : null));
+        this.applySteering(resolveSteering(st, 'levelId' in this.state ? this.state.levelId : null, this.session?.state.mode ?? null));
         if (onSteeringChange) onSteeringChange(st);
         else this.save.setSettings({ steering: st });
       },
@@ -296,9 +298,15 @@ export class App {
       return;
     }
     this.session = session;
-    // never-chosen steering resolves per level (ENGINES on Descent, JOYSTICK elsewhere)
-    const scheme = resolveSteering(this.steeringSetting, levelId);
+    // never-chosen steering resolves per level and phase (ENGINES on Descent and floatingIsles' CSM, else JOYSTICK)
+    const scheme = resolveSteering(this.steeringSetting, levelId, spec.vesselMode);
     if (scheme !== this.steering) this.applySteering(scheme);
+    // ... and again at a mid-level vessel switch (floatingIsles' detach: CSM ENGINES -> lander JOYSTICK)
+    session.on((e) => {
+      if (e.type !== 'vesselModeChanged' || this.session !== session) return;
+      const next = resolveSteering(this.steeringSetting, levelId, e.to);
+      if (next !== this.steering) this.applySteering(next);
+    });
     this.direct.setLanderTuning(session.tuning.lander); // DIRECT keyboard couple balanced for this level's lander
     session.on((e) => this.ui.onEvent(e));
     if (this.options.onEvent) session.on(this.timedOnEvent);
@@ -323,6 +331,7 @@ export class App {
     this.ui.levelStarted(spec);
     session.start();
     this.clearInputOnNextStep = true;
+    this.heldLastStep = false;
     this.loop.setPaused(false);
   }
 
@@ -348,6 +357,14 @@ export class App {
       this.direct.reset();
       this.clearInputOnNextStep = false;
     }
+    // a controls card started holding mid-level (vessel switch): drop held input first, so the
+    // keys / touches of the flight before it neither dismiss the card nor fire once it is gone
+    const held = this.ui.holdSimulation;
+    if (held && !this.heldLastStep) {
+      this.input.clear();
+      this.direct.reset();
+    }
+    this.heldLastStep = held;
     // one reused context (no per-step object + closure)
     const ctx = this.inputCtx;
     ctx.mode = s.state.mode;

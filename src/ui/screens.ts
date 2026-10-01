@@ -4,7 +4,7 @@
  * machine, or a UI-local command). Views only draw these; tests drive them.
  */
 
-import { resolveSteering, type CrashCause, type LevelId, type LevelSpec, type ScreenAction, type ScreenState, type SteeringScheme } from '../contracts';
+import { resolveSteering, type CrashCause, type LevelId, type LevelSpec, type ScreenAction, type ScreenState, type SteeringScheme, type VesselMode } from '../contracts';
 import { formatTime, levelEntries, levelMenuItems, nextStoryLevel, STORY_TITLES, type SaveView } from './levelSelect';
 import type { MenuItem } from './menu';
 import type { TouchPref } from './touch/touchModel';
@@ -22,6 +22,8 @@ export interface ScreenContext {
   lowRes?: boolean;
   /** Settings.steering: an explicit scheme, or null / unset = AUTO (resolved per level: resolveSteering). */
   steering?: SteeringScheme | null;
+  /** The vessel mode being flown (AUTO steering resolves per phase, e.g. floatingIsles' CSM). */
+  vesselMode?: VesselMode | null;
   /** Minimap shown (Settings.showMinimap; default true). */
   showMinimap?: boolean;
   /** Hull fraction at the end of the last level (results screen). */
@@ -89,10 +91,10 @@ function schemeName(s: SteeringScheme): string {
 
 /**
  * The STEERING item for `setting` on level `levelId`: an explicit scheme by name, or
- * AUTO (null = never chosen) with the scheme it resolves to there, e.g. "AUTO (ENGINES)" on Descent.
+ * AUTO (null = never chosen) with the scheme it resolves to there (and in `mode`, per phase), e.g. "AUTO (ENGINES)" on Descent.
  */
-export function steeringLabel(setting: SteeringScheme | null, levelId?: string | null): string {
-  return `STEERING: ${setting ? schemeName(setting) : `AUTO (${schemeName(resolveSteering(null, levelId))})`}`;
+export function steeringLabel(setting: SteeringScheme | null, levelId?: string | null, mode?: VesselMode | null): string {
+  return `STEERING: ${setting ? schemeName(setting) : `AUTO (${schemeName(resolveSteering(null, levelId, mode))})`}`;
 }
 
 /** The STEERING item's next setting: ENGINES -> DIRECT -> JOYSTICK -> AUTO (null: per-level default) -> ENGINES. */
@@ -173,7 +175,7 @@ export function screenModel(state: ScreenState, ctx: ScreenContext): ScreenModel
           { id: 'retry', label: 'RESTART', enabled: true },
           { id: 'controls', label: 'CONTROLS', enabled: true },
           { id: 'touch', label: touchLabel(ctx.touchPref), enabled: true },
-          { id: 'steering', label: steeringLabel(ctx.steering ?? null, state.levelId), enabled: true },
+          { id: 'steering', label: steeringLabel(ctx.steering ?? null, state.levelId, ctx.vesselMode), enabled: true },
           { id: 'minimap', label: minimapLabel(ctx.showMinimap ?? true), enabled: true },
           { id: 'swap', label: swapLabel(ctx.swapEngines ?? true), enabled: true },
           { id: 'fps', label: fpsLabel(ctx.showFps ?? false), enabled: true },

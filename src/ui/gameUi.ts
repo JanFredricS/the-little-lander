@@ -16,7 +16,7 @@ import { resolveSteering, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
-import { frameHasInput } from './controlsHelp';
+import { frameHasInput, missionLines } from './controlsHelp';
 import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } from './fpsMeter';
 import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, type HudState } from './hud/hudState';
@@ -117,6 +117,10 @@ export class GameUi {
   private helpBlocks = false;
   /** Sim seconds left before a mid-level (mode change) card hides itself. */
   private helpTtl = 0;
+  /** The shown card is the level-start one (it states the mission, round 10 G). */
+  private helpIsStart = false;
+  /** This level's mission line(s), built once per level start. */
+  private mission = '';
   private pauseHelp = false;
   private loading = false;
   private touchDetected: boolean;
@@ -218,6 +222,11 @@ export class GameUi {
     return this.model;
   }
 
+  /** The mission text on the shown controls card ('' when none). */
+  get helpMission(): string {
+    return this.hudView.helpMissionText;
+  }
+
   get helpVisible(): boolean {
     return this.hudView.helpVisible;
   }
@@ -268,6 +277,7 @@ export class GameUi {
       showFps: this.showFps,
       lowRes: this.lowRes,
       steering: this.steeringSetting,
+      vesselMode: this.spec ? this.hud.mode : null,
       showMinimap: this.showMinimap,
       lastHull: this.lastHull,
       ...(this.o.story ? { story: this.o.story() } : {}),
@@ -312,7 +322,7 @@ export class GameUi {
     const direct = this.steering === 'direct';
     const joystick = this.steering === 'joystick';
     if (this.state.id === 'paused' && this.pauseHelp) this.hudView.setHelp(this.hud.mode, helpTouch, false, this.swapEngines, direct, joystick);
-    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct, joystick);
+    else if (playing && this.helpMode) this.hudView.setHelp(this.helpMode, helpTouch, this.helpBlocks, this.swapEngines, direct, joystick, this.helpIsStart ? this.mission : '');
     else this.hudView.setHelp(null, false);
   }
 
@@ -321,8 +331,8 @@ export class GameUi {
   levelStarted(spec: LevelSpec): void {
     this.spec = spec;
     this.hud = initHud(spec);
-    // never-chosen steering: per level (ENGINES on Descent - touch buttons too - JOYSTICK elsewhere)
-    this.steering = resolveSteering(this.steeringSetting, spec.id);
+    // never-chosen steering: per level / phase (ENGINES on Descent and floatingIsles' CSM - touch buttons too - else JOYSTICK)
+    this.steering = resolveSteering(this.steeringSetting, spec.id, spec.vesselMode);
     this.touch.setSteering(this.steering);
     // the minimap's terrain is baked ONCE here (load frame) and uploaded to the GPU right away
     this.minimap.setLevel(spec, (src) => this.o.pixi.uploadTexture(src));
@@ -331,6 +341,9 @@ export class GameUi {
     this.mmPose[2] = spec.spawn.angle ?? 0;
     this.helpMode = spec.vesselMode;
     this.helpBlocks = true;
+    // round 10 (G): the start card states the mission, readable while it holds the level
+    this.mission = missionLines(spec.objectives).join('\n');
+    this.helpIsStart = true;
     this.loading = false;
     this.refreshModel(true);
     this.syncLayers();
@@ -339,7 +352,9 @@ export class GameUi {
   onEvent(e: GameEvent): void {
     const prevMode = this.hud.mode;
     this.hud = hudReduce(this.hud, e);
+    if (e.type === 'beaconPlanted') this.minimap.setPlanted(e.siteId);
     if (e.type === 'vesselModeChanged' && e.to !== prevMode) this.showModeHelp(e.to);
+    else if (e.type === 'vesselModeChanged') this.syncSteering(e.to);
   }
 
   tick(v: VesselState | null, dt: number): void {
@@ -357,15 +372,29 @@ export class GameUi {
     }
   }
 
-  /** New controls mid-level: show the card again (non-blocking, times out). */
+  /**
+   * New controls mid-level (floatingIsles' detach): show the card again and, like the
+   * level-start card, HOLD the simulation until the first input (round 10: the lander
+   * kept falling under a non-blocking card and crashed while the player read it).
+   */
   private showModeHelp(mode: VesselMode): void {
+    this.syncSteering(mode); // AUTO steering is per phase (floatingIsles: ENGINES for the CSM, JOYSTICK after the detach)
     this.helpMode = mode;
-    this.helpBlocks = false;
+    this.helpBlocks = true;
+    this.helpIsStart = false;
     this.helpTtl = 6;
     this.syncLayers();
   }
 
-  /** True while the level-start help card holds the simulation. */
+  /** The scheme in use for `mode` on this level (a never-chosen setting resolves per phase). */
+  private syncSteering(mode: VesselMode): void {
+    const s = resolveSteering(this.steeringSetting, this.spec?.id ?? null, mode);
+    if (s === this.steering) return;
+    this.steering = s;
+    this.touch.setSteering(s);
+  }
+
+  /** True while a blocking controls card (level start, or a mid-level vessel switch) holds the simulation. */
   get holdSimulation(): boolean {
     return this.helpBlocks && this.helpMode !== null;
   }
@@ -528,7 +557,7 @@ export class GameUi {
     } else if (a.ui === 'toggleSteering') {
       // ENGINES -> DIRECT -> JOYSTICK -> AUTO (null: the per-level default again) -> ENGINES
       this.steeringSetting = nextSteering(this.steeringSetting);
-      this.steering = resolveSteering(this.steeringSetting, this.spec?.id ?? null);
+      this.steering = resolveSteering(this.steeringSetting, this.spec?.id ?? null, this.spec ? this.hud.mode : null);
       this.touch.setSteering(this.steering);
       this.o.onSteeringChange?.(this.steeringSetting);
       this.refreshModel(false);

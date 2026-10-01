@@ -41,9 +41,12 @@ export class HudView {
   private readonly help = new Container();
   private readonly helpG = new Graphics();
   private readonly helpTitle = new PixelText('', { color: UI.accent, shadow: UI.outline, scale: 2 });
+  /** Round 10 (G): the mission line(s) on the level-start card. */
+  private readonly helpMission = new PixelText('', { color: UI.light, shadow: UI.outline });
   private readonly helpBody = new PixelText('', { color: UI.ink });
   private readonly helpHint = new PixelText('', { color: UI.dim });
   private helpKey = '';
+  private missionShown = '';
   /**
    * Inputs of the last vector redraw. Pixi rebuilds a Graphics' geometry (and
    * the JS garbage that goes with it) on every clear(), so the bars / panel /
@@ -65,35 +68,46 @@ export class HudView {
   constructor() {
     for (let i = 0; i < MAX_OBJECTIVE_LINES; i++) this.objTexts.push(new PixelText('', { color: UI.ink, shadow: UI.outline }));
     this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.exitText, this.bossLabel);
-    this.help.addChild(this.helpG, this.helpTitle, this.helpBody, this.helpHint);
+    this.help.addChild(this.helpG, this.helpTitle, this.helpMission, this.helpBody, this.helpHint);
     this.help.visible = false;
     this.root.addChild(this.help);
   }
 
   /** Show (mode) or hide (null) the controls help card. */
-  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false, joystick = false): void {
+  /** `mission`: the level-start card's mission line(s) ('' = none: mid-level cards, the pause card). */
+  setHelp(mode: VesselMode | null, touch: boolean, start = true, swap = false, direct = false, joystick = false, mission = ''): void {
     if (mode === null) {
       this.help.visible = false;
       this.helpKey = '';
       return;
     }
-    const key = helpCardKey(mode, touch, start, this.border, swap, direct, joystick);
+    const key = `${helpCardKey(mode, touch, start, this.border, swap, direct, joystick)}|${mission}`;
     this.help.visible = true;
     if (key === this.helpKey) return;
     this.helpKey = key;
     const card = helpCard(mode, touch, start, swap, direct, joystick);
     this.helpTitle.setText(card.title);
+    this.missionShown = mission;
+    this.helpMission.setText(mission);
+    this.helpMission.visible = mission !== '';
     this.helpBody.setText(card.lines.join('\n'));
     this.helpHint.setText(card.hint);
-    const w = Math.max(this.helpTitle.width, this.helpBody.width, this.helpHint.width) + 24;
-    const h = this.helpTitle.height + this.helpBody.height + this.helpHint.height + 36;
+    const mh = mission ? this.helpMission.height + 8 : 0;
+    const w = Math.max(this.helpTitle.width, mission ? this.helpMission.width : 0, this.helpBody.width, this.helpHint.width) + 24;
+    const h = this.helpTitle.height + mh + this.helpBody.height + this.helpHint.height + 36;
     const x = Math.round((VIEW_WIDTH - w) / 2);
     const y = Math.round((VIEW_HEIGHT - h) / 2) + 10;
     this.helpG.clear();
     panel(this.helpG, x, y, w, h, this.border, 0.9);
     this.helpTitle.position.set(Math.round(VIEW_WIDTH / 2 - this.helpTitle.width / 2), y + 8);
-    this.helpBody.position.set(x + 12, y + 14 + this.helpTitle.height);
+    this.helpMission.position.set(Math.round(VIEW_WIDTH / 2 - this.helpMission.width / 2), y + 14 + this.helpTitle.height);
+    this.helpBody.position.set(x + 12, y + 14 + this.helpTitle.height + mh);
     this.helpHint.position.set(Math.round(VIEW_WIDTH / 2 - this.helpHint.width / 2), y + h - 8 - this.helpHint.height);
+  }
+
+  /** The mission text on the shown card ('' if none / hidden). */
+  get helpMissionText(): string {
+    return this.help.visible ? this.missionShown : '';
   }
 
   get helpVisible(): boolean {

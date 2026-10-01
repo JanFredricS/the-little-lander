@@ -4,6 +4,7 @@
  */
 
 import type { LevelId } from './common';
+import type { VesselMode } from './physics';
 import type { CutsceneId } from './cutscene';
 
 /**
@@ -75,24 +76,34 @@ export type SteeringScheme = 'engines' | 'direct' | 'joystick';
 /** The pause menu's STEERING item cycles through these, in order. */
 export const STEERING_SCHEMES: readonly SteeringScheme[] = ['engines', 'direct', 'joystick'];
 
-/** Round 9: what a player who never picked a scheme flies with (outside ENGINES_DEFAULT_LEVELS). */
+/** Round 9: what a player who never picked a scheme flies with (outside ENGINES_DEFAULT). */
 // Deliberately the default on desktop too (user's explicit request): there the keyboard flies the DIRECT rotate+thrust keys.
 export const DEFAULT_STEERING: SteeringScheme = 'joystick';
 
 /**
- * Round 9 (user: "for decent default control should be engines mode. Works best
- * there"): levels where a never-chosen setting flies the classic ENGINES scheme
- * (touch buttons too). An explicit choice still applies here.
+ * Where a never-chosen setting flies the classic ENGINES scheme (touch buttons
+ * too): per level, the whole level ('all') or only while flying the listed
+ * vessel modes (per phase). An explicit choice still applies everywhere.
+ *  - Round 9 (user: "for decent default control should be engines mode. Works best there").
+ *  - Round 10 (user: "on floating isles I want engines style with csm and joystick when
+ *    the csm detaches"): the CSM phase only; the lander after the detach flies JOYSTICK.
  */
-export const ENGINES_DEFAULT_LEVELS: readonly string[] = ['descent'];
+// keyed by LevelId: a typo / renamed level is a compile error (and test/steeringDefaults checks the registry)
+export const ENGINES_DEFAULT: Readonly<Partial<Record<LevelId, 'all' | readonly VesselMode[]>>> = {
+  descent: 'all',
+  floatingIsles: ['csm'],
+};
 
 /**
- * Settings.steering -> the scheme in use on `levelId` (null / undefined setting =
- * never chosen: ENGINES on ENGINES_DEFAULT_LEVELS, else DEFAULT_STEERING).
+ * Settings.steering -> the scheme in use on `levelId` while flying `mode`
+ * (null / undefined setting = never chosen: ENGINES where ENGINES_DEFAULT says
+ * so, else DEFAULT_STEERING). An unknown mode only matches 'all' levels.
  */
-export function resolveSteering(s: SteeringScheme | null | undefined, levelId?: string | null): SteeringScheme {
+export function resolveSteering(s: SteeringScheme | null | undefined, levelId?: string | null, mode?: VesselMode | null): SteeringScheme {
   if (s) return s;
-  return levelId && ENGINES_DEFAULT_LEVELS.includes(levelId) ? 'engines' : DEFAULT_STEERING;
+  const rule = levelId ? ENGINES_DEFAULT[levelId as LevelId] : undefined;
+  if (rule === 'all' || (rule && mode && rule.includes(mode))) return 'engines';
+  return DEFAULT_STEERING;
 }
 
 export interface SaveState {

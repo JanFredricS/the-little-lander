@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { BufferImageSource, Container } from 'pixi.js';
 import type { ArtApi, InputSampleContext, SteeringScheme } from '../src/contracts';
 import { getLevel } from '../src/levels/registry';
-import { InputMapper, VirtualControlsSource } from '../src/shell/input';
+import { emptyFrame, InputMapper, VirtualControlsSource } from '../src/shell/input';
 import type { GameUiOptions } from '../src/ui/gameUi';
 import { FakeDom, type FakeElement } from './support/fakeDom';
 
@@ -177,6 +177,97 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
     expect(mm.bakes).toBe(1);
     ui.enter({ id: 'levelSelect' } as never);
     expect(mm.hasTexture).toBe(false);
+    ui.destroy();
+  });
+
+  it('round 10: floatingIsles AUTO steering is per phase - ENGINES (CSM buttons) for the CSM, JOYSTICK after the detach; an explicit choice wins', async () => {
+    const steer: (SteeringScheme | null)[] = [];
+    const { ui } = await make({ touchPref: 'on', steering: null, onSteeringChange: (s) => steer.push(s) });
+    const isles = getLevel('floatingIsles')!;
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.levelStarted(isles as never);
+    ui.noteFrame({ ...emptyFrame(), thrust: true }); // dismiss the start card
+    const label = () => ui.currentModel!.items.find((i) => i.id === 'steering')!.label;
+    const layout = () => ui.touchLayer.getLayout()!;
+    expect(layout().stick).toBeNull();
+    expect(layout().buttons.map((b) => b.control)).toContain('thrust');
+    ui.enter({ id: 'paused', levelId: 'floatingIsles' } as never);
+    expect(label()).toBe('STEERING: AUTO (ENGINES)');
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.onEvent({ type: 'vesselModeChanged', from: 'csm', to: 'lander' });
+    expect(layout().stick).not.toBeNull();
+    expect(layout().buttons.map((b) => b.control).sort()).toEqual(['pause', 'restart']);
+    ui.noteFrame({ ...emptyFrame(), thrust: true });
+    ui.enter({ id: 'paused', levelId: 'floatingIsles' } as never);
+    expect(label()).toBe('STEERING: AUTO (JOYSTICK)');
+    expect(steer).toEqual([]); // nothing persisted: still AUTO
+    ui.destroy();
+    // explicit DIRECT: the same in both phases
+    const d = await make({ touchPref: 'on', steering: 'direct' });
+    d.ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    d.ui.levelStarted(isles as never);
+    d.ui.noteFrame({ ...emptyFrame(), thrust: true });
+    const flight = () => d.ui.touchLayer.getLayout()!.buttons.map((b) => b.control).sort();
+    expect(flight()).toEqual(['pause', 'restart']);
+    d.ui.onEvent({ type: 'vesselModeChanged', from: 'csm', to: 'lander' });
+    expect(flight()).toEqual(['pause', 'restart']);
+    expect(d.ui.touchLayer.getLayout()!.stick).toBeNull();
+    d.ui.enter({ id: 'paused', levelId: 'floatingIsles' } as never);
+    expect(d.ui.currentModel!.items.find((i) => i.id === 'steering')!.label).toBe('STEERING: DIRECT');
+    d.ui.destroy();
+  });
+
+  it('round 10: the lander controls card at the detach HOLDS the simulation until the first input (like the level-start card)', async () => {
+    const { ui } = await make({ touchPref: 'off', steering: null });
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.levelStarted(getLevel('floatingIsles')! as never);
+    expect(ui.holdSimulation).toBe(true); // level start card
+    ui.noteFrame({ ...emptyFrame(), thrust: true });
+    expect(ui.holdSimulation).toBe(false);
+    expect(ui.helpVisible).toBe(false);
+    ui.onEvent({ type: 'vesselModeChanged', from: 'csm', to: 'lander' });
+    expect(ui.helpVisible).toBe(true);
+    expect(ui.holdSimulation).toBe(true);
+    for (let i = 0; i < 600; i++) {
+      ui.noteFrame(emptyFrame());
+      ui.tick(null, 1 / 60); // 10 s without input: no timeout
+    }
+    expect(ui.holdSimulation).toBe(true);
+    expect(ui.helpVisible).toBe(true);
+    ui.noteFrame({ ...emptyFrame(), engineLeft: true });
+    expect(ui.holdSimulation).toBe(false);
+    expect(ui.helpVisible).toBe(false);
+    ui.destroy();
+  });
+
+  it('round 10: the level-start card states the mission while it holds the level; the detach card does not repeat it', async () => {
+    const { ui } = await make({ touchPref: 'off' });
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.levelStarted(getLevel('floatingIsles')! as never);
+    expect(ui.holdSimulation).toBe(true);
+    expect(ui.helpMission).toBe('MISSION: PLANT 5 BEACONS + REACH THE EXIT');
+    for (let i = 0; i < 300; i++) ui.tick(null, 1 / 60); // still there while the player reads
+    expect(ui.helpMission).toBe('MISSION: PLANT 5 BEACONS + REACH THE EXIT');
+    ui.noteFrame({ ...emptyFrame(), thrust: true });
+    expect(ui.helpMission).toBe('');
+    ui.onEvent({ type: 'vesselModeChanged', from: 'csm', to: 'lander' });
+    expect(ui.helpVisible).toBe(true);
+    expect(ui.helpMission).toBe('');
+    ui.destroy();
+    const h = await make({ touchPref: 'on' });
+    playHangarRun(h.ui as never);
+    expect(h.ui.helpMission).toMatch(/^MISSION: .*REACH THE EXIT/);
+    h.ui.destroy();
+  });
+
+  it('round 10: a beaconPlanted event marks that site planted on the minimap', async () => {
+    const { ui } = await make({ touchPref: 'off' });
+    ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
+    ui.levelStarted(getLevel('floatingIsles')! as never);
+    const mm = (ui as unknown as { minimap: { siteMarkers: readonly { id: string; planted: boolean }[] } }).minimap;
+    expect(mm.siteMarkers.filter((s) => s.planted)).toEqual([]);
+    ui.onEvent({ type: 'beaconPlanted', siteId: 'site3', planted: 1, total: 5 });
+    expect(mm.siteMarkers.filter((s) => s.planted).map((s) => s.id)).toEqual(['site3']);
     ui.destroy();
   });
 });

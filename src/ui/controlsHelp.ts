@@ -3,7 +3,7 @@
  * Keyboard text mirrors DEFAULT_BINDINGS in src/shell/input.ts.
  */
 
-import type { InputFrame, VesselMode } from '../contracts';
+import type { InputFrame, ObjectiveSpec, VesselMode } from '../contracts';
 
 export interface HelpCard {
   title: string;
@@ -105,6 +105,44 @@ export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = 
     lines: [...(touch ? touchLines : keyLines), touch ? 'II  PAUSE    ↻  RESTART' : 'ESC / P   PAUSE    BKSP   RESTART'],
     hint: start ? (touch ? 'TOUCH ANY CONTROL TO START' : 'PRESS ANY CONTROL TO START') : touch ? 'TAP TO CLOSE' : 'ANY KEY TO CLOSE',
   };
+}
+
+/** One objective as a mission phrase ("PLANT 5 BEACONS"), generic over the objective kinds. */
+export function missionPhrase(o: ObjectiveSpec): string {
+  switch (o.kind) {
+    case 'plantBeacons':
+      return `PLANT ${o.count} BEACON${o.count === 1 ? '' : 'S'}`;
+    case 'collectOrbs':
+      return `COLLECT ${o.count} ORB${o.count === 1 ? '' : 'S'}`;
+    case 'reachExit':
+      return 'REACH THE EXIT';
+    case 'surviveBoss':
+      return 'DEFEAT THE KEEPER';
+  }
+}
+
+/** Max characters per mission line on the start card (the pixel font is ~6 px a glyph; the card is ≤ 640 px). */
+export const MISSION_LINE_CHARS = 44;
+
+/**
+ * Round 10 (G): the level's objectives stated on the level-start card -
+ * "MISSION: PLANT 5 BEACONS + REACH THE EXIT", wrapped between phrases so a
+ * line stays within MISSION_LINE_CHARS. Empty for a level without objectives.
+ */
+export function missionLines(objectives: readonly ObjectiveSpec[]): string[] {
+  if (objectives.length === 0) return [];
+  const lines: string[] = [];
+  let cur = 'MISSION:';
+  objectives.forEach((o, i) => {
+    const part = (i === 0 ? ' ' : ' + ') + missionPhrase(o);
+    if (i > 0 && cur.length + part.length > MISSION_LINE_CHARS) {
+      lines.push(cur);
+      cur = '  +' + part.slice(2);
+    } else cur += part;
+  });
+  lines.push(cur);
+  // guard: a single phrase too long for the card (none today: test/missionLine) is cut, never overflows it
+  return lines.map((l) => (l.length > MISSION_LINE_CHARS ? `${l.slice(0, MISSION_LINE_CHARS - 1)}…` : l));
 }
 
 /**

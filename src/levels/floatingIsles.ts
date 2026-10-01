@@ -204,31 +204,150 @@ const GUSTS_C = [
   { atSec: 10, durationSec: 2, accel: { x: -3, y: 0 } },
 ];
 
+/**
+ * Round 10 weather (playtest): numbers here, the mechanics in physics/env/wind.ts.
+ * Gusts in 'vesselThrust' units are multiples of the flying vessel's max
+ * engine acceleration (CSM 2.4 g_ref, lander 2 x 0.9 g_ref at the level's felt
+ * gravity), so "stronger than the engines" stays true if thrust is retuned.
+ */
+export const WEATHER = {
+  /**
+   * Sky ceiling (user: "flying high bypasses all islands"): downward wind fading in
+   * over a height band. Continuous: a strong gust above max thrust (it beats the
+   * engines even with the brake assist boost, gravity on top), then a moderate one
+   * that still beats thrust minus weight, so nobody can hold altitude up there.
+   * CSM stretch: calm below y 930 - the wind reaches down onto the high island tops
+   * (i1 ~899, i7 ~897: a CSM skimming them has its centre ~25 px higher, at half
+   * force), so no calm strip is left to cruise over the slalom; full force at 860.
+   * Those tops and i4's summit (696) are windy (pushed down onto them at <=
+   * speedCap; no beacon in the CSM stretch). The route stays at y >= ~1,000. Lander stretch: calm below 930 (the highest rim, the shaft's,
+   * is at 1,200; the reference route tops out ~1,018), full force at 710.
+   * Only the strong gust telegraphs (margin 40 px above the calm line); the
+   * moderate ones are silent background force.
+   */
+  sky: {
+    strong: 1.25,
+    moderate: 0.7,
+    /** px/s: it carries the craft down no faster than this (under the 75 px/s lander damage speed): pushed back, not smashed. */
+    speedCap: 60,
+    csm: { x0: 0, x1: 6500, calmY: 930, fullY: 860, margin: 40 },
+    lander: { x0: 6500, x1: W, calmY: 930, fullY: 710, margin: 40 },
+  },
+  /**
+   * Low turbulence (user: "throwing the craft upwards, to avoid flying low past"):
+   * irregular upward + sideways shoves just under the island undersides, so no
+   * calm lane survives under them: calm above y 2,200 (i5, the deepest CSM-stretch
+   * underside but i8, is at ~2,190; the lander stretch's deepest, the shaft, ~2,120),
+   * full force from 2,280; under i8 (x 4,450-5,350, underside ~2,338) the band is
+   * carved down to calm 2,345 / full 2,385 (a craft squeezing under i8 is lifted
+   * against its underside at <= speedCap, below both damage speeds).
+   * A craft riding it floats ~25-35 px under the band's calm line. `side` (× each shove's duration 1.2 / 2.2 / 1.6 s)
+   * sums to zero over the 5 s cycle and speedCap (45 px/s, per axis) bounds what
+   * the wind alone can give, so it never carries a craft off the map or into an
+   * underside above the damage speeds (lander 75, CSM 90). Only the strongest
+   * shove telegraphs (1 s ahead, margin 40 px).
+   */
+  turbulence: { calmY: 2200, fullY: 2280, i8: { x0: 4450, x1: 5350, calmY: 2345, fullY: 2385 }, margin: 40, up: [1.6, 1.15, 1.35] as const, side: [-0.175, -0.5, 0.4] as const, amount: 0.45, lateral: 0.5, hz: 1.7, seed: 1010, speedCap: 45 },
+  /**
+   * CSM-stretch crosswinds (user: "the csm is so powerful that it easily handles the
+   * wind"): a strong gust is this fraction of the CSM's max (lateral) engine
+   * acceleration, so holding against it takes a hard lean and most of the thrust.
+   * Zero-mean over the 13 s cycle (0.56 × 2.5 s right = 0.7 × 2 s left) and capped
+   * at 120 px/s per axis, so a drifting craft is not carried off the map.
+   */
+  csmGusts: { strong: 0.7, moderate: 0.56, speedCap: 120 },
+} as const;
+
+const SKY = WEATHER.sky;
+/** 7 s cycle, never calm: moderate, a strong gust for 3 s (telegraphed 1.5 s ahead), moderate again. */
+const skyGusts = [
+  { atSec: 0, warnSec: 0, durationSec: 2, accel: { x: 0, y: SKY.moderate }, silent: true },
+  { atSec: 2, durationSec: 3, accel: { x: 0, y: SKY.strong } },
+  { atSec: 5, warnSec: 0, durationSec: 2, accel: { x: 0, y: SKY.moderate }, silent: true },
+];
+const sky = (id: string, z: { x0: number; x1: number; calmY: number; fullY: number; margin: number }): ZoneSpec => ({
+  kind: 'windGustSchedule',
+  id,
+  rect: band(z.x0, z.x1, 0, z.calmY),
+  gusts: skyGusts,
+  repeatEverySec: 7,
+  unit: 'vesselThrust',
+  fade: { y0: z.calmY, y1: z.fullY },
+  speedCap: SKY.speedCap,
+  local: true,
+  telegraphMargin: z.margin,
+});
+
+const TB = WEATHER.turbulence;
+const low = (id: string, x0: number, x1: number, calmY: number, fullY: number): ZoneSpec => ({
+  kind: 'windGustSchedule',
+  id,
+  rect: band(x0, x1, calmY, H),
+  // back-to-back shoves (5 s cycle, never calm), only the strongest one telegraphed
+  // (10 s: the second 5 s mirrors the sideways parts, so even capped / clipped shoves cancel out)
+  gusts: [1, -1].flatMap((m, i) => [
+    { atSec: 5 * i, warnSec: 0, durationSec: 1.2, accel: { x: m * TB.side[1], y: -TB.up[1] }, silent: true },
+    { atSec: 5 * i + 1.2, warnSec: 0, durationSec: 2.2, accel: { x: m * TB.side[2], y: -TB.up[2] }, silent: true },
+    { atSec: 5 * i + 3.4, warnSec: 1, durationSec: 1.6, accel: { x: m * TB.side[0], y: -TB.up[0] } },
+  ]),
+  repeatEverySec: 10,
+  unit: 'vesselThrust',
+  fade: { y0: calmY, y1: fullY },
+  // world-x kick: perpendicular to these (vertical) shoves
+  turbulence: { seed: TB.seed, amount: TB.amount, lateral: TB.lateral, hz: TB.hz },
+  speedCap: TB.speedCap,
+  local: true,
+  telegraphMargin: TB.margin,
+});
+
 const zones: ZoneSpec[] = [
+  sky('skyCsm', SKY.csm),
+  sky('skyLander', SKY.lander),
+  low('lowTurbulence', 0, TB.i8.x0, TB.calmY, TB.fullY),
+  low('lowTurbulenceI8', TB.i8.x0, TB.i8.x1, TB.i8.calmY, TB.i8.fullY),
+  low('lowTurbulenceE', TB.i8.x1, W, TB.calmY, TB.fullY),
+  {
+    kind: 'windGustSchedule',
+    id: 'csmCross',
+    // down to the turbulence: below it the shoves rule alone (their lateral part is zero-mean and capped)
+    rect: band(0, 6300, 0, TB.calmY),
+    gusts: [
+      { atSec: 4, durationSec: 2.5, accel: { x: WEATHER.csmGusts.moderate, y: 0 } },
+      { atSec: 9.5, durationSec: 2, accel: { x: -WEATHER.csmGusts.strong, y: 0 } },
+    ],
+    repeatEverySec: 13,
+    unit: 'vesselThrust',
+    speedCap: WEATHER.csmGusts.speedCap,
+    local: true,
+  },
   {
     kind: 'windGustSchedule',
     id: 'windA',
-    rect: band(8000, 10300),
+    rect: band(8000, 10300, 0, TB.calmY),
     gusts: [
       { atSec: 6, durationSec: 2, accel: { x: 1.5, y: 0 } },
       { atSec: 14, durationSec: 1.5, accel: { x: -1.5, y: 0 } },
     ],
     repeatEverySec: 16,
+    local: true,
   },
   {
     kind: 'windGustSchedule',
     id: 'windB',
-    rect: band(10300, 13900),
+    rect: band(10300, 13900, 0, TB.calmY),
     gusts: [
       { atSec: 5, durationSec: 2, accel: { x: 2.2, y: 0 } },
       { atSec: 11, durationSec: 2, accel: { x: -2.2, y: -0.4 } },
     ],
     repeatEverySec: 14,
+    local: true,
   },
-  // the shaft (x 14,580-14,710 below y 1,180) is sheltered
-  { kind: 'windGustSchedule', id: 'windC', rect: band(13900, 14580), gusts: GUSTS_C, repeatEverySec: 12 },
-  { kind: 'windGustSchedule', id: 'windC2', rect: band(14580, 14730, 0, 1000), gusts: GUSTS_C, repeatEverySec: 12 },
-  { kind: 'windGustSchedule', id: 'windD', rect: band(14730, W), gusts: GUSTS_C, repeatEverySec: 12 },
+  // the shaft (x 14,580-14,710 below y 1,180) is sheltered. Round 10 audit: the lander-stretch
+  // gusts stop at the turbulence band (y 2,200): their small net drift (e.g. windD +1.5 m/s·s per
+  // cycle) carried a craft riding the turbulence off the map
+  { kind: 'windGustSchedule', id: 'windC', rect: band(13900, 14580, 0, TB.calmY), gusts: GUSTS_C, repeatEverySec: 12, local: true },
+  { kind: 'windGustSchedule', id: 'windC2', rect: band(14580, 14730, 0, 1000), gusts: GUSTS_C, repeatEverySec: 12, local: true },
+  { kind: 'windGustSchedule', id: 'windD', rect: band(14730, W, 0, TB.calmY), gusts: GUSTS_C, repeatEverySec: 12, local: true },
 ];
 
 export const floatingIsles: LevelSpec = {

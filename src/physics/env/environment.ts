@@ -17,10 +17,10 @@
  */
 
 import { FIXED_DT } from '../../contracts';
-import type { BodyHandle, BrittleRegion, EntitySpec, GameEventSink, LevelSpec, PhysicsApi, Vec2, ZoneSpec } from '../../contracts';
+import type { BodyHandle, BrittleRegion, EntitySpec, GameEventSink, LevelSpec, PhysicsApi, Vec2, VesselMode, ZoneSpec } from '../../contracts';
 import { rectContains } from '../geom';
 import { PASS_THROUGH_TAGS } from '../tags';
-import type { PhysicsTuning } from '../tuning';
+import { levelReferenceGravity, type PhysicsTuning } from '../tuning';
 import type { FlightVessel, VesselHooks } from '../vessel/types';
 import { BeaconSystem } from './beacons';
 import { DebrisSystem } from './debris';
@@ -59,6 +59,8 @@ export class FlightEnvironment {
   /** Wind acceleration (m/s²) acting on the vessel this step (designed gust × gravity.scale, like gravity). */
   windAccel: Vec2 = { x: 0, y: 0 };
   private vessel: FlightVessel | null = null;
+  /** The level's reference gravity (m/s²): engine thrust multiples are against it. */
+  private readonly refGravity: number;
   private readonly dynamicProps: BodyHandle[];
 
   constructor(
@@ -70,7 +72,9 @@ export class FlightEnvironment {
     private readonly completed: () => ReadonlySet<string> = () => new Set(),
   ) {
     this.gravity = new GravityField(physics, spec, tuning.gravity, events);
-    this.wind = new WindSystem(spec.zones, events);
+    // feel pass: m/s² gusts were designed against the unscaled gravity/thrust, so they scale with gravity
+    this.wind = new WindSystem(spec.zones, events, tuning.gravity.scale);
+    this.refGravity = levelReferenceGravity(spec, tuning);
     this.debris = new DebrisSystem(physics, spec.entities, tuning.debris, spec.worldSize);
     this.goo = new GooSystem(physics, spec.entities, tuning.goo, events);
     this.radiation = new RadiationSystem(physics, spec.zones, events);
@@ -99,6 +103,25 @@ export class FlightEnvironment {
     this.vessel = null;
   }
 
+  /**
+   * The most acceleration (m/s²) `mode`'s engines give the dry vessel: the
+   * 'vesselThrust' wind unit. Lander = both mains; harpoon (no engines) = 1 g.
+   */
+  maxThrustAccel(mode: VesselMode): number {
+    const t = this.tuning;
+    const g = this.refGravity;
+    switch (mode) {
+      case 'lander':
+        return 2 * t.lander.thrust * g;
+      case 'csm':
+        return t.csm.thrust * g;
+      case 'harpoonThrust':
+        return t.harpoonThrust.thrust * g;
+      default:
+        return g;
+    }
+  }
+
   /** Can a harpoon anchor here (world px)? Brittle regions return their timer. */
   anchorAt(body: BodyHandle, p: Vec2): { ok: boolean; brittleSec?: number } {
     if (!this.physics.hasBody(body) || PASS_THROUGH_TAGS.has(this.physics.getTag(body) ?? '') || this.level.nonAnchorable.has(body)) return { ok: false };
@@ -118,10 +141,7 @@ export class FlightEnvironment {
     const bodies: BodyHandle[] = [...v.parts, ...this.debris.bodies(), ...this.dynamicProps];
     this.gravity.update(s.pos, bodies);
     if (s.crashed) return;
-    // feel pass: gusts were designed against the unscaled gravity/thrust, so they scale with gravity
-    const w = this.wind.update(this.physics.simTime, s.pos);
-    const k = this.tuning.gravity.scale;
-    this.windAccel = { x: w.x * k, y: w.y * k };
+    this.windAccel = this.wind.update(this.physics.simTime, s.pos, this.maxThrustAccel(s.mode), s.vel);
     if (this.windAccel.x !== 0 || this.windAccel.y !== 0) {
       for (const part of v.parts) {
         if (!this.physics.hasBody(part)) continue;

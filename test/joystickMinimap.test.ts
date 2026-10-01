@@ -9,7 +9,7 @@ import type { InputFrame, InputSampleContext, LevelSpec, Rect } from '../src/con
 import { DirectSteering } from '../src/shell/directSteering';
 import { InputMapper, VirtualControlsSource } from '../src/shell/input';
 import { DEFAULT_SETTINGS, defaultSave, parseSave } from '../src/story/save';
-import { DEFAULT_STEERING, resolveSteering, SAVE_VERSION, STEERING_SCHEMES } from '../src/contracts';
+import { DEFAULT_STEERING, ENGINES_DEFAULT, resolveSteering, SAVE_VERSION, STEERING_SCHEMES } from '../src/contracts';
 import { LEVELS } from '../src/levels/registry';
 import { helpCard } from '../src/ui/controlsHelp';
 import { itemAction, nextSteering, screenModel, type ScreenContext } from '../src/ui/screens';
@@ -185,6 +185,12 @@ describe('JOYSTICK: stick vector -> InputFrame.steer', () => {
 });
 
 describe('JOYSTICK: setting', () => {
+  it('round 10 audit: every ENGINES_DEFAULT key is a registered level (a renamed level must not silently fall back)', () => {
+    const keys = Object.keys(ENGINES_DEFAULT);
+    expect(keys.length).toBeGreaterThan(0);
+    for (const id of keys) expect(Object.keys(LEVELS), id).toContain(id);
+  });
+
   const c = (p: Partial<ScreenContext> = {}): ScreenContext => ({ levels: {}, save: null, showDebug: false, touchPref: 'auto', lastHull: null, ...p });
   const label = (ctx: ScreenContext, id: string) => screenModel({ id: 'paused', levelId: 'testpad' }, ctx).items.find((i) => i.id === id)!.label;
 

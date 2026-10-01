@@ -301,8 +301,14 @@ export interface WindGust {
   /** Telegraph lead time. Default 1.5. */
   warnSec?: number;
   durationSec: number;
-  /** m/s² applied to the vessel (mass-independent). */
+  /** m/s² applied to the vessel (mass-independent); a multiple of the vessel's max thrust accel with unit 'vesselThrust'. */
   accel: Vec2;
+  /**
+   * Round 10 (audit): background force only - no telegraph (no events, no
+   * streaks), for the never-calm weather's in-between gusts so only the
+   * strong one warns. Default false.
+   */
+  silent?: boolean;
 }
 
 /** Timed lateral wind events. Applies inside `rect` (default: whole level). */
@@ -313,6 +319,32 @@ export interface WindGustSchedule {
   gusts: readonly WindGust[];
   /** Repeat the schedule every N seconds. Default: no repeat. */
   repeatEverySec?: number;
+  /**
+   * Round 10 amendment (all optional; omitted = the original behaviour).
+   * 'vesselThrust': gust accel values are multiples of the flying vessel's max
+   * thrust acceleration (vessel tuning × the level's reference gravity), so
+   * "stronger than the engines" stays true if thrust is retuned. Default 'mps2'.
+   */
+  unit?: 'mps2' | 'vesselThrust';
+  /** Strength ramps with altitude: 0 at world y = y0, full at y = y1 (linear, clamped; y0 !== y1). */
+  fade?: { y0: number; y1: number };
+  /**
+   * Irregular, deterministic turbulence on top of each gust: strength swells by
+   * ±amount and a sideways kick of up to lateral × |accel| wanders, both noise
+   * of (time × hz, position, seed).
+   */
+  turbulence?: { seed: number; amount: number; lateral: number; hz: number };
+  /**
+   * px/s, per axis: each axis of the push fades out (over the last WIND_CAP_SOFT
+   * px/s) as the vessel's speed along that axis, in the push's direction, reaches
+   * this - so it carries the craft like a real wind instead of firing it at the
+   * terrain or off the map, and a fast cruise ACROSS it is still pushed. Default: no cap.
+   */
+  speedCap?: number;
+  /** Telegraph (events, streaks) only near the zone, not level-wide. Default false. */
+  local?: boolean;
+  /** `local`: how far outside the rect / fade band (px) the telegraph starts. Default 150. */
+  telegraphMargin?: number;
 }
 
 /**
