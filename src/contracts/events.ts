@@ -19,7 +19,7 @@ export type CrashCause =
   | 'boss';
 
 export type FuelChangeReason = 'burn' | 'pickup' | 'orb' | 'radiation' | 'refill';
-export type HullChangeReason = 'impact' | 'debris' | 'goo' | 'boss' | 'repair';
+export type HullChangeReason = 'impact' | 'debris' | 'goo' | 'boss' | 'repair' | 'creature';
 
 export type GameEvent =
   | { type: 'levelStarted'; levelId: LevelId; themeId: ThemeId; mode: VesselMode }

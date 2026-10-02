@@ -311,6 +311,16 @@ function checkEntity(e: EntitySpec, what: string, err: (m: string) => void, rect
       break;
     case 'creature':
       if (!(fin(e.speed) && e.speed >= 0)) err(`${what}: speed must be >= 0`);
+      // round 16: harmful creatures sting (never instakill) and live in the world plane
+      if (e.harm !== undefined) {
+        if (!(fin(e.harm) && e.harm > 0 && e.harm < 1)) err(`${what}: harm must be in (0, 1) - a sting, not an instakill`);
+        if ((e.depth ?? 0) !== 0) err(`${what}: a harmful creature must fly in the world plane (depth 0)`);
+        if (e.action !== undefined) err(`${what}: harm is for ambient creatures (no action)`);
+        if (e.path.length < 2) err(`${what}: a harmful creature needs a patrol path (>= 2 waypoints)`);
+      }
+      if (e.hitRadius !== undefined && !pos(e.hitRadius)) err(`${what}: hitRadius must be positive`);
+      if (e.knock !== undefined && !(fin(e.knock) && e.knock >= 0)) err(`${what}: knock must be >= 0`);
+      if ((e.hitRadius !== undefined || e.knock !== undefined) && e.harm === undefined) err(`${what}: hitRadius / knock need harm`);
       break;
     case 'bossSpawn':
       rectOk(e.arena, what);

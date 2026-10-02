@@ -7,6 +7,7 @@
  */
 
 import type { BodyHandle, VineEntity } from '../../contracts';
+import { TAG_VINE } from '../../physics/tags';
 import { pxToM } from '../../physics/units';
 import type { EntitySystem, RuntimeHost } from './types';
 
@@ -33,7 +34,7 @@ export class VineSystem implements EntitySystem {
       .map((entity) => {
         const n = entity.segments;
         const linkLen = entity.length / n;
-        const anchor = p.createBody({ type: 'static', position: { x: pxToM(entity.x), y: pxToM(entity.y) }, tag: 'vine' });
+        const anchor = p.createBody({ type: 'static', position: { x: pxToM(entity.x), y: pxToM(entity.y) }, tag: TAG_VINE });
         const links: BodyHandle[] = [];
         let prev = anchor;
         for (let i = 0; i < n; i++) {
@@ -43,7 +44,7 @@ export class VineSystem implements EntitySystem {
             position: { x: pxToM(entity.x), y: pxToM(cy) },
             linearDamping: 0.6,
             angularDamping: 2,
-            tag: 'vine',
+            tag: TAG_VINE,
           });
           p.addBox(b, pxToM(VINE_WIDTH / 2), pxToM(linkLen / 2), { density: VINE_DENSITY, friction: 0.3, category: VINE_CATEGORY, mask: 0x0001 });
           p.createRevoluteJoint({ bodyA: prev, bodyB: b, anchor: { x: pxToM(entity.x), y: pxToM(entity.y + linkLen * i) } });

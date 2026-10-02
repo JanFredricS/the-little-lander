@@ -455,8 +455,17 @@ export abstract class VesselBase implements FlightVessel {
     return out;
   }
 
+  /** May this body carry the hull (touching / resting on it)? */
   private isSupport(h: BodyHandle): boolean {
     return this.physics.hasBody(h) && !PASS_THROUGH_TAGS.has(this.physics.getTag(h) ?? '');
+  }
+
+  /**
+   * Round 16: may the LEGS stand on this (supporting) body - the touchdown / landed test? Every
+   * support by default; the spring legs refuse vines (a curtain brushed mid-jump is no touchdown).
+   */
+  protected isFooting(_h: BodyHandle): boolean {
+    return true;
   }
 
   /** Unit "down" (gravity direction) at the vessel; world +y when gravity is ~0. */
@@ -474,7 +483,7 @@ export abstract class VesselBase implements FlightVessel {
     const lowY = (this.geometry.h / 2) * LOW_REGION;
     for (const c of this.touching) {
       // Only the hull body's own shapes (legs / skids) count: welded goo resting on the ground is not a landing.
-      if (c.part !== this.body || !this.isSupport(c.other)) continue;
+      if (c.part !== this.body || !this.isSupport(c.other) || !this.isFooting(c.other)) continue;
       if (c.normal.x * down.x + c.normal.y * down.y < SUPPORT_NORMAL_COS) continue;
       for (const p of c.points) if (mToPx(this.physics.worldToLocal(this.body, p.point).y) >= lowY) return true;
     }

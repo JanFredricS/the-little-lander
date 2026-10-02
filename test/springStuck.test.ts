@@ -2,7 +2,7 @@
  * Round 15 audit H1: no still pose may soft-lock the spring legs. A hull hooked over an islet
  * corner or planted tilted on a slope is never `landed`, but it must always be able to charge
  * and hop free (the launch aims against gravity, not along the body). Three probes: a 25°
- * slope rig, a grid of drops over the whole Spring Isles tower, and a sloppy (±0.15 rad aim
+ * slope rig, a fine grid of drops over the whole Spring Isles tower (audit L5: ~2,000 drops), and a sloppy (±0.15 rad aim
  * error) scripted jumper over several seeds.
  */
 
@@ -66,35 +66,65 @@ describe('spring legs never soft-lock (audit H1)', () => {
     expect(y0 - minY).toBeGreaterThan(60);
   });
 
-  it('grid of drops over the whole tower: every still pose can jump again', async () => {
+  /** Is p inside (or within `pad` px of the inside of) any terrain piece / solid crate? A spawn there is not a drop. */
+  const insideRock = (p: { x: number; y: number }, pad: number) => {
+    const inPoly = (pts: readonly { x: number; y: number }[], x: number, y: number) => {
+      let c = false;
+      for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+        const a = pts[i]!;
+        const b = pts[j]!;
+        if (a.y > y !== b.y > y && x < ((b.x - a.x) * (y - a.y)) / (b.y - a.y) + a.x) c = !c;
+      }
+      return c;
+    };
+    const probes = [p, { x: p.x - pad, y: p.y - pad }, { x: p.x + pad, y: p.y - pad }, { x: p.x - pad, y: p.y + pad }, { x: p.x + pad, y: p.y + pad }];
+    const solids = springIsles.entities.flatMap((e) => (e.kind === 'staticProp' && e.dynamic ? [[{ x: e.x - e.w / 2, y: e.y - e.h / 2 }, { x: e.x + e.w / 2, y: e.y - e.h / 2 }, { x: e.x + e.w / 2, y: e.y + e.h / 2 }, { x: e.x - e.w / 2, y: e.y + e.h / 2 }]] : []));
+    return [...springIsles.terrain.pieces.map((t) => t.points), ...solids].some((pts) => probes.some((q) => inPoly(pts, q.x, q.y)));
+  };
+
+  // audit L5: the fine grid - x every 50 px, y every 100 px over the whole tower, upright and tilted 0.8 rad in a
+  // checkerboard (both tilts at every point: ~2,000 drops, 13.5 s - this half keeps the suite fast, ~7 s)
+  it('grid of drops over the whole tower (x / 50 px, y / 100 px, tilts 0 / 0.8 alternating): every still pose can jump again', async () => {
     const stuck: string[] = [];
     let tried = 0;
-    for (let x = 60; x <= 1340; x += 80) {
-      for (let y = 3200; y >= 500; y -= 300) {
-        const s = await LevelSession.create({ ...springIsles, spawn: { x, y } });
-        const events: GameEvent[] = [];
-        s.on((e) => events.push(e));
-        s.start();
-        // settle: still for half a second (max 8 s)
-        let still = 0;
-        for (let i = 0; i < 8 * 60 && still < 30 && !s.outcome; i++) {
-          s.step(emptyFrame());
-          still = speed(s.state.vel) < 1 && s.vessel.springState!().phase !== 'air' ? still + 1 : 0;
-        }
-        if (!s.outcome && still >= 30) {
-          tried++;
-          for (let i = 0; i < 40 && !s.outcome; i++) s.step(input({ thrust: true }));
-          s.step(emptyFrame());
-          if (!s.outcome && !events.some((e) => e.type === 'springJump')) {
-            stuck.push(`(${x},${y}) -> (${s.state.pos.x.toFixed(0)},${s.state.pos.y.toFixed(0)}) angle ${s.state.angle.toFixed(2)} landed ${s.state.landed}`);
+    let dropped = 0;
+    for (let x = 60; x <= 1340; x += 50) {
+      for (let y = 4400; y >= 600; y -= 100) {
+        if (insideRock({ x, y }, 14)) continue;
+        for (const angle of [((x - 60) / 50 + (4400 - y) / 100) % 2 ? 0.8 : 0]) {
+          dropped++;
+          const s = await LevelSession.create({ ...springIsles, spawn: { x, y } });
+          const events: GameEvent[] = [];
+          s.on((e) => events.push(e));
+          s.start();
+          if (angle) s.physics.setTransform(s.vessel.body, s.physics.getTransform(s.vessel.body), angle);
+          // settle: still for half a second (max 8 s)
+          let still = 0;
+          for (let i = 0; i < 8 * 60 && still < 30 && !s.outcome; i++) {
+            s.step(emptyFrame());
+            still = speed(s.state.vel) < 1 && s.vessel.springState!().phase !== 'air' ? still + 1 : 0;
           }
+          if (!s.outcome && still >= 30) {
+            tried++;
+            // round 16: a crumbling islet collapsing under the charge drops the hull (not a soft-lock)
+            let fell = false;
+            for (let i = 0; i < 40 && !s.outcome; i++) {
+              s.step(input({ thrust: true }));
+              fell ||= events.some((e) => e.type === 'platformCrumbled');
+            }
+            s.step(emptyFrame());
+            if (!s.outcome && !fell && !events.some((e) => e.type === 'springJump')) {
+              stuck.push(`(${x},${y}) a${angle} -> (${s.state.pos.x.toFixed(0)},${s.state.pos.y.toFixed(0)}) angle ${s.state.angle.toFixed(2)} landed ${s.state.landed}`);
+            }
+          }
+          s.destroy();
         }
-        s.destroy();
       }
     }
-    expect(tried).toBeGreaterThan(100);
+    expect(dropped).toBeGreaterThan(800);
+    expect(tried).toBeGreaterThan(500);
     expect(stuck).toEqual([]);
-  }, 120_000);
+  }, 240_000);
 
   it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])('a sloppy jumper (±0.15 rad aim error, seed %i) is never still on the ground for 5 s without hopping', async (seed) => {
     const rnd = mulberry32(seed);

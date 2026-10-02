@@ -120,8 +120,8 @@ describe('one-way gate per corner (audit M2)', () => {
     expect(f.on).toBe(true);
   });
 
-  it('Spring Isles: a hull tumbling tilted onto f2 (near either edge) never drops through it to f1', async () => {
-    const f2 = stop('f2');
+  it('Spring Isles: a hull tumbling tilted onto one-way b2 (near either edge) never drops through it to a4', async () => {
+    const f2 = stop('b2');
     for (const dx of [-50, -30, 30, 50]) {
       for (const angle of [-0.6, 0.6]) {
         const s = await LevelSession.create({ ...springIsles, spawn: { x: f2.cx + dx, y: f2.top - 50 } });
@@ -141,31 +141,31 @@ describe('one-way gate per corner (audit M2)', () => {
 
 describe('crumbling islets', () => {
   it('telegraph (platformCrumbling) on the first touch, collapse after delaySec (platformCrumbled, regrow flagged), drop, then grow back', async () => {
-    const e1 = stop('e1');
-    const { s, events, run } = await standOn('e1');
+    const g1 = stop('g1');
+    const { s, events, run } = await standOn('g1');
     run(10);
     const warn = events.find((e) => e.type === 'platformCrumbling');
-    expect(warn).toMatchObject({ entityId: 'e1', inSec: 1.4 });
-    const c = s.systems.crumble!.platforms.find((p) => p.entity.id === 'e1')!;
+    expect(warn).toMatchObject({ entityId: 'g1', inSec: 1.4 });
+    const c = s.systems.crumble!.platforms.find((p) => p.entity.id === 'g1')!;
     expect(c.gone).toBe(false);
     run(Math.round(1.4 * 60));
     expect(c.gone).toBe(true);
-    expect(events.find((e) => e.type === 'platformCrumbled')).toMatchObject({ entityId: 'e1', regrow: true });
+    expect(events.find((e) => e.type === 'platformCrumbled')).toMatchObject({ entityId: 'g1', regrow: true });
     run(120);
-    expect(s.state.pos.y + STAND_DY).toBeGreaterThan(e1.top + 40); // fell
+    expect(s.state.pos.y + STAND_DY).toBeGreaterThan(g1.top + 40); // fell
     run(Math.round(4 * 60));
     expect(c.gone).toBe(false); // the vessel is far below: it grew back
     expect(c.touchedAt).toBeNull();
   });
 
   it('a crumble does not regrow into the vessel (held while it is inside the box clearance)', async () => {
-    const { s, run } = await standOn('e1');
-    const c = s.systems.crumble!.platforms.find((p) => p.entity.id === 'e1')!;
+    const { s, run } = await standOn('g1');
+    const c = s.systems.crumble!.platforms.find((p) => p.entity.id === 'g1')!;
     run(100);
     expect(c.gone).toBe(true);
     // pin the vessel where the platform was: the regrow waits
     for (let i = 0; i < 6 * 60; i++) {
-      s.physics.setTransform(s.vessel.body, { x: s.physics.getTransform(s.vessel.body).x, y: pxToM(stop('e1').top - STAND_DY) }, 0);
+      s.physics.setTransform(s.vessel.body, { x: s.physics.getTransform(s.vessel.body).x, y: pxToM(stop('g1').top - STAND_DY) }, 0);
       s.physics.setLinearVelocity(s.vessel.body, { x: 0, y: 0 });
       run(1);
     }

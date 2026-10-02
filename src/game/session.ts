@@ -69,6 +69,7 @@ import { LevelRuntime } from '../levels/runtime';
 import { TriggerLatch } from '../physics/env/triggers';
 import { feltGravity, resolveTuning, vesselOptionsFor, type PhysicsTuning, type VesselOptions } from '../physics/tuning';
 import { createVessel, type FlightVessel } from '../physics/vessel';
+import { pxToM } from '../physics/units';
 import { Camera } from '../shell/camera';
 import { exitGate } from './exitGate';
 
@@ -198,6 +199,7 @@ export class LevelSession {
       triggerContext: (p) => this.env.triggerContext(p),
       requestModeSwitch: (m) => this.requestModeSwitch(m),
       crashVessel: (cause) => this.vessel.crash(cause),
+      hurtVessel: (amount, kick) => this.hurtVessel(amount, kick),
       beaconSites: this.env.beacons.sites,
     });
     this.modeSwitchLatch = spec.modeSwitch ? new TriggerLatch(spec.modeSwitch.trigger) : null;
@@ -296,6 +298,18 @@ export class LevelSession {
   /** Orbs collected so far. */
   get orbs(): number {
     return this.env.pickups.orbsCollected;
+  }
+
+  /**
+   * Round 16: a harmful creature stung the vessel: hull damage (reason 'creature') and a
+   * velocity kick (px/s) on the hull - it sends a spring hull into the air (no instakill).
+   */
+  hurtVessel(amount: number, kick: Vec2): void {
+    const v = this.vessel;
+    v.damage(amount, 'creature');
+    if (v.state().crashed) return;
+    const cur = this.physics.getLinearVelocity(v.body);
+    this.physics.setLinearVelocity(v.body, { x: cur.x + pxToM(kick.x), y: cur.y + pxToM(kick.y) });
   }
 
   /** Round 15: the shell cleared its held input (pause / auto-pause / controls card): held vessel actions are dropped. */

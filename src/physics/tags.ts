@@ -8,6 +8,8 @@ export const TAG_DEBRIS = 'debris';
 export const TAG_DEBRIS_BURNING = 'debrisBurning';
 export const TAG_ORB = 'orb';
 export const TAG_FUEL = 'fuelPickup';
+/** Hanging vine links (src/levels/runtime/vines.ts): a soft obstacle the hull pushes through. */
+export const TAG_VINE = 'vine';
 
 /** Bodies that never block rays (harpoon flight, radiation line of sight) nor count as landing support. */
 export const PASS_THROUGH_TAGS: ReadonlySet<string> = new Set([TAG_VESSEL, TAG_GOO, TAG_DEBRIS, TAG_DEBRIS_BURNING, TAG_ORB, TAG_FUEL]);

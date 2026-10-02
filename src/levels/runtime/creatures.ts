@@ -6,6 +6,11 @@
  *    to x, y) at `speed` px/s. depth > 0 = background (the renderer applies
  *    parallax factor 1 - depth).
  *  - action 'seizeCsm' (Map 3's dragon-bird): DragonBirdSequence below.
+ *  - Round 16: an ambient creature with `harm` is a hazard in the world plane (Map 9's
+ *    patrolling sky-birds). It still flies its fixed loop (periodic, no RNG: a timing
+ *    obstacle the player reads and waits out); a vessel within hitRadius + CREATURE_VESSEL_PAD
+ *    of its centre is stung - `harm` hull and a `knock` px/s sideways kick away from the bird (horizontal) - then
+ *    that creature cannot sting again for CREATURE_HIT_COOLDOWN_SEC (one pass = one sting).
  */
 
 import type { CreatureEntity, Vec2, VesselMode, VesselState } from '../../contracts';
@@ -121,6 +126,19 @@ export class DragonBirdSequence {
   }
 }
 
+/** Round 16: seconds a harmful creature waits after a sting before it can sting again. */
+export const CREATURE_HIT_COOLDOWN_SEC = 1;
+/** Round 16: the vessel's reach (px) around its centre for creature contact (a small hull ~ 24 px wide). */
+export const CREATURE_VESSEL_PAD = 12;
+/** Round 16: defaults for harmful creatures (the knock: a horizontal swat, px/s). */
+export const CREATURE_HIT_RADIUS = 14;
+export const CREATURE_KNOCK = 150;
+
+/** Contact radius (px) of a harmful creature. */
+export function creatureHitRadius(e: CreatureEntity): number {
+  return e.hitRadius ?? CREATURE_HIT_RADIUS * Math.abs(e.scale ?? 1);
+}
+
 export interface AmbientCreature {
   entity: CreatureEntity;
   path: PathSampler;
@@ -131,6 +149,8 @@ export interface AmbientCreature {
   prevPos: Vec2;
   facing: number;
   active: boolean;
+  /** Round 16 (harmful creatures): sim time of the last sting (-Infinity = never). */
+  lastHitAt: number;
 }
 
 export class CreatureSystem implements EntitySystem {
@@ -146,7 +166,7 @@ export class CreatureSystem implements EntitySystem {
       }
       const pts = (e.path.length ? e.path : [{ x: 0, y: 0 }]).map((p) => ({ x: e.x + p.x, y: e.y + p.y }));
       const pos = { ...pts[0]! };
-      this.ambient.push({ entity: e, path: pathSampler(pts, true), latch: new TriggerLatch(e.activate), travelled: 0, pos, prevPos: pos, facing: 1, active: false });
+      this.ambient.push({ entity: e, path: pathSampler(pts, true), latch: new TriggerLatch(e.activate), travelled: 0, pos, prevPos: pos, facing: 1, active: false, lastHitAt: -Infinity });
     }
   }
 
@@ -168,9 +188,27 @@ export class CreatureSystem implements EntitySystem {
       const next = c.path.at(c.travelled);
       if (Math.abs(next.x - c.pos.x) > 0.01) c.facing = Math.sign(next.x - c.pos.x);
       c.pos = next;
+      if (c.entity.harm !== undefined) this.sting(c, s);
     }
     for (const b of this.birds) {
       if (b.update(s, b.activation(ctx)) === 'seize') this.host.requestModeSwitch('lander' satisfies VesselMode);
     }
+  }
+
+  /** Round 16: a harmful creature touching the vessel stings it (with a per-creature cooldown). */
+  private sting(c: AmbientCreature, s: VesselState): void {
+    const hurt = this.host.hurtVessel;
+    if (!hurt || s.crashed) return;
+    const now = this.host.physics.simTime;
+    if (now - c.lastHitAt < CREATURE_HIT_COOLDOWN_SEC) return;
+    const dx = s.pos.x - c.pos.x;
+    if (Math.hypot(dx, s.pos.y - c.pos.y) > creatureHitRadius(c.entity) + CREATURE_VESSEL_PAD) return;
+    c.lastHitAt = now;
+    // a sideways swat (audit M1): the knock is HORIZONTAL, away from the creature (straight
+    // above / below it: along its flight, else its facing), so a stung hop keeps its vertical
+    // arc - it lands a little long or short instead of being batted out of the sky
+    const side = Math.abs(dx) > 0.5 ? Math.sign(dx) : Math.sign(c.pos.x - c.prevPos.x) || c.facing;
+    const k = c.entity.knock ?? CREATURE_KNOCK;
+    hurt.call(this.host, c.entity.harm!, { x: side * k, y: 0 });
   }
 }

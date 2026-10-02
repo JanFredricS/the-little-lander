@@ -27,6 +27,8 @@ const lerpInto = (out: Vec2, a: Vec2, b: Vec2, t: number): Vec2 => {
 
 /** World px beyond the view edge that still counts as visible. */
 const CULL_MARGIN = 32;
+/** Round 16: spacing (px) of a harmful creature's patrol dots. */
+const PATROL_DOT_GAP = 14;
 /** Half-extent of the soft glow-mote trail drawn for sprite-less species. */
 const GLOW_REACH = 40;
 
@@ -54,6 +56,8 @@ export class EntityView {
   /** Island sprites + their local bounds (sprite position = island pos; drawn at pos + offset). */
   private readonly islands: { sprite: Sprite; ox: number; oy: number; w: number; h: number }[] = [];
   private readonly vines = new Graphics();
+  /** Round 16: the dotted patrol loops of harmful creatures (static: drawn once). */
+  private readonly patrols = new Graphics();
   private readonly glow = new Graphics();
   /** `reach` = half-extent of the drawn creature (px), for culling. */
   private readonly creatures: { sprite: Sprite | null; frames: Texture[]; reach: number }[] = [];
@@ -85,7 +89,11 @@ export class EntityView {
       s.scale.set(c.entity.scale ?? 1);
       // distant creatures fade into the sky
       s.alpha = depth > 0 ? Math.max(0.35, 1 - depth * 0.6) : 1;
-      this.back.addChild(s);
+      // round 16: a harmful creature flies in front of the terrain, its patrol loop dotted in the air
+      if (c.entity.harm !== undefined) {
+        this.mid.addChild(s);
+        this.drawPatrol(c.entity.x, c.entity.y, c.entity.path);
+      } else this.back.addChild(s);
       this.creatures.push({ sprite: s, frames, reach: Math.max(f0.width, f0.height) * Math.abs(c.entity.scale ?? 1) });
     }
     this.back.addChild(this.glow);
@@ -105,6 +113,7 @@ export class EntityView {
       this.mid.addChild(s);
       this.islands.push({ sprite: s, ox: offset.x, oy: offset.y, w: canvas.width, h: canvas.height });
     }
+    this.mid.addChildAt(this.patrols, 0);
     this.mid.addChild(this.vines);
 
     for (const _b of rt.creatures.birds) {
@@ -121,6 +130,20 @@ export class EntityView {
       sprite.visible = false;
       this.front.addChild(csm, sprite);
       this.birds.push({ sprite, frames, csm });
+    }
+  }
+
+  /** Round 16: a faint dotted loop along a harmful creature's patrol (the telegraph: read the lane, time the hop). */
+  private drawPatrol(x: number, y: number, path: readonly Vec2[]): void {
+    const n = path.length;
+    for (let i = 0; i < n; i++) {
+      const a = path[i]!;
+      const b = path[(i + 1) % n]!;
+      const len = Math.hypot(b.x - a.x, b.y - a.y);
+      for (let d = 0; d < len; d += PATROL_DOT_GAP) {
+        const t = d / len;
+        this.patrols.circle(Math.round(x + a.x + (b.x - a.x) * t), Math.round(y + a.y + (b.y - a.y) * t), 1).fill({ color: 0xffb070, alpha: 0.35 });
+      }
     }
   }
 

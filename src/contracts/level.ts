@@ -203,6 +203,16 @@ export interface CreatureEntity extends EntityBase {
   /** Scripted action for gameplay creatures (e.g. 'seizeCsm'). */
   action?: string;
   activate?: TriggerSpec;
+  /**
+   * Round 16: a harmful world-plane creature (depth 0, no action). Touching it stings: this
+   * hull fraction (0 < harm < 1, a sting, never an instakill from full hull) plus a knock
+   * away from it, at most once per CREATURE_HIT_COOLDOWN_SEC. Default: harmless (decor).
+   */
+  harm?: number;
+  /** Round 16: contact radius (px) around the creature centre. Default 14 × |scale|. */
+  hitRadius?: number;
+  /** Round 16: knock-back speed (px/s) added to the vessel - horizontal, away from the creature (audit M1: a sideways swat keeps a hop's vertical arc). Default 150. */
+  knock?: number;
 }
 
 /** Boss spawn point + arena. */

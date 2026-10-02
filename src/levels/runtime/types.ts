@@ -14,6 +14,11 @@ export interface RuntimeHost {
   /** Crash the vessel (crushed by a door ...). */
   crashVessel(cause: CrashCause): void;
   /**
+   * Round 16: a harmful creature stung the vessel: `amount` hull (0..1) and a velocity kick
+   * (px/s) added to the hull. Optional (hosts without it: creatures stay harmless).
+   */
+  hurtVessel?(amount: number, kick: Vec2): void;
+  /**
    * The flight environment's beacon sites (optional). Sites standing on a
    * moving island get a per-session copy of their entity that the runtime
    * moves with the island, so the zone check and the marker follow it.

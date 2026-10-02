@@ -33,8 +33,9 @@
  * up to bounceWindowSec after a touchdown) launches the charged jump instead of the bounce.
  */
 
-import type { GameEventSink, InputFrame, PhysicsApi, Vec2, VesselSpawn } from '../../contracts';
+import type { BodyHandle, GameEventSink, InputFrame, PhysicsApi, Vec2, VesselSpawn } from '../../contracts';
 import { PX_PER_M } from '../../contracts';
+import { TAG_VINE } from '../tags';
 import type { SpringTuning, VesselOptions } from '../tuning';
 import { mToPx, vMToPx, vPxToM } from '../units';
 import { VesselBase } from './base';
@@ -189,6 +190,16 @@ export class SpringController extends VesselBase {
    */
   protected override solverImpulseScale(): number {
     return super.solverImpulseScale() * SPRING_IMPACT_CAL;
+  }
+
+  /**
+   * Round 16: a vine is never footing for the legs. Brushing a vine curtain mid-jump must not
+   * read as a touchdown (the soak would stop the hull dead in mid-air); the vine only pushes it
+   * about (vines.ts). A hull that comes to REST in the links still counts as touching (the
+   * wedged rule puts it on the ground after WEDGED_SEC): it can always charge and hop out.
+   */
+  protected override isFooting(h: BodyHandle): boolean {
+    return this.physics.getTag(h) !== TAG_VINE;
   }
 
   /**
