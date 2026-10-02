@@ -16,7 +16,7 @@ import { fuelLow, HULL_LOW, MODE_LABEL, objectiveLines, windArrow, type HudState
 
 const MAX_OBJECTIVE_LINES = 5;
 /** Slots of the vector-layer redraw key (see render()). */
-const KEY_SLOTS = 11;
+const KEY_SLOTS = 12;
 
 /** Bar fill fraction as bar() clamps it (NaN -> 0). */
 function clampFrac(v: number): number {
@@ -131,9 +131,13 @@ export class HudView {
       this.extra.setText(extras.join('  '), { color: s.attachedGoo > 0 ? UI.goo : UI.accent });
     }
     const lx = Math.max(0, Math.round(this.leftInset));
+    // round 15: the spring legs have no fuel - the FUEL row is hidden and HULL moves up
+    const noFuel = s.mode === 'spring';
+    const rowY = noFuel ? -12 : 0;
+    this.fuelLabel.visible = !noFuel;
     this.fuelLabel.position.set(lx + 9, 8);
-    this.hullLabel.position.set(lx + 9, 20);
-    this.extra.position.set(lx + 9, 34);
+    this.hullLabel.position.set(lx + 9, 20 + rowY);
+    this.extra.position.set(lx + 9, 34 + rowY);
     const low = fuelLow(s);
     const fuelColor = low ? (blink ? UI.danger : UI.light) : UI.fuel;
     this.fuelLabel.setText('FUEL', { color: low && blink ? UI.danger : UI.ink });
@@ -178,11 +182,12 @@ export class HudView {
     this.put(8, arrowAngle);
     this.put(9, s.bossHp === null ? -1 : Math.round(200 * clampFrac(s.bossHp)));
     this.put(10, this.border);
+    this.put(11, noFuel ? 1 : 0);
     if (this.keyChanged) {
       const g = this.g.clear();
-      panel(g, lx + 3, 3, 116, hasExtras ? 43 : 30, this.border, 0.7);
-      bar(g, lx + 37, 9, 76, 6, s.fuel, fuelColor);
-      bar(g, lx + 37, 21, 76, 6, s.hull, hullColor);
+      panel(g, lx + 3, 3, 116, (hasExtras ? 43 : 30) + rowY, this.border, 0.7);
+      if (!noFuel) bar(g, lx + 37, 9, 76, 6, s.fuel, fuelColor);
+      bar(g, lx + 37, 21 + rowY, 76, 6, s.hull, hullColor);
       g.rect(bx - 1, 3, bw + 2, 14).fill(UI.outline);
       g.rect(bx, 4, bw, 12).fill(UI.accent);
       if (!Number.isNaN(arrowX)) arrow(g, arrowX, wy, arrowAngle, 18, UI.wind);

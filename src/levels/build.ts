@@ -22,6 +22,11 @@ export interface BuiltLevel {
    * `castsShadow: false` live on their own body, also tagged 'terrain').
    */
   shadowless: ReadonlySet<BodyHandle>;
+  /**
+   * Round 15: jump-through pieces (`oneWay` polygons), one static body each (tagged
+   * 'terrain'); src/levels/systems/oneWay.ts enables / disables them per step.
+   */
+  oneWay: { piece: TerrainPiece; body: BodyHandle }[];
   /** Prop entity id -> body. */
   props: Map<string, { entity: StaticPropEntity; body: BodyHandle }>;
   /**
@@ -73,12 +78,19 @@ export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
   const extra = new Map<string, BodyHandle>();
   const nonAnchorable = new Set<BodyHandle>();
   const shadowless = new Set<BodyHandle>();
+  const oneWay: BuiltLevel['oneWay'] = [];
   for (const piece of spec.terrain.pieces) {
     const { points, loop } = terrainChain(piece);
     const anchorable = piece.anchorable !== false;
     const shadow = piece.castsShadow !== false;
     let body = terrain;
-    if (!anchorable || !shadow) {
+    if (piece.oneWay === true && piece.kind === 'polygon') {
+      // its own body: the one-way gate switches it on / off alone
+      body = physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
+      if (!anchorable) nonAnchorable.add(body);
+      if (!shadow) shadowless.add(body);
+      oneWay.push({ piece, body });
+    } else if (!anchorable || !shadow) {
       const key = `${anchorable}:${shadow}`;
       let b = extra.get(key);
       if (b === undefined) {
@@ -107,5 +119,5 @@ export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
       unhandled.push(e);
     }
   }
-  return { terrain, nonAnchorable, shadowless, props, unhandled };
+  return { terrain, nonAnchorable, shadowless, oneWay, props, unhandled };
 }

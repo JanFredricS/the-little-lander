@@ -14,18 +14,21 @@ import { referenceGravity, resolveTuning, type VesselOptions } from '../tuning';
 import { CsmController } from './csm';
 import { HarpoonController, HarpoonThrustController } from './harpoon';
 import { LanderController } from './lander';
+import { SpringController } from './spring';
 import type { FlightVessel } from './types';
 
 export { CsmController } from './csm';
 export { LanderController } from './lander';
 export { HarpoonController, HarpoonThrustController } from './harpoon';
-export type { FlightVessel, VesselGeometry, VesselHooks } from './types';
+export { SpringController } from './spring';
+export type { FlightVessel, SpringState, VesselGeometry, VesselHooks } from './types';
 
 const CTORS = {
   csm: CsmController,
   lander: LanderController,
   harpoon: HarpoonController,
   harpoonThrust: HarpoonThrustController,
+  spring: SpringController,
 } as const;
 
 export function createVessel(mode: VesselMode, physics: PhysicsApi, spawn: VesselSpawn, events: GameEventSink, options?: VesselOptions): FlightVessel {
@@ -43,4 +46,5 @@ export const VESSEL_FACTORIES: Readonly<Record<VesselMode, VesselControllerFacto
   lander: vesselFactory('lander'),
   harpoon: vesselFactory('harpoon'),
   harpoonThrust: vesselFactory('harpoonThrust'),
+  spring: vesselFactory('spring'),
 };

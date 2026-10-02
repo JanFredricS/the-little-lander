@@ -28,7 +28,7 @@ import { createMenu, gridMove, type GridDir, keyToCommand, menuCommand, menuFocu
 import { enterFullscreen } from './fullscreen';
 import { RotateHint } from './rotateHint';
 import { backAction, isUiCommand, itemAction, nextSteering, screenModel, type ScreenContext, type ScreenModel, type StoryContext } from './screens';
-import { isDirectSteerMode } from '../shell/directSteering';
+import { isStickMode } from '../shell/directSteering';
 import { ScreenView } from './screenView';
 import { detectTouch, TouchLayer } from './touch/touchLayer';
 import { nextTouchPref, touchVisible, type TouchPref } from './touch/touchModel';
@@ -326,7 +326,7 @@ export class GameUi {
     const touchOn = touchVisible(this.touchPref, this.touchDetected);
     // JOYSTICK in the modes it drives: the stick shows even without touch controls (a desktop mouse drags it),
     // then alone - no pause / restart buttons (Esc / Backspace)
-    const stickOnly = !touchOn && this.steering === 'joystick' && isDirectSteerMode(this.hud.mode);
+    const stickOnly = !touchOn && this.steering === 'joystick' && isStickMode(this.hud.mode);
     this.touch.setSystemButtons(!stickOnly);
     const showTouch = playing && (touchOn || stickOnly);
     this.touch.show(showTouch ? this.hud.mode : null);

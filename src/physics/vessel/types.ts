@@ -56,6 +56,28 @@ export interface FlightVessel extends VesselController {
   exhaustCones(): Cone[];
   /** Pose/velocity/fuel/hull, for re-spawning as another mode. */
   snapshot(): VesselSpawn;
+  /** Round 15: the spring legs' aim / charge (spring mode only), for the renderer + HUD. A reused object: copy what you keep. */
+  springState?(): SpringState;
+  /**
+   * Round 15: the shell dropped all held input (pause, auto-pause, a controls card). A charge
+   * held across it is cancelled, never released into a jump on the first resumed step.
+   */
+  inputCleared?(): void;
+}
+
+/** Round 15: what the spring legs are doing (src/physics/vessel/spring.ts). */
+export interface SpringState {
+  phase: 'ground' | 'charging' | 'air';
+  /** Aim (rad) from straight up against gravity; + = clockwise (to the right under +y gravity). */
+  aim: number;
+  /** Charge 0..1. */
+  power: number;
+  /** The velocity (px/s) a release would launch with right now (also shown while not charging, at the current power). */
+  launchVel: Vec2;
+  /** Felt gravity at the hull (px/s²), for the arc preview. */
+  gravity: Vec2;
+  /** Map 2: a jump is armed for the next touchdown (released in the air). */
+  armed: boolean;
 }
 
 /**

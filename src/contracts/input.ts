@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: topLeft / topRight controls; restart amendment: restart control; direct-steering amendment: InputFrame.steer + InputSourceSample.steer). Input: the per-tick InputFrame (pure, device-agnostic data)
+ * FROZEN (S0; S9 amendment: topLeft / topRight controls; restart amendment: restart control; direct-steering amendment: InputFrame.steer + InputSourceSample.steer; round 15: InputFrame.steerLength). Input: the per-tick InputFrame (pure, device-agnostic data)
  * and the InputSource plug-in interface that keyboard, mouse/pointer and
  * on-screen touch controls all implement. The game is first-class on BOTH
  * desktop and mobile browsers: every control must be reachable by touch.
@@ -104,6 +104,15 @@ export interface InputFrame {
    * not the layer's own output. Controllers never read it.
    */
   turnIntent?: number;
+  /**
+   * Round 15 (spring mode): the length of the merged steer command BEFORE `steer` is
+   * normalised, clamped to 1; absent when there is no steer. Sources report steer in
+   * stick units there (the virtual stick: deflection 0..1; a DIRECT finger / held mouse:
+   * vessel -> pointer / SPRING_POINTER_FULL_PX), so it is the spring's charge. The
+   * spring controller reads `steer` + `steerLength` directly (no DIRECT layer runs for
+   * it); other modes ignore it.
+   */
+  steerLength?: number;
 }
 
 /** Semantic digital controls, 1:1 with InputFrame's boolean fields. */

@@ -346,4 +346,5 @@ export const MODE_LABEL: Record<VesselMode, string> = {
   lander: 'LANDER',
   harpoon: 'HARPOON',
   harpoonThrust: 'HARPOON+THR',
+  spring: 'SPRING LEGS',
 };

@@ -64,11 +64,11 @@ function flyPastBeacon1() {
 }
 
 describe('round 12 checkpoints: level data', () => {
-  it('floatingIsles has one, captured at the modeSwitch, respawning on b1 left of beacon 1; only it and (round 14) The Throat have any', () => {
+  it('floatingIsles has one, captured at the modeSwitch, respawning on b1 left of beacon 1; only it, (round 14) The Throat and (round 15) Spring Isles have any', () => {
     expect(floatingIsles.checkpoints![0]).toEqual({ id: 'afterDragon', at: 'modeSwitch', respawn: { x: CHECKPOINT_RESPAWN_X, y: CHECKPOINT_RESPAWN_Y } });
     const site1 = floatingIsles.entities.find((e) => e.id === 'site1')!;
     expect(site1.kind === 'beaconSite' && CHECKPOINT_RESPAWN_X < site1.x - site1.w / 2 - 40).toBe(true);
-    for (const spec of Object.values(LEVELS)) if (spec && spec.id !== 'floatingIsles' && spec.id !== 'throat') expect(spec.checkpoints, spec.id).toBeUndefined();
+    for (const spec of Object.values(LEVELS)) if (spec && spec.id !== 'floatingIsles' && spec.id !== 'throat' && spec.id !== 'springIsles') expect(spec.checkpoints, spec.id).toBeUndefined();
   });
 
   it('validator: an at-modeSwitch checkpoint needs a modeSwitch; ids unique; the respawn inside the world', () => {

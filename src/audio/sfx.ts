@@ -39,6 +39,11 @@ export const SFX_IDS = [
   'windWhoosh',
   'gravityShift',
   'debris',
+  // round 15: spring legs + crumbling islets
+  'springCompress',
+  'springBoing',
+  'crumbleShake',
+  'crumbleBreak',
   // boss
   'bossRoar',
   'bossHurt',
@@ -140,6 +145,31 @@ export const SFX: Record<SfxId, Recipe> = {
     // leg struts settling
     d.tone({ bus: S, wave: 'square', freq: 420, start: t + 0.1, dur: 0.02, gain: 0.05 });
     d.tone({ bus: S, wave: 'square', freq: 380, start: t + 0.15, dur: 0.02, gain: 0.04 });
+  },
+
+  // ------------------------------------------------- round 15: spring legs
+  springCompress(d, t) {
+    // coils winding down: a low creak rising in pitch over about a second (the full charge)
+    d.tone({ bus: S, wave: 'square', freq: 70, freqEnd: 160, start: t, dur: 0.9, gain: 0.05, filter: { type: 'bandpass', freq: 700, q: 4, freqEnd: 1400 } });
+    for (let i = 0; i < 5; i++) d.tone({ bus: S, wave: 'triangle', freq: 300 + i * 70, start: t + i * 0.16, dur: 0.03, gain: 0.05 });
+  },
+  springBoing(d, t, o) {
+    // the classic boing: a sine sliding up with wobble, brighter / higher with the charge
+    const k = 0.4 + 0.6 * o.intensity;
+    d.tone({ bus: S, wave: 'sine', freq: 140 * k + 60, freqEnd: 420 * k + 120, start: t, dur: 0.22, gain: 0.22, vibrato: { rate: 22, cents: 90 }, release: 0.12 });
+    d.tone({ bus: S, wave: 'triangle', freq: 90, freqEnd: 45, start: t, dur: 0.07, gain: 0.18 });
+    d.noise({ bus: S, start: t, dur: 0.04, gain: 0.08, filter: { type: 'lowpass', freq: 900 } });
+  },
+  crumbleShake(d, t, o, r) {
+    // grinding rock over the telegraph time
+    const dur = Math.max(0.3, o.dur ?? 0.8);
+    d.noise({ bus: S, start: t, dur, gain: 0.1, attack: 0.05, filter: { type: 'lowpass', freq: 380, freqEnd: 700 } });
+    for (let i = 0; i < 6; i++) d.noise({ bus: S, start: t + (i / 6) * dur + r() * 0.04, dur: 0.03, gain: 0.08, filter: { type: 'bandpass', freq: 1200 + r() * 1500, q: 2 } });
+  },
+  crumbleBreak(d, t, _o, r) {
+    d.noise({ bus: S, start: t, dur: 0.45, gain: 0.32, release: 0.3, filter: { type: 'lowpass', freq: 2200, freqEnd: 200 } });
+    d.tone({ bus: S, wave: 'triangle', freq: 95, freqEnd: 40, start: t, dur: 0.35, gain: 0.25 });
+    for (let i = 0; i < 5; i++) d.noise({ bus: S, start: t + 0.05 + i * 0.07 + r() * 0.03, dur: 0.03, gain: 0.12, filter: { type: 'bandpass', freq: 900 + r() * 1800, q: 2 } });
   },
 
   // ------------------------------------------------------ pickups/objectives

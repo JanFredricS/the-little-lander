@@ -374,17 +374,13 @@ export class App {
     const s = this.session;
     if (!s || this.state.id !== 'playing') return;
     if (this.clearInputOnNextStep) {
-      this.input.clear();
-      this.direct.reset();
+      this.clearInput();
       this.clearInputOnNextStep = false;
     }
     // a controls card started holding mid-level (vessel switch): drop held input first, so the
     // keys / touches of the flight before it neither dismiss the card nor fire once it is gone
     const held = this.ui.holdSimulation;
-    if (held && !this.heldLastStep) {
-      this.input.clear();
-      this.direct.reset();
-    }
+    if (held && !this.heldLastStep) this.clearInput();
     this.heldLastStep = held;
     // one reused context (no per-step object + closure)
     const ctx = this.inputCtx;
@@ -466,9 +462,15 @@ export class App {
     this.audioMs = 0;
   }
 
-  private onPauseChange(paused: boolean, cause: PauseCause): void {
+  /** Drop every held control (sources, DIRECT steering) and tell the vessel (round 15: a held spring charge is cancelled). */
+  private clearInput(): void {
     this.input.clear();
     this.direct.reset();
+    this.session?.inputCleared();
+  }
+
+  private onPauseChange(paused: boolean, cause: PauseCause): void {
+    this.clearInput();
     if (paused && cause !== 'manual' && this.state.id === 'playing' && !this.inlineCutscene) this.dispatch({ type: 'pause' });
   }
 

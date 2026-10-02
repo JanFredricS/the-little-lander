@@ -32,4 +32,8 @@ export const SAMPLE_EVENTS: { [T in GameEventType]: GameEventOf<T> } = {
   bossHit: { type: 'bossHit', damage: 0.1, hp: 0.5, source: 'rock' },
   bossDefeated: { type: 'bossDefeated' },
   cutsceneDone: { type: 'cutsceneDone', cutsceneId: 'briefing', skipped: false },
+  springCharging: { type: 'springCharging', charging: true },
+  springJump: { type: 'springJump', power: 0.7, vel: { x: 120, y: -300 } },
+  platformCrumbling: { type: 'platformCrumbling', entityId: 'c1', pos: { x: 10, y: 20 }, inSec: 0.8 },
+  platformCrumbled: { type: 'platformCrumbled', entityId: 'c1', pos: { x: 10, y: 20 }, regrow: true },
 };

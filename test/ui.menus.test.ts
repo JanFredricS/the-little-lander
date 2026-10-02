@@ -148,7 +148,8 @@ describe('level select lock / unlock display', () => {
     expect(formatTime(5)).toBe('0:05.0');
     expect(formatTime(125.25)).toBe('2:05.3');
     expect(nextStoryLevel('hangarRun')).toBe('descent');
-    expect(nextStoryLevel('madDash')).toBeNull();
+    expect(nextStoryLevel('madDash')).toBe('springIsles');
+    expect(nextStoryLevel('springIsles')).toBeNull();
     expect(nextStoryLevel('testpad')).toBeNull();
   });
 });

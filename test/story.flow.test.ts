@@ -16,7 +16,8 @@ describe('story sequencing', () => {
   it('orders levels by STORY_LEVELS; testpad leads into Map 1', () => {
     expect(nextStoryLevel('hangarRun')).toBe('descent');
     expect(nextStoryLevel('keeper')).toBe('madDash');
-    expect(nextStoryLevel('madDash')).toBeNull();
+    expect(nextStoryLevel('madDash')).toBe('springIsles'); // round 15: the post-final map
+    expect(nextStoryLevel('springIsles')).toBeNull();
     expect(nextStoryLevel('testpad')).toBe('hangarRun');
     expect(nextStoryLevel('physlab')).toBeNull();
   });
@@ -38,7 +39,8 @@ describe('story sequencing', () => {
   it('continue plays "after" (or the next level\'s "before") then starts the next level', () => {
     expect(continuePlan('hangarRun', allBuilt).action).toEqual({ type: 'continue', next: 'descent', cutsceneAfter: 'meetIo' });
     expect(continuePlan('hollow', allBuilt).action).toEqual({ type: 'continue', next: 'keeper', cutsceneAfter: 'keeperWakes' });
-    expect(continuePlan('madDash', allBuilt).action).toEqual({ type: 'continue', next: null, cutsceneAfter: 'finale' });
+    expect(continuePlan('madDash', allBuilt).action).toEqual({ type: 'continue', next: 'springIsles', cutsceneAfter: 'finale' });
+    expect(continuePlan('springIsles', allBuilt).action).toEqual({ type: 'continue', next: null });
     // Unbuilt next level: story cutscene still plays, then level select.
     expect(continuePlan('testpad', noneBuilt).action).toEqual({ type: 'continue', next: null, cutsceneAfter: 'briefing' });
   });
@@ -79,7 +81,7 @@ describe('story sequencing', () => {
     }
     expect(seen).toEqual([
       'briefing', 'hangarRun', 'meetIo', 'descent', 'descentAwe', 'floatingIsles', 'emptyOutpost', 'throat', 'podTransfer',
-      'vaults', 'teamFound', 'hollow', 'keeperWakes', 'keeper', 'keeperFalls', 'madDash', 'finale',
+      'vaults', 'teamFound', 'hollow', 'keeperWakes', 'keeper', 'keeperFalls', 'madDash', 'finale', 'springIsles',
     ]);
     expect(save.unlocked).toEqual([...STORY_LEVELS]);
   });

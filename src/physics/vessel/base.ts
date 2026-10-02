@@ -327,6 +327,22 @@ export abstract class VesselBase implements FlightVessel {
     return this.physics.localToWorld(this.body, vPxToM(localPx));
   }
 
+  /** Unit "down" (gravity direction, world) at the hull right now. Round 15 (spring legs). */
+  protected downHere(): Vec2 {
+    const t = this.physics.getTransform(this.body);
+    return this.gravityDown({ x: mToPx(t.x), y: mToPx(t.y) });
+  }
+
+  /** Legs on a supporting surface (contacts of the last processed step). Round 15 (spring legs). */
+  protected legsSupported(): boolean {
+    return this.legsDown(this.downHere());
+  }
+
+  /** Any non-part body touching the hull (contacts of the last processed step). Round 15 (spring legs). */
+  protected touchingAnything(): boolean {
+    return this.touching.some((c) => c.part === this.body && this.isSupport(c.other));
+  }
+
   // ------------------------------------------------ internals
 
   private processStep(): void {
@@ -399,7 +415,7 @@ export abstract class VesselBase implements FlightVessel {
         impulse.set(c.other, (impulse.get(c.other) ?? 0) + j);
       }
       const severity = new Map<BodyHandle, number>();
-      for (const [o, j] of impulse) if (j > 0) severity.set(o, mToPx((j * SOLVER_IMPULSE_SCALE) / mass));
+      for (const [o, j] of impulse) if (j > 0) severity.set(o, mToPx((j * this.solverImpulseScale()) / mass));
       for (const [o, h] of fastest) {
         // Impulse data wins; a body gone since the step has no mass to judge by, so it is skipped.
         if (severity.has(o) || !this.physics.hasBody(o) || !this.damagesHull(o)) continue;
@@ -413,6 +429,14 @@ export abstract class VesselBase implements FlightVessel {
       if (worst >= t.crashSpeed) this.crash('impact', worst);
       else if (worst > t.damageSpeed) this.damage((t.hitDamage * (worst - t.damageSpeed)) / (t.crashSpeed - t.damageSpeed), 'impact');
     }
+  }
+
+  /**
+   * Solver impulse -> approach speed (see SOLVER_IMPULSE_SCALE). Round 15: a hull whose contacts
+   * read differently (the spring legs' soaked touchdown) rescales it so its px/s thresholds hold.
+   */
+  protected solverImpulseScale(): number {
+    return SOLVER_IMPULSE_SCALE;
   }
 
   /** Bodies whose contact counts toward hull impact damage (goo, debris and pass-through bodies do not). */

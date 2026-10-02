@@ -26,9 +26,10 @@
 
 import { Container, Graphics, Sprite, Texture } from 'pixi.js';
 import { VESSEL_MODES, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
-import type { ArtApi, GravityZone, LevelSpec, SpriteFrame, SpriteName, ThemeId, Vec2, VesselMode } from '../contracts';
+import type { ArtApi, GravityZone, LevelSpec, SpriteFrame, SpriteName, ThemeId, Vec2, VesselMode, VesselState } from '../contracts';
 import { getVesselAnchors, type EngineAnchor } from '../art/sprites/vessels';
 import { engineOn } from '../physics/vessel/types';
+import { springPreviewSec } from '../physics/vessel/spring';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
 import type { VesselGeometry } from '../physics/vessel';
@@ -38,6 +39,8 @@ import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from './vesselFit';
 
 /** Flame animation frame period (ms). */
 const FLAME_FRAME_MS = 60;
+/** Round 15 spring arc preview: dot count, spread evenly over the whole flight (springPreviewSec). */
+export const SPRING_DOTS = 16;
 /** Generic sprite animation period (ms) for orbs, goo, beacons. */
 const ANIM_MS = 140;
 /** Rope segment sprite length (px, obj.ropeSegment is 2x4). */
@@ -139,6 +142,8 @@ export class FlightView {
   /** Readability halo: a 1px light ring just outside the hull's dark outline (see vesselHalo). */
   private readonly halo = new Sprite(Texture.EMPTY);
   private readonly flames = new Container();
+  /** Round 15: spring coils on the lander legs (body space, over the hull art). */
+  private readonly coils = new Graphics();
   private flameSprites: { anchor: EngineAnchor; sprite: Sprite }[] = [];
   private readonly heads = new Container();
   private readonly fx = new Graphics();
@@ -190,7 +195,7 @@ export class FlightView {
     this.wind = new SpritePool(windLayer, this.tex);
     this.under.addChild(this.zones, this.zoneFx);
     this.vesselArt.addChild(this.halo, this.flames, this.hull);
-    this.vessel.addChild(this.vesselArt);
+    this.vessel.addChild(this.vesselArt, this.coils);
     this.over.addChild(markerLayer, bodyLayer, this.overFx, this.heads, this.vessel, this.fx, windLayer);
     // sprites first used mid-flight (pickups, debris, rope, wind, flames): textures now, GPU upload by the App
     this.tex.warm(FLIGHT_SPRITES);
@@ -351,6 +356,7 @@ export class FlightView {
 
     // radiation pulse flash
     const fx = clearIfDrawn(this.fx);
+    this.drawSpring(fx, vs);
     for (const em of env.radiation.emitters) {
       const last = em.last;
       if (!last || t - last.at > PULSE_FLASH || !last.inRange) continue;
@@ -380,6 +386,59 @@ export class FlightView {
       }
     }
     wind.end();
+  }
+
+  /**
+   * Round 15 (spring mode): coils on the legs (compressing with the charge, the hull sinks
+   * up to 2 px), the predicted arc (SPRING_DOTS over the whole flight back down to the launch
+   * height and a bit past it, fading, under felt gravity: the launch sets the velocity, so it is exact) and a charge meter beside the hull. On the ground with
+   * no charge, a short aim tick shows where a jump would go.
+   */
+  private drawSpring(fx: Graphics, vs: VesselState): void {
+    const coils = clearIfDrawn(this.coils);
+    const sp = this.session.vessel.springState?.();
+    if (!sp || vs.mode !== 'spring') {
+      this.hull.y = this.halo.y = 0;
+      return;
+    }
+    const geo = this.session.vessel.geometry;
+    const sink = sp.phase === 'charging' ? Math.round(2 * sp.power) : 0;
+    this.hull.y = this.halo.y = sink;
+    // coils: body bottom -> feet, both legs (body space)
+    const legX = geo.w / 2 - 3;
+    const y0 = geo.h / 2 - 7 + sink - 2;
+    const y1 = geo.h / 2 - 1;
+    for (const sx of [-1, 1]) {
+      const x = sx * legX;
+      coils.moveTo(x, y0);
+      const n = 4;
+      for (let i = 1; i <= n; i++) coils.lineTo(x + (i % 2 ? 1.5 : -1.5), y0 + ((y1 - y0) * i) / n);
+      coils.stroke({ width: 1, color: sp.phase === 'charging' ? 0xffd070 : 0xd8d8e0 });
+    }
+    if (vs.crashed || sp.phase === 'air') return;
+    const ox = vs.pos.x;
+    const oy = vs.pos.y;
+    if (sp.phase !== 'charging') {
+      // aim tick
+      const v = sp.launchVel;
+      const m = Math.hypot(v.x, v.y) || 1;
+      fx.moveTo(ox + (v.x / m) * 18, oy + (v.y / m) * 18).lineTo(ox + (v.x / m) * 30, oy + (v.y / m) * 30).stroke({ width: 1, color: 0xffffff, alpha: 0.5 });
+      return;
+    }
+    const dt = springPreviewSec(sp.launchVel, sp.gravity) / SPRING_DOTS;
+    for (let i = 1; i <= SPRING_DOTS; i++) {
+      const t = i * dt;
+      const x = ox + sp.launchVel.x * t + 0.5 * sp.gravity.x * t * t;
+      const y = oy + sp.launchVel.y * t + 0.5 * sp.gravity.y * t * t;
+      fx.circle(x, y, i === SPRING_DOTS ? 1 : 1.5).fill({ color: 0xffffff, alpha: 0.9 - (0.6 * i) / SPRING_DOTS });
+    }
+    // charge meter: right of the hull, bottom-up
+    const mx = ox + geo.w / 2 + 6;
+    const my = oy - 10;
+    const h = 20;
+    fx.rect(mx - 1, my - 1, 5, h + 2).fill({ color: 0x101018, alpha: 0.8 });
+    const fill = Math.round(h * sp.power);
+    fx.rect(mx, my + h - fill, 3, fill).fill(sp.power >= 1 ? 0xff6040 : 0xffd070);
   }
 
   /**

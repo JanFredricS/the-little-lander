@@ -35,7 +35,7 @@
  */
 
 import type { ControlId, Rect, VesselMode } from '../../contracts';
-import { isDirectSteerMode } from '../../shell/directSteering';
+import { isStickMode } from '../../shell/directSteering';
 import { MIN_TOUCH_CSS } from '../menu';
 
 export type TouchButtonKind = 'hold' | 'tap';
@@ -77,6 +77,7 @@ export const STICK_DEADZONE = 0.22;
  * or null inside the deadzone (= coast).
  */
 // NOTE: the DIRECT layer currently ignores the magnitude by design (no throttle): any deflection past the deadzone = full thrust that way.
+// Round 15: spring mode reads it (InputFrame.steerLength = the jump charge).
 export function stickVector(stick: Pick<TouchStick, 'cx' | 'cy' | 'r'>, x: number, y: number): { x: number; y: number } | null {
   const dx = x - stick.cx;
   const dy = y - stick.cy;
@@ -150,7 +151,7 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
     return { left: rel.x, top: inB.y };
   };
 
-  if (opts.joystick && isDirectSteerMode(mode)) {
+  if (opts.joystick && isStickMode(mode)) {
     // left thumb: base clear of the corner by a quarter radius; grab zone = the lower-left area
     // under the system buttons, at most half the width (the right half stays free: minimap)
     const R = Math.round(s * 0.85);
@@ -165,7 +166,7 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
     const zone = opts.stickRight ? r(w - Math.round(zw), top, Math.round(zw), h - top) : r(0, top, zw, h - top);
     return { mode, buttons, aimZone, stick: { cx, cy, r: R, zone } };
   }
-  if (opts.direct && isDirectSteerMode(mode)) return { mode, buttons, aimZone, stick: null };
+  if (opts.direct && isStickMode(mode)) return { mode, buttons, aimZone, stick: null };
   switch (mode) {
     case 'csm':
       // side-anchored: LAYOUT right mirrors it (THRUST lower-left, ◀ ▶ lower-right in reading order)
@@ -187,6 +188,16 @@ export function touchLayout(mode: VesselMode, w: number, h: number, opts: TouchL
         at(sw ? engL : engR, r(right - big, bottom - big, big, big)),
         at(sw ? topR : topL, r(m, topY, small, small)),
         at(sw ? topL : topR, r(right - small, topY, small, small)),
+      );
+      break;
+    }
+    case 'spring': {
+      // round 15 (ENGINES scheme): ◀ ▶ sweep the aim, hold JUMP to charge, let go to jump; ✕ cancels
+      rotateLeft(opts.stickRight ? right - 2 * s - g : m);
+      const jump = r(opts.stickRight ? m : right - big, bottom - big, big, big);
+      buttons.push(
+        { id: 'thrust', control: 'thrust', label: 'JUMP', kind: 'hold', rect: jump },
+        { id: 'release', control: 'release', label: '✕', kind: 'tap', rect: r(opts.stickRight ? m + big - s : right - s, jump.y - g - s, s, s) },
       );
       break;
     }

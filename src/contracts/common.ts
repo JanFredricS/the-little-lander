@@ -43,7 +43,8 @@ export type LevelId =
   | 'vaults' // Map 5 — harpoon
   | 'hollow' // Map 6 — harpoon + thrust, gravity zones, radiation
   | 'keeper' // Map 7 — boss arena, harpoon + thrust
-  | 'madDash'; // Map 8 — lander, collapse escape
+  | 'madDash' // Map 8 — lander, collapse escape
+  | 'springIsles'; // Map 9 — spring legs (round 15: the post-final arc, thrusters dead)
 
 /** Story order (testpad excluded). The level-select / unlock order. */
 export const STORY_LEVELS: readonly LevelId[] = [
@@ -55,4 +56,5 @@ export const STORY_LEVELS: readonly LevelId[] = [
   'hollow',
   'keeper',
   'madDash',
+  'springIsles',
 ];

@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints; round 14: CheckpointSpec 'enterRegion'). Level data. A level is a plain data module exporting a
+ * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints; round 14: CheckpointSpec 'enterRegion'; round 15: TerrainPiece.oneWay, CrumblePlatformEntity oneWay / regrowSec). Level data. A level is a plain data module exporting a
  * LevelSpec (S6/S7 write them; the level loader spawns them; S1 physics
  * interprets zones/entities; S2/S4 render them).
  *
@@ -67,6 +67,13 @@ export interface TerrainPiece {
    * still anchorable unless `anchorable: false`, but radiation shines through.
    */
   castsShadow?: boolean;
+  /**
+   * Round 15: a jump-through platform ('polygon' pieces only). The vessel passes through
+   * it from below / the side and stands on it from above: it collides only while the
+   * vessel's lowest point is above the piece's top surface (src/levels/systems/oneWay.ts).
+   * The gate switches the whole body, so loose bodies (debris) meet it only while it is on. Default false.
+   */
+  oneWay?: boolean;
 }
 
 export interface TerrainSpec {
@@ -248,6 +255,14 @@ export interface CrumblePlatformEntity extends EntityBase {
   h: number;
   delaySec: number;
   style: TerrainStyle;
+  /** Round 15: jump-through (see TerrainPiece.oneWay). Default false. */
+  oneWay?: boolean;
+  /**
+   * Round 15: seconds after the collapse when it grows back (once the vessel is clear of
+   * its box), so a fall never strands the climb. Default: never (it stays gone until a
+   * level restart / checkpoint respawn rebuilds it).
+   */
+  regrowSec?: number;
 }
 
 export type EntitySpec =

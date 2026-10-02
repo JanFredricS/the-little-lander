@@ -64,6 +64,10 @@ export const EVENT_SFX: { [T in GameEventType]: Mapper<T> } = {
   bossHit: (e) => [{ id: 'bossHurt', opts: { intensity: clamp01(e.damage * 4) } }],
   bossDefeated: () => [{ id: 'bossDefeated' }],
   cutsceneDone: () => [],
+  springCharging: (e) => (e.charging ? [{ id: 'springCompress' }] : []),
+  springJump: (e) => [{ id: 'springBoing', opts: { intensity: e.power === 0 ? clamp01(Math.hypot(e.vel.x, e.vel.y) / 380) * 0.6 : e.power } }],
+  platformCrumbling: (e) => [{ id: 'crumbleShake', opts: { dur: e.inSec } }],
+  platformCrumbled: () => [{ id: 'crumbleBreak' }],
 };
 
 /** Events handled by engine state (music / thrusters), not one-shots. */

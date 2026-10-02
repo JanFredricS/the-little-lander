@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { VESSEL_MODES } from '../src/contracts';
 import { getVesselAnchors, LANDER_POSE, VESSEL_PIVOTS, VESSEL_SIZES, vesselGroundY } from '../src/art/sprites/vessels';
-import { CSM_TUNING, HARPOON_THRUST_TUNING, HARPOON_TUNING, LANDER_TUNING } from '../src/physics/tuning';
+import { CSM_TUNING, HARPOON_THRUST_TUNING, HARPOON_TUNING, LANDER_TUNING, SPRING_TUNING } from '../src/physics/tuning';
 import { csmGeometry } from '../src/physics/vessel/csm';
 import { podGeometry } from '../src/physics/vessel/harpoon';
 import { landerGeometry } from '../src/physics/vessel/lander';
+import { springGeometry } from '../src/physics/vessel/spring';
 import type { VesselGeometry } from '../src/physics/vessel';
 import { MODE_SPRITES, vesselArtOffsetY, vesselFrame } from '../src/render/vesselFit';
 import { spriteRegistry } from '../src/art/sprites/registry';
@@ -15,6 +16,7 @@ const GEOMETRY: Record<(typeof VESSEL_MODES)[number], VesselGeometry> = {
   lander: landerGeometry(LANDER_TUNING),
   harpoon: podGeometry(HARPOON_TUNING, false),
   harpoonThrust: podGeometry(HARPOON_THRUST_TUNING, true),
+  spring: springGeometry(SPRING_TUNING),
 };
 
 /** Lowest collision point below the body origin (px). */

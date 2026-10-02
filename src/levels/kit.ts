@@ -17,7 +17,7 @@ import { mulberry32 } from '../art/core/rng';
 
 export const P = (x: number, y: number): Vec2 => ({ x, y });
 
-type PieceOpts = Partial<Pick<TerrainPiece, 'friction' | 'restitution' | 'anchorable'>> & Partial<Omit<TerrainStyle, 'material'>>;
+type PieceOpts = Partial<Pick<TerrainPiece, 'friction' | 'restitution' | 'anchorable' | 'oneWay'>> & Partial<Omit<TerrainStyle, 'material'>>;
 
 function style(material: TerrainMaterial, o: PieceOpts): TerrainStyle {
   const s: TerrainStyle = { material };
@@ -32,6 +32,7 @@ function piece(id: string, kind: TerrainPiece['kind'], points: Vec2[], material:
   if (o.friction !== undefined) p.friction = o.friction;
   if (o.restitution !== undefined) p.restitution = o.restitution;
   if (o.anchorable !== undefined) p.anchorable = o.anchorable;
+  if (o.oneWay !== undefined) p.oneWay = o.oneWay; // round 15
   return p;
 }
 

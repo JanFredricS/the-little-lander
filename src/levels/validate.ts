@@ -268,6 +268,9 @@ function checkPiece(piece: TerrainPiece, what: string, inside: (p: Vec2) => bool
     }
   }
   if (!piece.style?.material) err(`${what}: style.material missing`);
+  // round 15: jump-through platforms are closed outlines (the gate reads their top surface)
+  if (piece.oneWay !== undefined && typeof piece.oneWay !== 'boolean') err(`${what}: oneWay must be a boolean`);
+  if (piece.oneWay === true && piece.kind !== 'polygon') err(`${what}: oneWay is only allowed on 'polygon' pieces`);
   if (piece.style?.decorDensity !== undefined && !frac(piece.style.decorDensity)) err(`${what}: decorDensity must be in 0..1`);
 }
 
@@ -324,6 +327,9 @@ function checkEntity(e: EntitySpec, what: string, err: (m: string) => void, rect
     case 'crumblePlatform':
       if (!(pos(e.w) && pos(e.h))) err(`${what}: w/h must be positive`);
       if (!(fin(e.delaySec) && e.delaySec >= 0)) err(`${what}: delaySec must be >= 0`);
+      if (e.oneWay !== undefined && typeof e.oneWay !== 'boolean') err(`${what}: oneWay must be a boolean`);
+      // round 15: regrowing faster than it crumbles would rebuild under a falling pilot's feet
+      if (e.regrowSec !== undefined && !(fin(e.regrowSec) && e.regrowSec >= 1)) err(`${what}: regrowSec must be >= 1`);
       break;
   }
 }

@@ -227,7 +227,9 @@ vi.mock('../src/story/cutscenePlayer', () => ({
 vi.mock('../src/shell/clock', () => ({
   FrameLoop: class {
     paused = false;
-    constructor(cb: { step: () => void; render: (a: number) => void }) {
+    private readonly cb: { onPauseChange?: (paused: boolean, cause: 'manual') => void };
+    constructor(cb: { step: () => void; render: (a: number) => void; onPauseChange?: (paused: boolean, cause: 'manual') => void }) {
+      this.cb = cb;
       h.loop = Object.assign(cb, { paused: false });
       const self = this; // keep one paused flag for App and the test
       Object.defineProperty(h.loop, 'paused', { get: () => self.paused });
@@ -236,7 +238,10 @@ vi.mock('../src/shell/clock', () => ({
     stop() {}
     bindVisibility() {}
     setPaused(p: boolean) {
+      // like the real FrameLoop: a change is reported (round 15: App.clearInput on pause / resume)
+      if (p === this.paused) return;
       this.paused = p;
+      this.cb.onPauseChange?.(p, 'manual');
     }
   },
 }));
@@ -257,6 +262,8 @@ vi.mock('../src/shell/input', async (importOriginal) => {
         down: { thrust: f.thrust, engineLeft: f.engineLeft, engineRight: f.engineRight, rotateCW: f.rotateCW, rotateCCW: f.rotateCCW, reelIn: f.reelIn, reelOut: f.reelOut },
         pressed: { fire: f.fire, release: f.release, pause: f.pause, restart: f.restart },
         aim: f.aim.x !== 0 || f.aim.y !== 0 ? { dir: f.aim, target: f.aimTarget } : null,
+        // round 15: the spring jumper aims + charges with the stick (deflection = steer length, as a real stick)
+        steer: _ctx.mode === 'spring' && (f.steer.x !== 0 || f.steer.y !== 0) ? { x: f.steer.x * (f.steerLength ?? 1), y: f.steer.y * (f.steerLength ?? 1) } : null,
       };
     }
     /** The pilots emit physical engines: the swapped-keys setting does not apply to them. */
@@ -372,7 +379,8 @@ async function playStory(stop: (r: Run) => boolean = () => false): Promise<Run> 
       case 'results':
         expect(s.outcome, `${s.levelId}: ${JSON.stringify(s.outcome)}`).toMatchObject({ kind: 'complete' });
         r.fuel[s.levelId] = h.session!.state.fuel;
-        h.click!('next'); // results NEXT
+        // results NEXT; the last story map (round 15: Spring Isles, nothing after it) offers only LEVELS
+        h.click!(s.levelId === STORY_LEVELS[STORY_LEVELS.length - 1] ? 'levels' : 'next');
         break;
       case 'cutscene':
         break; // App opens its player; handled on the next pass
@@ -414,7 +422,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
       'briefing', 'hangarRun', 'meetIo', 'descent', 'descentAwe',
       'floatingIsles', 'csmSeized (mid-level)', 'emptyOutpost',
       'throat', 'podTransfer', 'vaults', 'teamFound', 'hollow', 'keeperWakes',
-      'keeper', 'keeperFalls', 'madDash', 'finale',
+      'keeper', 'keeperFalls', 'madDash', 'finale', 'springIsles',
     ]);
     expect(h.levelsStarted).toEqual([...STORY_LEVELS]);
     // round 9: a never-chosen steering setting stays null and resolves per level: JOYSTICK (DIRECT keys, canvas off),
@@ -733,6 +741,18 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     r.app.destroy();
   });
 
+  it('round 15 audit M1: pausing tells the session the input was cleared (a held spring charge is cancelled, never jumps on resume)', { timeout: 120_000 }, async () => {
+    const { LevelSession: Session } = await import('../src/game/session');
+    const cleared = vi.spyOn(Session.prototype, 'inputCleared');
+    const { r } = await flyWithStickUp('joystick', 30);
+    expect(r.app.state.id).toBe('paused');
+    // the pause (and the level's first step) went through App.clearInput -> session.inputCleared
+    expect(cleared.mock.calls.length).toBeGreaterThanOrEqual(2);
+    cleared.mockRestore();
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    r.app.destroy();
+  });
+
   it('negative control: under ENGINES the same held stick fires nothing (the DIRECT layer is off)', { timeout: 120_000 }, async () => {
     const { r, frames } = await flyWithStickUp('engines', 90);
     expect([h.kbDirect.at(-1), h.ptrDirect.at(-1)]).toEqual([false, false]);
@@ -835,6 +855,13 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
 
   it('round 10 audit: a hold beginning mid-level drops the held input (input.clear + direct.reset) on its first held step', { timeout: 300_000 }, async () => {
     const { DirectSteering } = await import('../src/shell/directSteering');
+    const { LevelSession: Session } = await import('../src/game/session');
+    const cleared: number[] = [];
+    const origCleared = Session.prototype.inputCleared;
+    vi.spyOn(Session.prototype, 'inputCleared').mockImplementation(function (this: LevelSession) {
+      cleared.push(this.simTime);
+      return origCleared.call(this);
+    });
     const resets: number[] = [];
     const orig = DirectSteering.prototype.reset;
     vi.spyOn(DirectSteering.prototype, 'reset').mockImplementation(function (this: InstanceType<typeof DirectSteering>) {
@@ -858,6 +885,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     // exactly once, at the frozen hold time (the sim does not advance while held)
     expect(h.inputClears.filter((t) => t === heldAt)).toHaveLength(1);
     expect(resets.filter((t) => t === heldAt)).toHaveLength(1);
+    expect(cleared.filter((t) => t === heldAt)).toHaveLength(1); // round 15: the vessel hears it too (spring charge cancel)
     expect(h.session!.simTime).toBeGreaterThan(heldAt); // the first input released it
     expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
     r.app.destroy();

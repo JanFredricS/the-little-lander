@@ -13,19 +13,22 @@ import { CSM_TUNING } from './csm';
 import { LANDER_TUNING } from './lander';
 import { HARPOON_TUNING } from './harpoon';
 import { HARPOON_THRUST_TUNING } from './harpoonThrust';
+import { SPRING_TUNING } from './spring';
 import { BEACON_TUNING, DEBRIS_TUNING, GOO_TUNING, GRAVITY_TUNING, PICKUP_TUNING } from './environment';
 
-export { CSM_TUNING, LANDER_TUNING, HARPOON_TUNING, HARPOON_THRUST_TUNING, GOO_TUNING, DEBRIS_TUNING, PICKUP_TUNING, BEACON_TUNING, GRAVITY_TUNING };
+export { CSM_TUNING, LANDER_TUNING, HARPOON_TUNING, HARPOON_THRUST_TUNING, SPRING_TUNING, GOO_TUNING, DEBRIS_TUNING, PICKUP_TUNING, BEACON_TUNING, GRAVITY_TUNING };
 export type { CsmTuning } from './csm';
 export type { LanderTuning } from './lander';
 export type { HarpoonTuning } from './harpoon';
 export type { HarpoonThrustTuning } from './harpoonThrust';
+export type { SpringTuning } from './spring';
 
 const DEFAULTS = {
   csm: CSM_TUNING,
   lander: LANDER_TUNING,
   harpoon: HARPOON_TUNING,
   harpoonThrust: HARPOON_THRUST_TUNING,
+  spring: SPRING_TUNING,
   goo: GOO_TUNING,
   debris: DEBRIS_TUNING,
   pickup: PICKUP_TUNING,
@@ -118,6 +121,18 @@ const FIELD_RANGES: Readonly<Record<string, TuningRange>> = {
   minDamageSpeed: NON_NEGATIVE,
   zoneBelow: NON_NEGATIVE,
   eventThreshold: NON_NEGATIVE,
+  // round 15 spring legs
+  jumpSpeedMin: NON_NEGATIVE,
+  jumpSpeedMax: POSITIVE,
+  aimMax: { min: 0, max: Math.PI / 2 },
+  aimRate: POSITIVE,
+  chargeSec: POSITIVE,
+  uprightStiffness: NON_NEGATIVE,
+  uprightDamping: NON_NEGATIVE,
+  autoBounce: { min: 0, max: 1, int: true },
+  bounceRestitution: { min: 0, max: 0.95 },
+  bounceWindowSec: NON_NEGATIVE,
+  bounceMinSpeed: NON_NEGATIVE,
 };
 
 /** Range of a registered `group.field` key (undefined for unknown keys). */
@@ -141,12 +156,13 @@ export function overrideRangeError(key: string, value: number): string | null {
 /** Cross-field consistency of a resolved tuning (e.g. damageSpeed < crashSpeed). */
 export function tuningConsistencyErrors(t: PhysicsTuning): string[] {
   const out: string[] = [];
-  for (const g of ['csm', 'lander', 'harpoon', 'harpoonThrust'] as const) {
+  for (const g of ['csm', 'lander', 'harpoon', 'harpoonThrust', 'spring'] as const) {
     if (!(t[g].damageSpeed < t[g].crashSpeed)) out.push(`${g}.damageSpeed must be < ${g}.crashSpeed`);
   }
   for (const g of ['harpoon', 'harpoonThrust'] as const) {
     if (!(t[g].ropeMin < t[g].ropeRange)) out.push(`${g}.ropeMin must be < ${g}.ropeRange`);
   }
+  if (!(t.spring.jumpSpeedMin < t.spring.jumpSpeedMax)) out.push('spring.jumpSpeedMin must be < spring.jumpSpeedMax');
   return out;
 }
 

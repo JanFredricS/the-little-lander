@@ -23,6 +23,7 @@ const KEYS: Record<VesselMode, readonly string[]> = {
   ],
   harpoon: ['MOUSE / ARROWS   AIM', 'CLICK / SPACE   FIRE HARPOON', 'RIGHT CLICK / X   RELEASE', 'W / R   REEL IN    S / F   REEL OUT'],
   harpoonThrust: ['MOUSE / ARROWS   AIM', 'CLICK / SPACE   FIRE    X   RELEASE', 'W   THRUST    A / D   ROTATE', 'R   REEL IN    F   REEL OUT'],
+  spring: ['A / ←  D / →   AIM THE JUMP', 'HOLD W / ↑ / SPACE   CHARGE THE SPRINGS', 'LET GO TO JUMP    S / ↓   CANCEL', 'NO CONTROL IN THE AIR - WATCH THE DOTS'],
 };
 
 const TOUCH: Record<VesselMode, readonly string[]> = {
@@ -30,6 +31,7 @@ const TOUCH: Record<VesselMode, readonly string[]> = {
   lander: ['L ENGINE: BOTTOM LEFT', 'R ENGINE: BOTTOM RIGHT', 'HOLD BOTH TO GO STRAIGHT UP', 'TOP L / TOP R: SMALL BUTTONS ABOVE', 'UPSIDE DOWN? TOP THRUSTERS FLIP YOU'],
   harpoon: ['DRAG ON THE LEFT TO AIM', 'FIRE / REL   HARPOON', '▲ IN  ▼ OUT   REEL THE ROPE'],
   harpoonThrust: ['DRAG ON THE LEFT TO AIM', 'FIRE / REL   HARPOON   ▲▼ REEL', '◀ ▶ ROTATE    THR   THRUST'],
+  spring: ['◀ ▶   AIM THE JUMP', 'HOLD JUMP TO CHARGE, LET GO TO JUMP', '✕   CANCEL THE CHARGE', 'NO CONTROL IN THE AIR - WATCH THE DOTS'],
 };
 
 const TITLE: Record<VesselMode, string> = {
@@ -37,6 +39,7 @@ const TITLE: Record<VesselMode, string> = {
   lander: 'LANDER CONTROLS',
   harpoon: 'HARPOON CONTROLS',
   harpoonThrust: 'HARPOON + THRUST',
+  spring: 'SPRING LEGS',
 };
 
 /** S9: touch lander card with the swapped engine buttons (the default). */
@@ -65,16 +68,20 @@ const KEYS_LANDER_SWAPPED: readonly string[] = [
  */
 const DIRECT_KEYS: Partial<Record<VesselMode, readonly string[]>> = {
   lander: ['A / ←   ROTATE LEFT', 'D / →   ROTATE RIGHT', 'W / ↑ / SPACE   THRUST', 'S / ↓   TOP THRUSTERS (PUSH DOWN)', 'LET GO TO COAST'],
+  // round 15 (audit L5): the keys + the DIRECT pointer (drag from the ship: direction = aim, distance = charge)
+  spring: ['A / ←  D / →   AIM THE JUMP', 'HOLD W / ↑ / SPACE   CHARGE', 'LET GO TO JUMP    S / ↓   CANCEL', 'OR DRAG THE MOUSE AWAY FROM THE SHIP:', 'DIRECTION = AIM, FURTHER = STRONGER'],
 };
 const DIRECT_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
   lander: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE LANDER TURNS ITSELF TO PUSH', 'BELOW THE SHIP: TOP THRUSTERS', 'LET GO TO COAST'],
   csm: ['HOLD ANYWHERE: THRUST TOWARD FINGER', 'THE CSM TURNS, THEN BURNS', 'LET GO TO COAST'],
+  spring: ['HOLD: DRAG AWAY FROM THE SHIP TO AIM', 'FURTHER = STRONGER JUMP', 'LET GO TO JUMP    DRAG BELOW: CANCEL'],
 };
 
 /** JOYSTICK steering (round 8): the virtual stick bottom-left drives the DIRECT layer. */
 const JOYSTICK_TOUCH: Partial<Record<VesselMode, readonly string[]>> = {
   lander: ['LEFT STICK: THRUST THAT WAY', 'THE LANDER TURNS ITSELF TO PUSH', 'STICK DOWN: TOP THRUSTERS', 'CENTRE OR LET GO TO COAST'],
   csm: ['LEFT STICK: THRUST THAT WAY', 'THE CSM TURNS, THEN BURNS', 'CENTRE OR LET GO TO COAST'],
+  spring: ['LEFT STICK: AIM THE JUMP', 'PUSH FURTHER = STRONGER JUMP', 'LET GO TO JUMP    STICK DOWN: CANCEL'],
 };
 const JOYSTICK_MOUSE = 'MOUSE: DRAG THE STICK (BOTTOM LEFT)';
 
@@ -95,7 +102,9 @@ const mirrorSides = (lines: readonly string[]): string[] =>
 export function helpCard(mode: VesselMode, touch: boolean, start = true, swap = false, direct = false, joystick = false, stickRight = false): HelpCard {
   if (joystick && JOYSTICK_TOUCH[mode]) {
     // touch: the stick; keyboard: the DIRECT keys (the CSM keeps its classic ones) + the mouse-draggable stick
-    const base = touch ? JOYSTICK_TOUCH[mode]! : [...(DIRECT_KEYS[mode] ?? KEYS[mode]), JOYSTICK_MOUSE];
+    // (the spring's DIRECT keys card names the DIRECT mouse drag: under JOYSTICK the mouse drags the stick)
+    const keys = mode === 'spring' ? KEYS[mode] : (DIRECT_KEYS[mode] ?? KEYS[mode]);
+    const base = touch ? JOYSTICK_TOUCH[mode]! : [...keys, JOYSTICK_MOUSE];
     const lines = stickRight ? mirrorSides(base) : base;
     return {
       title: `${TITLE[mode]} (JOYSTICK)`,

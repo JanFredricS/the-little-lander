@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; S9 amendment: optional enginesChanged topLeft/topRight; round 12: checkpointReached). Gameplay events. Emitted synchronously during a fixed step
+ * FROZEN (S0; S9 amendment: optional enginesChanged topLeft/topRight; round 12: checkpointReached; round 15: springCharging / springJump / platformCrumbling / platformCrumbled). Gameplay events. Emitted synchronously during a fixed step
  * (by vessel controllers, level objective logic, the boss, the cutscene
  * player) into a GameEventSink; consumed by HUD, audio, FX, progress/saves.
  *
@@ -63,6 +63,14 @@ export type GameEvent =
    * mark the moment, so audio stays quiet and the HUD folds CHECKPOINT into that banner.
    */
   | { type: 'checkpointReached'; checkpointId: string; withBeacon?: boolean }
+  /** Round 15: the spring legs started (true) / stopped (false) compressing for a jump (cancelled or released). */
+  | { type: 'springCharging'; charging: boolean }
+  /** Round 15: the spring vessel jumped. power 0..1 (charge), vel = launch velocity (px/s). */
+  | { type: 'springJump'; power: number; vel: Vec2 }
+  /** Round 15: a crumbling platform was touched and starts shaking (it collapses in `inSec`). */
+  | { type: 'platformCrumbling'; entityId: string; pos: Vec2; inSec: number }
+  /** Round 15: a crumbling platform collapsed (`regrow` = it comes back later). */
+  | { type: 'platformCrumbled'; entityId: string; pos: Vec2; regrow: boolean }
   | { type: 'levelComplete'; levelId: LevelId; timeSec: number; orbs: number; score: number }
   | { type: 'levelFailed'; levelId: LevelId; cause: CrashCause }
   /** Boss entered phase 1..3. hp 0..1. */

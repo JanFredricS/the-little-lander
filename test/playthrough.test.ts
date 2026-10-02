@@ -97,7 +97,7 @@ describe('headless story playthrough (all 8 maps, real sessions, no App)', () =>
       'briefing', 'hangarRun', 'meetIo', 'descent', 'descentAwe',
       'floatingIsles', 'csmSeized (mid-level)', 'emptyOutpost',
       'throat', 'podTransfer', 'vaults', 'teamFound', 'hollow', 'keeperWakes',
-      'keeper', 'keeperFalls', 'madDash', 'finale',
+      'keeper', 'keeperFalls', 'madDash', 'finale', 'springIsles',
     ]);
     expect(s).toEqual({ id: 'levelSelect' });
     expect(save.unlocked).toEqual([...STORY_LEVELS]);
@@ -109,7 +109,9 @@ describe('headless story playthrough (all 8 maps, real sessions, no App)', () =>
     expect(ev('keeper', 'bossDefeated')).toHaveLength(1);
     // difficulty: every map keeps its fuel margin (S8 curve; see MIN_COMPLETION_FUEL)
     for (const r of runs) expect(r.fuel, `${r.id} completion fuel`).toBeGreaterThanOrEqual(MIN_COMPLETION_FUEL[r.id]!);
-    expect(continuePlan('madDash', getLevel)).toEqual({ action: { type: 'continue', next: null, cutsceneAfter: 'finale' }, cutscenes: ['finale'] });
+    // round 15: the finale (credits) now continues into Map 9, Spring Isles; it is the last map (no cutscene after)
+    expect(continuePlan('madDash', getLevel)).toEqual({ action: { type: 'continue', next: 'springIsles', cutsceneAfter: 'finale' }, cutscenes: ['finale'] });
+    expect(continuePlan('springIsles', getLevel)).toEqual({ action: { type: 'continue', next: null }, cutscenes: [] });
 
     // every cutscene that played has a script whose stills exist; the finale carries the credits
     for (const c of played) for (const shot of getCutscene(c).shots) expect(STILL_IDS).toContain(shot.still);

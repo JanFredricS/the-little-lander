@@ -85,6 +85,7 @@ describe('a gated exit is never a silent failure', () => {
       hollow: d('tunnel', 15850, 1560, 200, 290, false),
       madDash: d('sky', 700, 170, 500, 150, false),
       keeper: [],
+      springIsles: d('exit', 750, 490, 120, 60, true), // round 15
     });
   });
 

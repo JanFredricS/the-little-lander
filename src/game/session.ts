@@ -298,6 +298,11 @@ export class LevelSession {
     return this.env.pickups.orbsCollected;
   }
 
+  /** Round 15: the shell cleared its held input (pause / auto-pause / controls card): held vessel actions are dropped. */
+  inputCleared(): void {
+    this.vessel.inputCleared?.();
+  }
+
   /** Switch the vessel to `mode` at the start of the next step (debug key, scripted switches). */
   requestModeSwitch(mode: VesselMode): void {
     this.pendingMode = mode;
@@ -447,6 +452,8 @@ export class LevelSession {
         return t.harpoon.height;
       case 'harpoonThrust':
         return t.harpoonThrust.height;
+      case 'spring':
+        return t.spring.height + 2 * t.spring.legDrop;
     }
   }
 

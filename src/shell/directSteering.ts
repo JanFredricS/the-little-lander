@@ -150,6 +150,17 @@ export function isDirectSteerMode(mode: VesselMode): boolean {
   return DIRECT_STEER_MODES.has(mode);
 }
 
+/**
+ * Round 15: modes the JOYSTICK stick / DIRECT finger drive at all: the DIRECT modes plus
+ * 'spring', whose controller reads InputFrame.steer + steerLength itself (aim + charge;
+ * the DIRECT layer passes its frames through untouched).
+ */
+export const STICK_MODES: ReadonlySet<VesselMode> = new Set<VesselMode>([...DIRECT_STEER_MODES, 'spring']);
+
+export function isStickMode(mode: VesselMode): boolean {
+  return STICK_MODES.has(mode);
+}
+
 /** Wrap an angle to (-π, π]. */
 export function wrapAngle(a: number): number {
   const w = Math.atan2(Math.sin(a), Math.cos(a));

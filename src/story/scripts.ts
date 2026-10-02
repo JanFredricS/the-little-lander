@@ -148,10 +148,13 @@ export const CUTSCENES: Readonly<Record<CutsceneId, CutsceneScript>> = {
       narrate('beaconRoadDawn', 4.5, "Below, Aster's sun burns steady for the first time in ages."),
       say('beaconRoadDawn', 'narrator', "And one by one, Wren's beacons light up across the isles:", 'a safe road down, for everyone who comes next.'),
       say('wrenPortrait', 'wren', 'Beacons, people, home. All three.', "...So. What's the next job?"),
-      // end credits (S8): the story ends here; the App returns to level select
+      // end credits (S8): the main story ends here; the epilogue lines lead into the post-final Map 9 (round 15)
       narrate('asterFromOrbit', 4, 'THE LITTLE LANDER', 'Thank you for flying.'),
       narrate('floatingIslandsVista', 5, 'Every sprite, tile, still and sound was made in code:', 'TypeScript, PixiJS, Box2D and a lot of seeded noise.'),
       say('beaconRoadDawn', 'narrator', 'THE END', 'Every map stays open in level select. Fly them again!'),
+      // round 15 (audit L2): Continue goes on to the post-final Map 9 (Spring Isles): set it up
+      say('floatingIslandsVista', 'narrator', 'EPILOGUE. Above the isles, the lift-off', "burned the lander's thrusters out..."),
+      say('wrenPortrait', 'wren', 'No engines. But the spring legs still work.', "Fine. I'll hop the rest of the way up."),
     ],
   },
 };

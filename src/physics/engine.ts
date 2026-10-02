@@ -248,6 +248,17 @@ export class PhysicsWorld implements PhysicsApi {
     return this.bodies.get(h)?.tag;
   }
 
+  setBodyEnabled(h: BodyHandle, enabled: boolean): void {
+    const rec = this.body(h);
+    if (this.b2.b2Body_IsEnabled(rec.id) === enabled) return;
+    if (enabled) this.b2.b2Body_Enable(rec.id);
+    else this.b2.b2Body_Disable(rec.id);
+  }
+
+  isBodyEnabled(h: BodyHandle): boolean {
+    return this.b2.b2Body_IsEnabled(this.body(h).id);
+  }
+
   addBox(h: BodyHandle, halfW: number, halfH: number, material: MaterialDef = {}, center?: Vec2, angle = 0): void {
     const b2 = this.b2;
     const rec = this.body(h);

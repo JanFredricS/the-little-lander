@@ -124,7 +124,8 @@ describe('level helpers', () => {
     expect(resolveLevelParam('testpad')).toBe('testpad');
     expect(resolveLevelParam('map1')).toBe('hangarRun');
     expect(resolveLevelParam('map8')).toBe('madDash');
-    expect(resolveLevelParam('map9')).toBeNull();
+    expect(resolveLevelParam('map9')).toBe('springIsles'); // round 15
+    expect(resolveLevelParam('map10')).toBeNull();
     expect(resolveLevelParam('nope')).toBeNull();
     expect(resolveLevelParam(null)).toBeNull();
   });

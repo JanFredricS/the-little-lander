@@ -37,6 +37,7 @@ export const STORY_TITLES: Record<LevelId, string> = {
   hollow: 'The Hollow',
   keeper: 'The Keeper',
   madDash: 'The Mad Dash',
+  springIsles: 'Spring Isles',
 };
 
 export type SaveView = Pick<SaveState, 'unlocked' | 'best'>;

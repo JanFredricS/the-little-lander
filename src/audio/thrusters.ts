@@ -27,6 +27,7 @@ export function thrusterSpec(mode: VesselMode, engine: EngineId): LoopSpec {
       return { bus: 'sfx', wave: 'square', freq: engine === 'right' ? 97 : 92, noise: 1.2, gain: 0.13, wobble: { rate: engine === 'right' ? 9.3 : 8.1, cents: 35 }, filter: { type: 'lowpass', freq: 1400, q: 1.4 }, pan, attack: 0.03 };
     case 'harpoon':
     case 'harpoonThrust':
+    case 'spring': // round 15: no engines (never lit); the pod timbre is a harmless fallback
       // pod RCS-style hiss with a thin triangle whine
       return { bus: 'sfx', wave: 'triangle', freq: engine === 'main' ? 150 : 185, noise: 1.8, gain: 0.11, wobble: { rate: 12, cents: 45 }, filter: { type: 'bandpass', freq: 2200, q: 0.8 }, pan, attack: 0.02 };
   }

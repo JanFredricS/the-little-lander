@@ -24,10 +24,12 @@ export const MODE_SPRITES: Record<VesselMode, VesselSpriteName & SpriteName> = {
   lander: 'vessel.lander',
   harpoon: 'vessel.pod',
   harpoonThrust: 'vessel.podThrust',
+  spring: 'vessel.lander', // round 15: the same lander, thrusters dead, spring coils drawn by FlightView
 };
 
 /** Sprite frame (pose) for a mode: the lander deploys its contact pose when landed. */
 export function vesselFrame(mode: VesselMode, landed: boolean): number {
+  // spring: always the full-leg flight pose (it matches the spring hull's collision box; FlightView draws the coils)
   return mode === 'lander' && landed ? LANDER_POSE.contact : 0;
 }
 

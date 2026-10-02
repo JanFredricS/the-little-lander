@@ -156,6 +156,20 @@ export class FeelFx {
       case 'bossDefeated':
         this.addTrauma(0.7);
         break;
+      // round 15: spring legs + crumbling islets
+      case 'springJump': {
+        const v = this.session.state;
+        this.dust({ x: v.pos.x, y: v.pos.y + this.session.vessel.geometry.h / 2 }, 2 + Math.round(4 * e.power), 30 + 40 * e.power);
+        break;
+      }
+      case 'platformCrumbling':
+        this.dust(e.pos, 4, 25);
+        break;
+      case 'platformCrumbled':
+        this.dust(e.pos, 8, 60);
+        this.burst('smoke', e.pos, 3, 30, -20, 0.8);
+        this.addTrauma(0.15);
+        break;
       default:
         break;
     }

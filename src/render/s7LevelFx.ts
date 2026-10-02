@@ -24,6 +24,10 @@ import { mToPx } from '../physics/units';
 import { clearIfDrawn, SpritePool, SpriteTextures } from './spritePool';
 
 const RUIN = 0x6a6a70;
+const ISLET_SOIL = 0x8a5f3a;
+const ISLET_DARK = 0x4a3020;
+const ISLET_GRASS = 0x74b84e;
+const ISLET_GRASS_DRY = 0xb0a050;
 const RUIN_DARK = 0x3e3e46;
 const FRONT_DARK = 0x1a0c0a;
 const FRONT_EDGE = 0xff7a30;
@@ -223,6 +227,11 @@ export class S7LevelFx {
         const dx = touched ? this.shake(1 + 2 * k) : 0;
         const x = e.x - e.w / 2 + dx;
         const y = e.y - e.h / 2;
+        if (e.style.material === 'soil' || e.style.material === 'organic') {
+          // round 15: a crumbling islet (spring isles) - grass lip, soil body, hanging root cone; cracks spread
+          this.islet(g, x, y, e.w, e.h, k);
+          continue;
+        }
         g.rect(x, y, e.w, e.h).fill(RUIN);
         g.rect(x, y, e.w, 2).fill(0x9a9aa4);
         g.rect(x, y + e.h - 3, e.w, 3).fill(RUIN_DARK);
@@ -399,6 +408,22 @@ export class S7LevelFx {
   destroy(): void {
     this.under.destroy({ children: true });
     this.over.destroy({ children: true });
+  }
+
+  /** Round 15: a small crumbling islet (box x, y, w × h; k = 0..1 collapse progress). */
+  private islet(g: Graphics, x: number, y: number, w: number, h: number, k: number): void {
+    const hang = Math.max(10, h * 1.2);
+    g.moveTo(x, y + h * 0.6).lineTo(x + w, y + h * 0.6).lineTo(x + w * 0.62, y + h + hang * 0.7).lineTo(x + w * 0.45, y + h + hang).lineTo(x + w * 0.3, y + h + hang * 0.6).closePath().fill(ISLET_DARK);
+    g.rect(x, y, w, h).fill(ISLET_SOIL);
+    g.rect(x, y, w, 3).fill(k > 0.6 ? ISLET_GRASS_DRY : ISLET_GRASS);
+    g.rect(x, y + h - 2, w, 2).fill(ISLET_DARK);
+    // cracks: none at rest (it looks like any islet but for the pale rim), spreading once touched
+    g.rect(x, y + 3, w, 1).fill({ color: 0xe8d8a0, alpha: 0.5 });
+    const cracks = Math.floor(k * 5);
+    for (let i = 0; i < cracks; i++) {
+      const cx = x + ((i + 1) * w) / (cracks + 1);
+      g.moveTo(cx, y + 3).lineTo(cx + (i % 2 ? 3 : -3), y + h * 0.5).lineTo(cx + (i % 2 ? 1 : -1), y + h + hang * 0.4).stroke({ width: 1, color: ISLET_DARK });
+    }
   }
 
   /** Is the circle (x, y, r) inside this frame's cull rect? */

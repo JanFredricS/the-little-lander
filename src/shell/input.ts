@@ -40,7 +40,7 @@ import type {
   Vec2,
   VesselMode,
 } from '../contracts';
-import { isDirectSteerMode } from './directSteering';
+import { isDirectSteerMode, isStickMode } from './directSteering';
 
 export const CONTROL_IDS: readonly ControlId[] = [
   'thrust',
@@ -63,6 +63,9 @@ const EDGE_CONTROLS: ReadonlySet<ControlId> = new Set<EdgeControlId>(['fire', 'r
 export function isEdgeControl(c: ControlId): c is EdgeControlId {
   return EDGE_CONTROLS.has(c);
 }
+
+/** Round 15 (spring, DIRECT finger / held mouse): pointer distance from the ship (world px) for a full charge. */
+export const SPRING_POINTER_FULL_PX = 160;
 
 /** code -> controls, per mode. */
 export type KeyBindings = Readonly<Record<string, readonly ControlId[]>>;
@@ -107,6 +110,20 @@ export const DEFAULT_BINDINGS: Readonly<Record<VesselMode, KeyBindings>> = {
     KeyR: ['reelIn'],
     KeyS: ['reelOut'],
     KeyF: ['reelOut'],
+  },
+  // round 15: aim with A / D, hold W / ↑ / Space to charge the springs, let go to jump; S / ↓ / X cancels
+  spring: {
+    ...PAUSE,
+    KeyA: ['rotateCCW'],
+    ArrowLeft: ['rotateCCW'],
+    KeyD: ['rotateCW'],
+    ArrowRight: ['rotateCW'],
+    KeyW: ['thrust'],
+    ArrowUp: ['thrust'],
+    Space: ['thrust'],
+    KeyS: ['release'],
+    ArrowDown: ['release'],
+    KeyX: ['release'],
   },
   harpoonThrust: {
     ...PAUSE,
@@ -194,7 +211,10 @@ export class InputMapper {
       frame.aim = normalise(aim.dir);
       frame.aimTarget = aim.target ? { ...aim.target } : null;
     }
-    if (steer) frame.steer = normalise(steer);
+    if (steer) {
+      frame.steer = normalise(steer);
+      frame.steerLength = Math.min(1, Math.hypot(steer.x, steer.y));
+    }
     return frame;
   }
 
@@ -426,9 +446,11 @@ export class PointerSource implements InputSource {
   sample(ctx: InputSampleContext): InputSourceSample {
     const { down, pressed } = this.buttons.take();
     const flags = (s: ReadonlySet<'fire' | 'release'>): ControlFlags => ({ fire: s.has('fire'), release: s.has('release') });
-    if (this.direct && isDirectSteerMode(ctx.mode)) {
-      const steer = this.steer(ctx);
+    if (this.direct && isStickMode(ctx.mode)) {
+      let steer = this.steer(ctx);
       this.pendingHold = null;
+      // round 15 spring: stick units (length = charge), full charge SPRING_POINTER_FULL_PX from the ship
+      if (steer && !isDirectSteerMode(ctx.mode)) steer = { x: steer.x / SPRING_POINTER_FULL_PX, y: steer.y / SPRING_POINTER_FULL_PX };
       return { down: {}, pressed: {}, aim: null, steer };
     }
     this.pendingHold = null;

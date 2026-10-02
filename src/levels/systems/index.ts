@@ -9,6 +9,7 @@ import { KeeperSystem } from '../boss/keeperSystem';
 import { CrumbleSystem } from './crumble';
 import { KillFrontSystem, type KillFrontOptions } from './killFront';
 import { LooseRockSystem, type LooseRockOptions } from './looseRocks';
+import { OneWaySystem } from './oneWay';
 import { RightingSystem } from './righting';
 import type { LevelSystem, LevelSystemHost } from './types';
 
@@ -16,6 +17,7 @@ export type { LevelSystem, LevelSystemHost } from './types';
 export { CrumbleSystem } from './crumble';
 export { KillFrontSystem } from './killFront';
 export { LooseRockSystem } from './looseRocks';
+export { OneWaySystem } from './oneWay';
 export { RightingSystem } from './righting';
 export { KeeperSystem } from '../boss/keeperSystem';
 
@@ -38,11 +40,14 @@ export interface LevelSystems {
   killFront: KillFrontSystem | null;
   keeper: KeeperSystem | null;
   righting: RightingSystem | null;
+  /** Round 15: jump-through terrain pieces (null when the level has none). */
+  oneWay: OneWaySystem | null;
 }
 
 export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOptions = LEVEL_SYSTEM_OPTIONS[host.spec.id] ?? {}): LevelSystems {
   const spec = host.spec;
   const has = (k: string) => spec.entities.some((e) => e.kind === k);
+  const oneWay = host.built.oneWay.length ? new OneWaySystem(host) : null;
   const rocks = has('looseRock') ? new LooseRockSystem(host, options.looseRocks) : null;
   const crumble = has('crumblePlatform') ? new CrumbleSystem(host) : null;
   const killFront = spec.zones.some((z) => z.kind === 'killFront') ? new KillFrontSystem(host, options.killFront, crumble) : null;
@@ -50,6 +55,6 @@ export function createLevelSystems(host: LevelSystemHost, options: LevelSystemOp
   const keeper = boss ? new KeeperSystem(host, boss, rocks) : null;
   // every level: it serves the reaction-wheel modes (csm, harpoonThrust) whatever the level switches to, idle otherwise
   const righting = new RightingSystem(host);
-  const list = [rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
-  return { list, rocks, crumble, killFront, keeper, righting };
+  const list = [oneWay, rocks, crumble, killFront, keeper, righting].filter((s): s is NonNullable<typeof s> => s !== null);
+  return { list, rocks, crumble, killFront, keeper, righting, oneWay };
 }

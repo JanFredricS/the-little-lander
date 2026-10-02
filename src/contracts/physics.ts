@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0). The physics layer (implemented by src/physics/engine.ts on
+ * FROZEN (S0; round 15 amendment: VesselMode 'spring', PhysicsApi.setBodyEnabled). The physics layer (implemented by src/physics/engine.ts on
  * box2d3-wasm) and the vessel-controller interface S1 implements.
  *
  * PhysicsApi units: METRES, m/s, m/s², kg, N, N·s, radians (clockwise-
@@ -198,6 +198,12 @@ export interface PhysicsApi {
   destroyBody(h: BodyHandle): void;
   hasBody(h: BodyHandle): boolean;
   getTag(h: BodyHandle): BodyTag | undefined;
+  /**
+   * Round 15: take a body out of the simulation (false) or put it back (true). A disabled
+   * body has no contacts and is skipped by ray casts (one-way platforms toggle per step).
+   */
+  setBodyEnabled(h: BodyHandle, enabled: boolean): void;
+  isBodyEnabled(h: BodyHandle): boolean;
   /** Box centred at `center` (body-local m, default origin), half extents in m. */
   addBox(h: BodyHandle, halfW: number, halfH: number, material?: MaterialDef, center?: Vec2, angle?: number): void;
   /** Convex polygon, 3..8 body-local vertices (m). */
@@ -263,9 +269,13 @@ export interface PhysicsApi {
 
 // ------------------------------------------------------------ vessels (S1)
 
-export type VesselMode = 'csm' | 'lander' | 'harpoon' | 'harpoonThrust';
+/**
+ * 'spring' (round 15): the lander with dead thrusters, hopping on spring legs - aim +
+ * charge on the ground, then pure ballistics (src/physics/vessel/spring.ts).
+ */
+export type VesselMode = 'csm' | 'lander' | 'harpoon' | 'harpoonThrust' | 'spring';
 
-export const VESSEL_MODES: readonly VesselMode[] = ['csm', 'lander', 'harpoon', 'harpoonThrust'];
+export const VESSEL_MODES: readonly VesselMode[] = ['csm', 'lander', 'harpoon', 'harpoonThrust', 'spring'];
 
 export interface RopeGunState {
   /** 0 or 1 (the pod carries 1-2 guns). */
