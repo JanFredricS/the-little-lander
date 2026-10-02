@@ -13,6 +13,7 @@ import type { ArtApi, CutsceneId, CutsceneScript, GameEvent, InputSampleContext,
 import { createArt, hasPreload } from './art/art';
 import { STILL_IDS } from './art/stills';
 import { LevelSession, type RespawnState } from './game/session';
+import { levelMaterials } from './levels/build';
 import { getLevel, LEVELS } from './levels/registry';
 import { loadPhysics } from './physics/engine';
 import { createPixiHost, type PixiHost } from './render/pixiApp';
@@ -310,7 +311,7 @@ export class App {
       return;
     }
     // Pre-generate the theme's art during the loading screen, not mid-flight.
-    if (hasPreload(this.art)) await this.art.warmup(spec.themeId, { signal: warm.signal });
+    if (hasPreload(this.art)) await this.art.warmup(spec.themeId, { signal: warm.signal, materials: levelMaterials(spec) });
     if (token !== this.levelToken || warm.signal.aborted) return;
     const session = await LevelSession.create(spec, resume);
     if (token !== this.levelToken || this.state.id !== 'playing') {

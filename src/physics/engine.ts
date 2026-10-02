@@ -613,7 +613,9 @@ export class PhysicsWorld implements PhysicsApi {
     let start = 0; // fraction of the full ray already skipped
     const filter = b2.b2DefaultQueryFilter();
     try {
-      for (let guard = 0; guard < 16 && start < 1; guard++) {
+      // generous guard: a long ray (the Hollow's sun pulse) may pass through many
+      // ignored edges (translucent spires: 2+ chain edges each) before a real hit
+      for (let guard = 0; guard < 160 && start < 1; guard++) {
         const ox = from.x + total.x * start;
         const oy = from.y + total.y * start;
         const rest = 1 - start;

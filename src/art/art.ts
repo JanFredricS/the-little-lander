@@ -9,7 +9,7 @@
  */
 
 import { STILL_HEIGHT, STILL_WIDTH, TILE_SIZE } from '../contracts';
-import type { ArtApi, BackdropLayer, PixelCanvas, Seed, SpriteFrame, SpriteName, StillId, ThemeId, TileKind } from '../contracts';
+import type { ArtApi, BackdropLayer, PixelCanvas, Seed, SpriteFrame, SpriteName, StillId, TerrainMaterial, ThemeId, TileKind } from '../contracts';
 import { defaultCanvasFactory, pixToCanvas, type CanvasFactory } from './core/canvas';
 import { Pix } from './core/pix';
 import { generateBackdrop } from './backdrops';
@@ -57,6 +57,11 @@ export interface WarmupOptions {
   signal?: AbortSignal;
   /** Yield to the event loop after this many ms of work (default 8). */
   sliceMs?: number;
+  /**
+   * Terrain materials the level draws beyond its theme's own (round 13: The Hollow's
+   * crystal spires in the 'core' theme) — see levelMaterials() in src/levels/build.ts.
+   */
+  materials?: readonly TerrainMaterial[];
 }
 
 /**
@@ -196,7 +201,7 @@ export function createArt(opts: CreateArtOptions = {}): Art {
           for (let f = 0; f < n; f++) api.getSprite(name as SpriteName, f, theme);
         });
       }
-      for (const m of THEME_MATERIALS[theme] ?? [])
+      for (const m of new Set([...(THEME_MATERIALS[theme] ?? []), ...(o.materials ?? [])]))
         for (const r of TILE_ROLES) for (let v = 0; v < TILE_VARIANTS; v++) jobs.push(() => api.getTile(theme, `${m}:${r}` as TileKind, v));
       jobs.push(() => api.getBackdropLayers(theme));
       await runSliced(jobs, o);

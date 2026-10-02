@@ -143,8 +143,12 @@ export function validateLevel(spec: LevelSpec): string[] {
     if (!c.id) err('checkpoint with empty id');
     else if (cpIds.has(c.id)) err(`${what}: duplicate id`);
     cpIds.add(c.id);
-    if (c.at !== 'modeSwitch') err(`${what}: unknown 'at' '${String(c.at)}'`);
-    else if (!spec.modeSwitch) err(`${what}: at 'modeSwitch' but the level has no modeSwitch`);
+    if (c.at === 'modeSwitch') {
+      if (!spec.modeSwitch) err(`${what}: at 'modeSwitch' but the level has no modeSwitch`);
+    } else if (c.at === 'beaconPlanted') {
+      if (!(spec.entities ?? []).some((e) => e.kind === 'beaconSite' && e.id === c.siteId)) err(`${what}: at 'beaconPlanted' needs the siteId of a beaconSite (got '${String(c.siteId)}')`);
+      else if ((spec.checkpoints ?? []).some((o) => o !== c && o.at === 'beaconPlanted' && o.siteId === c.siteId)) err(`${what}: another checkpoint already captures at site '${c.siteId}'`);
+    } else err(`${what}: unknown 'at' '${String(c.at)}'`);
     if (c.respawn && (!inside(c.respawn) || (c.respawn.angle !== undefined && !fin(c.respawn.angle)))) err(`${what}: respawn outside the world`);
     else if (c.respawn) {
       const why = respawnSpotError(spec, c.respawn);

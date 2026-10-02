@@ -41,6 +41,8 @@ const HANDLED_ZONES: ReadonlySet<ZoneSpec['kind']> = new Set(['gravityZone', 'wi
 export interface FlightLevelBodies {
   /** Static bodies harpoons cannot anchor to. */
   nonAnchorable: ReadonlySet<BodyHandle>;
+  /** Static bodies radiation shines through (optional; default none). */
+  shadowless?: ReadonlySet<BodyHandle>;
   /** Dynamic prop bodies (feel gravity zones). */
   dynamicBodies: readonly BodyHandle[];
 }
@@ -77,7 +79,7 @@ export class FlightEnvironment {
     this.refGravity = levelReferenceGravity(spec, tuning);
     this.debris = new DebrisSystem(physics, spec.entities, tuning.debris, spec.worldSize);
     this.goo = new GooSystem(physics, spec.entities, tuning.goo, events);
-    this.radiation = new RadiationSystem(physics, spec.zones, events);
+    this.radiation = new RadiationSystem(physics, spec.zones, events, [...(level.shadowless ?? [])]);
     this.pickups = new PickupSystem(physics, spec.entities, tuning.pickup, events);
     this.beacons = new BeaconSystem(spec, tuning.beacon, events);
     this.brittle = spec.zones.filter((z): z is BrittleRegion => z.kind === 'brittleRegion');

@@ -61,6 +61,12 @@ export interface TerrainPiece {
   restitution?: number;
   /** Harpoons can anchor to this piece. Default true. */
   anchorable?: boolean;
+  /**
+   * Blocks radiation line of sight (casts a sun shadow). Default true. false =
+   * translucent rock (e.g. The Hollow's crystal stalactites): still solid,
+   * still anchorable unless `anchorable: false`, but radiation shines through.
+   */
+  castsShadow?: boolean;
 }
 
 export interface TerrainSpec {
@@ -427,8 +433,14 @@ export interface ModeSwitch {
  */
 export interface CheckpointSpec {
   id: string;
-  /** When it is captured: 'modeSwitch' = right after LevelSpec.modeSwitch fires (the new vessel in place). */
-  at: 'modeSwitch';
+  /**
+   * When it is captured: 'modeSwitch' = right after LevelSpec.modeSwitch fires (the new
+   * vessel in place); 'beaconPlanted' (round 13) = when the beacon at `siteId` is planted.
+   * The latest capture wins (a later checkpoint supersedes an earlier one).
+   */
+  at: 'modeSwitch' | 'beaconPlanted';
+  /** at 'beaconPlanted': the beaconSite entity id. */
+  siteId?: string;
   /**
    * Where the vessel respawns (world px, vessel centre; meant as a resting spot on a
    * surface: the respawn starts at once, with no controls card). Default: where the

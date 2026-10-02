@@ -57,8 +57,12 @@ export type GameEvent =
   | { type: 'ropeReeling'; gun: number; dir: 'in' | 'out' | null }
   | { type: 'vesselModeChanged'; from: VesselMode; to: VesselMode }
   | { type: 'objectiveComplete'; objectiveId: string }
-  /** Round 12: a LevelSpec checkpoint was captured (a crash from now on resumes there). */
-  | { type: 'checkpointReached'; checkpointId: string }
+  /**
+   * Round 12: a LevelSpec checkpoint was captured (a crash from now on resumes there).
+   * withBeacon (round 13): captured by a beacon plant - its own chime / banner already
+   * mark the moment, so audio stays quiet and the HUD folds CHECKPOINT into that banner.
+   */
+  | { type: 'checkpointReached'; checkpointId: string; withBeacon?: boolean }
   | { type: 'levelComplete'; levelId: LevelId; timeSec: number; orbs: number; score: number }
   | { type: 'levelFailed'; levelId: LevelId; cause: CrashCause }
   /** Boss entered phase 1..3. hp 0..1. */

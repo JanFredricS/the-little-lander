@@ -492,7 +492,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     h.kbDirect = [];
     const { Autopilot } = await import('../src/levels/dev/autopilot');
     const { floatingIslesRoute } = await import('../src/levels/dev/routes');
-    const { CHECKPOINT_RESPAWN_X } = await import('../src/levels/floatingIsles');
+    const { BEACON_CHECKPOINTS } = await import('../src/levels/floatingIsles');
     const sessions: LevelSession[] = [];
     // per session (the LevelView fake asks for a pilot each time): what that life does
     const plan: ((s: LevelSession, tick: number) => InputFrame)[] = [];
@@ -560,7 +560,8 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     // life 1 -> GAME OVER with the checkpoint items
     await drive(() => app.state.id === 'results');
     expect(seen).toEqual(['csmSeized']);
-    expect(events.filter((e) => e.type === 'checkpointReached')).toHaveLength(1);
+    // the dragon's checkpoint, then beacon 1's (round 13) superseding it
+    expect(events.filter((e) => e.type === 'checkpointReached').map((e) => e.type === 'checkpointReached' && e.checkpointId)).toEqual(['afterDragon', 'afterBeacon1']);
     expect(labels()).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
     const switchesBefore = events.filter((e) => e.type === 'vesselModeChanged').length;
     h.click!('retry');
@@ -570,7 +571,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     const s2 = sessions[1]!;
     expect(s2.respawnedFrom).not.toBeNull();
     expect(s2.state.mode).toBe('lander');
-    expect(s2.state.pos.x).toBeCloseTo(CHECKPOINT_RESPAWN_X, 0);
+    expect(s2.state.pos.x).toBeCloseTo(BEACON_CHECKPOINTS[0].respawn.x, 0);
     expect(s2.env.beacons.isPlanted('site1')).toBe(true);
     expect(h.resumes).toHaveLength(2);
     expect(h.resumes[0]).toBeNull();
@@ -587,7 +588,7 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     expect(sessions[2]!.elapsed).toBeGreaterThan(sessions[1]!.respawnedFrom!.elapsed + 0.9); // life 2's second counts
     // no second switch / cutscene / checkpoint event in the respawned lives
     expect(events.filter((e) => e.type === 'vesselModeChanged')).toHaveLength(switchesBefore);
-    expect(events.filter((e) => e.type === 'checkpointReached')).toHaveLength(1);
+    expect(events.filter((e) => e.type === 'checkpointReached')).toHaveLength(2);
     expect(seen).toEqual(['csmSeized']);
 
     // life 3: GAME OVER -> LEVELS -> floatingIsles again = a full start (the held checkpoint is dropped)

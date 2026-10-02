@@ -14,7 +14,8 @@
  * environment, and answer the surviveBoss objective.
  *
  * Round 12 checkpoints (LevelSpec.checkpoints): captured when the level's
- * modeSwitch lands (checkpointReached); respawnState() is what a crash leaves
+ * modeSwitch lands, or (round 13) when a given beacon is planted
+ * (checkpointReached; the latest capture wins); respawnState() is what a crash leaves
  * behind, and LevelSession.create(spec, respawn) starts a fresh session from
  * it. What a respawn keeps:
  *  - the checkpoint's vessel mode, pose (CheckpointSpec.respawn, else where the
@@ -30,9 +31,17 @@
  *  - the clock: elapsed time carries on (every life counts toward the result time).
  * Fuel / hull are captured with floors (CHECKPOINT_MIN_FUEL / _HULL): a seizure on
  * an empty tank or a wrecked hull would otherwise respawn into a crash loop.
- * The checkpointReached event waits for the next step() after the switch: the App
+ * Accepted tradeoffs (round 13 audit):
+ *  - a crash right after a plant (even on the same / next step) still respawns at that
+ *    beacon's checkpoint with the floors applied: a pod that planted on fumes comes
+ *    back with 0.35 fuel / 0.5 hull. That is the anti-doom-loop point of the floors;
+ *  - planting out of order moves the checkpoint to the LATEST plant (the capture is
+ *    per plant, not per route order): it is where the player was, and every beacon
+ *    planted so far is kept anyway.
+ * The checkpointReached event waits for the next step() after the capture: the App
  * steps nothing during the mid-level cutscene and the controls card, so its chime /
- * banner land when play resumes. A resting respawn settles silently (the first
+ * banner land when play resumes. A crash before that step flushes it first, so it
+ * always precedes levelFailed. A resting respawn settles silently (the first
  * touchdown's impact / softLand events are dropped).
  * Everything else (doors, islands, wind schedules, debris ...) starts fresh.
  */
@@ -134,7 +143,7 @@ export class LevelSession {
   /** Round 12: a resting respawn settling (its first impact / softLand are dropped). */
   private settling = false;
   /** Round 12: checkpointReached waiting for the next step (after the cutscene / controls card). */
-  private pendingCheckpointEvent: string | null = null;
+  private pendingCheckpointEvent: { id: string; withBeacon: boolean } | null = null;
   /** Round 12: the latest checkpoint reached (or resumed from), null = none yet. */
   checkpoint: CheckpointState | null = null;
   /** Level seconds flown before this session (a checkpoint respawn), added to simTime for the result. */
@@ -299,11 +308,7 @@ export class LevelSession {
       this.camera.step(null);
       return;
     }
-    if (this.pendingCheckpointEvent !== null) {
-      const id = this.pendingCheckpointEvent;
-      this.pendingCheckpointEvent = null;
-      this.emit({ type: 'checkpointReached', checkpointId: id });
-    }
+    if (this.pendingCheckpointEvent !== null) this.flushCheckpointEvent();
     if (this.settling && this.physics.simTime >= RESPAWN_SETTLE_SEC) this.settling = false;
     this.checkModeSwitch();
     this.env.beforeStep();
@@ -365,7 +370,7 @@ export class LevelSession {
       pickups: this.env.pickups.collectedIds(),
       completed: [...this.completed],
     };
-    this.pendingCheckpointEvent = c.id; // emitted on the next step: see the header
+    this.pendingCheckpointEvent = { id: c.id, withBeacon: c.at === 'beaconPlanted' }; // emitted on the next step: see the header
   }
 
   /** Round 12: seed a fresh session with a checkpoint respawn (silently: no events). See the header. */
@@ -384,9 +389,19 @@ export class LevelSession {
     if (cp.mode !== 'csm') this.runtime.creatures.retireSeizers();
   }
 
+  private flushCheckpointEvent(): void {
+    const p = this.pendingCheckpointEvent!;
+    this.pendingCheckpointEvent = null;
+    this.emit(p.withBeacon ? { type: 'checkpointReached', checkpointId: p.id, withBeacon: true } : { type: 'checkpointReached', checkpointId: p.id });
+  }
+
   private emit(e: GameEvent): void {
     for (const fn of [...this.listeners]) fn(e);
+    // round 13: checkpoints captured by a beacon plant (latest capture wins)
+    if (e.type === 'beaconPlanted') for (const c of this.spec.checkpoints ?? []) if (c.at === 'beaconPlanted' && c.siteId === e.siteId) this.capture(c);
     if (e.type === 'crash' && !this._outcome) {
+      // a checkpoint captured on the step before the crash is still announced (before levelFailed)
+      if (this.pendingCheckpointEvent !== null) this.flushCheckpointEvent();
       this._outcome = { kind: 'failed', cause: e.cause };
       this.emit({ type: 'levelFailed', levelId: this.spec.id, cause: e.cause });
     }

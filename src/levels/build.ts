@@ -5,7 +5,7 @@
  * debug level needs and reports the rest as unhandled.)
  */
 
-import type { BodyHandle, EntitySpec, LevelSpec, PhysicsApi, StaticPropEntity, TerrainPiece } from '../contracts';
+import type { BodyHandle, EntitySpec, LevelSpec, PhysicsApi, StaticPropEntity, TerrainMaterial, TerrainPiece } from '../contracts';
 import type { FlightLevelBodies } from '../physics/env/environment';
 import { pxToM } from '../physics/units';
 
@@ -17,6 +17,11 @@ export interface BuiltLevel {
    * `anchorable: false` live on their own body, also tagged 'terrain').
    */
   nonAnchorable: ReadonlySet<BodyHandle>;
+  /**
+   * Static bodies radiation shines through (terrain pieces with
+   * `castsShadow: false` live on their own body, also tagged 'terrain').
+   */
+  shadowless: ReadonlySet<BodyHandle>;
   /** Prop entity id -> body. */
   props: Map<string, { entity: StaticPropEntity; body: BodyHandle }>;
   /**
@@ -31,8 +36,24 @@ export interface BuiltLevel {
 export function flightLevelBodies(built: BuiltLevel): FlightLevelBodies {
   return {
     nonAnchorable: built.nonAnchorable,
+    shadowless: built.shadowless,
     dynamicBodies: [...built.props.values()].filter((p) => p.entity.dynamic).map((p) => p.body),
   };
+}
+
+/**
+ * Every terrain material the level draws (terrain pieces + styled entities: moving
+ * islands, crumble platforms, ...): the art warm-up pre-generates their tiles at load,
+ * not just the theme's own materials (round 13).
+ */
+export function levelMaterials(spec: LevelSpec): TerrainMaterial[] {
+  const out = new Set<TerrainMaterial>();
+  for (const p of spec.terrain.pieces) out.add(p.style.material);
+  for (const e of spec.entities) {
+    const style = (e as { style?: { material?: TerrainMaterial } }).style;
+    if (style?.material) out.add(style.material);
+  }
+  return [...out];
 }
 
 export const TAG_TERRAIN = 'terrain';
@@ -48,11 +69,26 @@ export function terrainChain(piece: TerrainPiece): { points: { x: number; y: num
 
 export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
   const terrain = physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
-  let smooth: BodyHandle | null = null;
+  // extra static bodies keyed by (anchorable, castsShadow); the default pair is `terrain`
+  const extra = new Map<string, BodyHandle>();
+  const nonAnchorable = new Set<BodyHandle>();
+  const shadowless = new Set<BodyHandle>();
   for (const piece of spec.terrain.pieces) {
     const { points, loop } = terrainChain(piece);
+    const anchorable = piece.anchorable !== false;
+    const shadow = piece.castsShadow !== false;
     let body = terrain;
-    if (piece.anchorable === false) body = smooth ??= physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
+    if (!anchorable || !shadow) {
+      const key = `${anchorable}:${shadow}`;
+      let b = extra.get(key);
+      if (b === undefined) {
+        b = physics.createBody({ type: 'static', position: { x: 0, y: 0 }, tag: TAG_TERRAIN });
+        extra.set(key, b);
+        if (!anchorable) nonAnchorable.add(b);
+        if (!shadow) shadowless.add(b);
+      }
+      body = b;
+    }
     physics.addChain(body, points, loop, { friction: piece.friction ?? 0.8, restitution: piece.restitution ?? 0.1 });
   }
   const props = new Map<string, { entity: StaticPropEntity; body: BodyHandle }>();
@@ -71,5 +107,5 @@ export function buildLevel(physics: PhysicsApi, spec: LevelSpec): BuiltLevel {
       unhandled.push(e);
     }
   }
-  return { terrain, nonAnchorable: new Set(smooth === null ? [] : [smooth]), props, unhandled };
+  return { terrain, nonAnchorable, shadowless, props, unhandled };
 }

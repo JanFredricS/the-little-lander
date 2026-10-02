@@ -3,11 +3,12 @@
  * firstAtSec + k·periodSec; warnSec before it a radiationCharging event is
  * the telegraph. On a pulse the vessel is hit if it is within `range` and the
  * segment emitter -> vessel is not blocked by a solid body (terrain, props:
- * castSolid skips goo / debris / pickups / the vessel). A hit drains
+ * castSolid skips goo / debris / pickups / the vessel; translucent terrain —
+ * pieces with `castsShadow: false` — is skipped too). A hit drains
  * fuelLoss × CURRENT fuel.
  */
 
-import type { GameEventSink, PhysicsApi, RadiationEmitter, Vec2, ZoneSpec } from '../../contracts';
+import type { BodyHandle, GameEventSink, PhysicsApi, RadiationEmitter, Vec2, ZoneSpec } from '../../contracts';
 import { dist } from '../geom';
 import { castSolid } from '../tags';
 import { vMToPx, vPxToM } from '../units';
@@ -39,6 +40,8 @@ export class RadiationSystem {
     private readonly physics: PhysicsApi,
     zones: readonly ZoneSpec[],
     private readonly events: GameEventSink,
+    /** Static bodies the pulse shines through (translucent terrain: `castsShadow: false`). */
+    private readonly shadowless: readonly BodyHandle[] = [],
   ) {
     this.emitters = zones.filter((z): z is RadiationEmitter => z.kind === 'radiationEmitter').map((spec) => ({ spec, next: 0, charging: false }));
   }
@@ -81,7 +84,7 @@ export class RadiationSystem {
     const inRange = dist(src, vesselPos) <= e.spec.range;
     const res: PulseResult = { at: t, inRange, blocked: false, hit: false, target: { ...vesselPos } };
     if (!inRange) return res;
-    const block = this.lineOfSight(src, vesselPos, [...vessel.parts]);
+    const block = this.lineOfSight(src, vesselPos, [...vessel.parts, ...this.shadowless]);
     if (block) {
       res.blocked = true;
       res.blockedAt = block;

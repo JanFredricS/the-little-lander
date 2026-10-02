@@ -173,6 +173,23 @@ describe('PhysicsWorld', () => {
     expect(w.rayCast({ x: 20, y: 0 }, { x: 20, y: 10 })).toBeNull();
   });
 
+  it('round 13: a ray passes many ignored edges and still finds the solid behind them', async () => {
+    // The Hollow's sun pulse crosses a row of translucent crystal spires (one ignored
+    // body, 2+ chain edges per spire). The old 16-hit guard gave up and reported "clear".
+    const w = await world();
+    const crystal = w.createBody({ type: 'static', position: { x: 0, y: 0 } });
+    for (let i = 0; i < 30; i++) {
+      const x = 1 + i * 0.5;
+      w.addChain(crystal, [{ x, y: -1 }, { x: x + 0.2, y: -1 }, { x: x + 0.2, y: 1 }, { x, y: 1 }], true);
+    }
+    const rock = w.createBody({ type: 'static', position: { x: 20, y: 0 } });
+    w.addBox(rock, 0.5, 2);
+    expect(w.rayCast({ x: 0, y: 0 }, { x: 30, y: 0 })?.body).toBe(crystal);
+    const past = w.rayCast({ x: 0, y: 0 }, { x: 30, y: 0 }, [crystal]);
+    expect(past?.body).toBe(rock);
+    expect(past?.point.x).toBeCloseTo(19.5, 3);
+  });
+
   it('sensors report dynamic visitors entering', async () => {
     const w = await world();
     const zone = w.createBody({ type: 'static', position: { x: 0, y: 3 } });

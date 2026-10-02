@@ -91,6 +91,27 @@ export const CHECKPOINT_RESPAWN_X = 6980;
 /** Feet ~1 px above the pad (lander centre to feet: height 18 / 2 + legDrop 7 = 16 px): it sets down at once. */
 export const CHECKPOINT_RESPAWN_Y = Math.floor(topAt(b1.points, CHECKPOINT_RESPAWN_X)) - 17;
 
+/**
+ * Round 13 (user: "can you add checkpoints after each flag in the floating isles"): one
+ * checkpoint per beacon, captured when it is planted (the latest capture wins). Each
+ * respawns resting on a STATIC pad clear of every beacon zone, on the way on:
+ *  - site 1: b1's pad right of the zone (7,100-7,300 with margin), towards fuel1 / s1;
+ *  - site 2: b2's pad right of the solid tree fence (tree2d at 9,450);
+ *  - site 3: b3's open right side, out from under the overhang (it ends at 11,010);
+ *  - site 4: the swaying islet moves (a fixed pose on it would be wrong), so stepping
+ *    stone s3, the next static island towards beacon 5;
+ *  - site 5: stepping stone s4 on the way to the outpost.
+ * validateLevel checks every spot (open air, terrain within 40 px below, no beacon zone).
+ */
+const restOn = (islandId: string, x: number) => ({ x, y: Math.floor(topAt(islandPieces.find((p) => p.id === islandId)!.points, x)) - 17 });
+export const BEACON_CHECKPOINTS = [
+  { id: 'afterBeacon1', siteId: 'site1', respawn: restOn('b1', 7420) },
+  { id: 'afterBeacon2', siteId: 'site2', respawn: restOn('b2', 9640) },
+  { id: 'afterBeacon3', siteId: 'site3', respawn: restOn('b3', 11080) },
+  { id: 'afterBeacon4', siteId: 'site4', respawn: restOn('s3', 13200) },
+  { id: 'afterBeacon5', siteId: 'site5', respawn: restOn('s4', 15600) },
+] as const;
+
 /** Beacon 3's overhang: a slab whose flat underside leaves 110 px over the pad. */
 const overhang = polygon(
   'overhang',
@@ -370,7 +391,10 @@ export const floatingIsles: LevelSpec = {
   themeId: 'islands',
   vesselMode: 'csm',
   modeSwitch: { to: 'lander', trigger: { kind: 'enterRegion', rect: band(6300, 6500) }, cutscene: 'csmSeized' },
-  checkpoints: [{ id: 'afterDragon', at: 'modeSwitch', respawn: { x: CHECKPOINT_RESPAWN_X, y: CHECKPOINT_RESPAWN_Y } }],
+  checkpoints: [
+    { id: 'afterDragon', at: 'modeSwitch', respawn: { x: CHECKPOINT_RESPAWN_X, y: CHECKPOINT_RESPAWN_Y } },
+    ...BEACON_CHECKPOINTS.map((c) => ({ id: c.id, at: 'beaconPlanted' as const, siteId: c.siteId, respawn: { ...c.respawn } })),
+  ],
   worldSize: { w: W, h: H },
   spawn: { x: 250, y: 1100 },
   gravity: { x: 0, y: G },

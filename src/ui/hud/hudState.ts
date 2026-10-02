@@ -271,6 +271,8 @@ export function hudReduce(s: HudState, e: GameEvent): HudState {
         objectives: mapObjectives(s, 'surviveBoss', (o) => ({ ...o, done: true, progress: o.total })),
       };
     case 'checkpointReached':
+      // round 13: at a beacon plant, fold it into the plant's banner (one banner, not two in a row)
+      if (e.withBeacon && s.banner) return { ...s, banner: { text: `${s.banner.text} · ${CHECKPOINT_BANNER}`, ttl: Math.max(s.banner.ttl, BANNER_TTL) } };
       return { ...s, banner: { text: CHECKPOINT_BANNER, ttl: BANNER_TTL } };
     case 'levelComplete':
       return { ...s, orbs: e.orbs, score: e.score };

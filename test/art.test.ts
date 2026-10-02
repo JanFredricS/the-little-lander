@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { STILL_HEIGHT, STILL_WIDTH, THEME_IDS, TILE_SIZE } from '../src/contracts';
 import type { CoreSpriteName, PixelCanvas, RampName, StillId, TileKind } from '../src/contracts';
+import { levelMaterials } from '../src/levels/build';
+import { hollow } from '../src/levels/hollow';
+import { LEVELS } from '../src/levels/registry';
 import { createArt, cropRows, placeholderPix, resolveSprite, TILE_VARIANTS } from '../src/art/art';
 import { Pix as PixBuf } from '../src/art/core/pix';
 import { generateBackdrop } from '../src/art/backdrops';
@@ -294,6 +297,22 @@ describe('ArtApi', () => {
     const ac = new AbortController();
     ac.abort();
     await expect(art.warmup('boss', { signal: ac.signal })).resolves.toBeUndefined();
+  });
+
+  it('round 13: the level warm-up covers every terrain material a level draws (The Hollow: crystal in core)', async () => {
+    expect(levelMaterials(hollow)).toContain('crystal');
+    for (const spec of Object.values(LEVELS)) {
+      if (!spec) continue;
+      const { factory, made } = fakeCanvasFactory();
+      const art = createArt({ canvasFactory: factory });
+      // exactly what App.startLevel asks for
+      await art.warmup(spec.themeId, { materials: levelMaterials(spec) });
+      const before = made.length;
+      for (const m of levelMaterials(spec))
+        for (const r of ['fill', 'top', 'bottom', 'side', 'decor'] as const)
+          for (let v = 0; v < TILE_VARIANTS; v++) art.getTile(spec.themeId, `${m}:${r}` as TileKind, v);
+      expect(made.length, `${spec.id}: tiles generated mid-flight`).toBe(before);
+    }
   });
 
   it('writes palette colours into the canvas (index 0 transparent)', () => {
