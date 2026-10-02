@@ -604,6 +604,153 @@ const fallingDebris: Gen = (pal) => {
   return { frames: [base, alt], pivot: { x: 8, y: 8 } };
 };
 
+// ------------------------------------------------- caves: round 14 wall decor
+
+/** Bone shades: pale rock highlight -> god-ray white tips (bones catch the light). */
+const boneRamp = (pal: Palette) => [pal.ramps.primary[2]!, pal.ramps.primary[3]!, pal.ramps.light[3]!];
+
+/** A dark slab of the wall the fossil / carving sits in (reads as embedded, not stuck on). */
+function wallSlab(p: Pix, pal: Palette, seed: number): void {
+  rockBlob(p, p.w / 2, p.h / 2, p.w / 2 - 1.5, p.h / 2 - 1.5, seed, pal.ramps.primary.slice(0, 3), { rough: 0.25, crack: 2 });
+}
+
+/**
+ * Round 14: a long-dead alien creature fossilised in the wall: serpentine spine,
+ * ribs, a crested skull and two limb pairs on a dark rock slab. 64×28.
+ */
+const fossilSkeleton: Gen = (pal) => {
+  const p = new Pix(64, 28);
+  wallSlab(p, pal, 1401);
+  const B = boneRamp(pal);
+  const spine = (x: number) => 14 + Math.sin(x * 0.11) * 3.5;
+  // tail -> spine (thin at the tail)
+  for (let x = 4; x <= 48; x++) {
+    const y = spine(x);
+    p.set(x, y, x % 3 === 0 ? B[2]! : B[1]!);
+    if (x > 16) p.set(x, y + 1, B[0]!);
+  }
+  // ribs: arcs curling down from the spine, shorter towards the tail
+  for (let x = 20; x <= 44; x += 4) {
+    const y = spine(x);
+    const len = 4 + (x - 20) * 0.12;
+    for (let k = 1; k <= len; k++) p.set(x - k * 0.35, y + 1 + k, k === 1 ? B[2]! : B[1]!);
+  }
+  // limbs (two pairs): femur + splayed digits
+  for (const [lx, dir] of [
+    [24, -1],
+    [40, 1],
+  ] as const) {
+    const y = spine(lx) + 2;
+    p.line(lx, y, lx + dir * 3, y + 6, B[1]!);
+    p.line(lx + dir * 3, y + 6, lx + dir * 1, y + 10, B[1]!);
+    for (const d of [-1, 0, 1]) p.set(lx + dir * 1 + d * 2, y + 11, B[0]!);
+  }
+  // crested skull: long snout, big eye socket, a backswept crest
+  const sx = 52;
+  const sy = spine(48) - 1;
+  p.ellipse(sx, sy, 7, 3.6, (x, y, nx, ny) => rampAt(B, 0.75 - ny * 0.4 - nx * 0.1, x, y, 0.5));
+  p.poly([[sx + 4, sy - 2], [sx + 11, sy], [sx + 4, sy + 2.5]], B[1]!);
+  p.set(sx - 1, sy - 1, pal.outline).set(sx, sy - 1, pal.outline).set(sx - 1, sy, pal.outline);
+  p.line(sx - 5, sy - 3, sx - 10, sy - 8, B[2]!);
+  p.line(sx - 3, sy - 3, sx - 7, sy - 9, B[1]!);
+  // teeth
+  for (let x = sx + 2; x <= sx + 9; x += 2) p.set(x, sy + 2, B[2]!);
+  return { frames: [finish(p, pal, false)], pivot: { x: 32, y: 14 } };
+};
+
+/** Round 14: a single fossil skull with a jaw, for scattering round a fossil bed. 24×20. */
+const fossilSkull: Gen = (pal) => {
+  const p = new Pix(24, 20);
+  wallSlab(p, pal, 1402);
+  const B = boneRamp(pal);
+  p.ellipse(10, 9, 7, 4.5, (x, y, nx, ny) => rampAt(B, 0.8 - ny * 0.5 - nx * 0.2, x, y, 0.5));
+  p.poly([[14, 6], [21, 9], [14, 11]], B[1]!);
+  p.ellipse(8, 8, 1.8, 1.6, pal.outline);
+  p.set(16, 8, pal.outline);
+  // dropped jaw + teeth
+  p.line(6, 14, 18, 14, B[1]!);
+  for (let x = 9; x <= 18; x += 3) p.set(x, 13, B[2]!);
+  return { frames: [finish(p, pal, false)], pivot: { x: 12, y: 10 } };
+};
+
+/** Teal inlay: grooves that still hold a faint glow (the ancients' light). */
+const inlay = (pal: Palette) => pal.ramps.accent;
+
+/**
+ * Round 14: an ancient alien relief carved into the wall: a bevelled stone panel,
+ * a tall long-headed figure with big eyes holding a disc (the pad) over its head,
+ * the grooves inlaid with a faint teal glow. 32×48.
+ */
+const ancientRelief: Gen = (pal) => {
+  const p = new Pix(32, 48);
+  const R = pal.ramps.primary;
+  const A = inlay(pal);
+  // panel with a bevel: lit top-left, shaded bottom-right
+  p.rect(2, 2, 28, 44, R[1]!);
+  p.hline(2, 29, 2, R[3]!).vline(2, 2, 45, R[2]!);
+  p.hline(2, 29, 45, R[0]!).vline(29, 2, 45, R[0]!);
+  p.rect(5, 5, 22, 38, R[0]!);
+  // the figure, raised (R[2]) on the recessed field
+  p.ellipse(16, 15, 3.5, 5.5, R[2]!); // long head
+  p.set(14, 15, A[3]!).set(18, 15, A[3]!); // eyes
+  p.rect(14, 21, 5, 13, R[2]!); // body
+  p.line(14, 22, 9, 13, R[2]!); // arms raised
+  p.line(18, 22, 23, 13, R[2]!);
+  p.line(15, 34, 13, 41, R[2]!); // legs
+  p.line(17, 34, 19, 41, R[2]!);
+  // the disc it holds: an inlaid ring
+  for (let a = 0; a < Math.PI * 2; a += 0.3) p.set(16 + Math.cos(a) * 7, 8 + Math.sin(a) * 2, A[2]!);
+  // inlaid border groove + glyph ticks
+  p.hline(6, 25, 41, A[1]!);
+  for (let x = 7; x <= 25; x += 4) p.set(x, 42, A[2]!);
+  // weathering: a crack across the panel
+  p.path([[3, 30], [8, 32], [11, 30], [13, 33]], pal.outline);
+  return { frames: [finish(p, pal, false)], pivot: { x: 16, y: 24 } };
+};
+
+/**
+ * Round 14: an ancient mural: three long-headed figures walking toward a flat pad
+ * with a craft settling on it under rays - who built the landing pad below. 96×40.
+ */
+const ancientMural: Gen = (pal) => {
+  const p = new Pix(96, 40);
+  const R = pal.ramps.primary;
+  const A = inlay(pal);
+  const L = pal.ramps.light;
+  p.rect(1, 2, 94, 36, R[1]!);
+  p.hline(1, 94, 2, R[3]!).hline(1, 94, 37, R[0]!);
+  p.rect(4, 5, 88, 30, R[0]!);
+  // the procession
+  for (const fx of [14, 26, 38]) {
+    p.ellipse(fx, 13, 2.4, 3.8, R[2]!);
+    p.set(fx + 1, 13, A[3]!);
+    p.rect(fx - 1, 17, 3, 9, R[2]!);
+    p.line(fx + 1, 18, fx + 5, 20, R[2]!); // reaching toward the pad
+    p.line(fx - 1, 26, fx - 3, 31, R[2]!);
+    p.line(fx + 1, 26, fx + 3, 31, R[2]!);
+  }
+  // the pad: a flat platform on struts, inlaid edge lights
+  p.rect(56, 28, 28, 3, R[2]!);
+  p.vline(59, 31, 33, R[2]!).vline(80, 31, 33, R[2]!);
+  for (let x = 57; x <= 83; x += 3) p.set(x, 28, A[3]!);
+  // a craft settling: a lander-like triangle with legs
+  p.poly([[70, 12], [76, 22], [64, 22]], R[3]!);
+  p.line(65, 22, 62, 26, R[2]!).line(75, 22, 78, 26, R[2]!);
+  // rays down from above the pad (gold, faint)
+  for (const [x0, x1] of [
+    [66, 60],
+    [70, 70],
+    [74, 80],
+  ] as const) {
+    for (let y = 5; y < 11; y++) if ((y + x0) % 2 === 0) p.set(x0 + ((x1 - x0) * (y - 5)) / 6, y, L[1]!);
+  }
+  // groove frame along the bottom: a line of glyphs
+  p.hline(6, 89, 33, A[1]!);
+  for (let x = 8; x <= 88; x += 5) p.set(x, 34, A[2]!).set(x + 1, 34, A[1]!);
+  p.path([[47, 3], [50, 10], [48, 16], [51, 22]], pal.outline); // an old crack
+  return { frames: [finish(p, pal, false)], pivot: { x: 48, y: 20 } };
+};
+
 // ============================================================= registry
 
 const HOME: [ThemeId, Record<string, Gen>][] = [
@@ -652,6 +799,10 @@ const HOME: [ThemeId, Record<string, Gen>][] = [
       'prop.bioParticle': bioParticle,
       'prop.brittleRock': brittleRock,
       'prop.crystalCluster': crystalCluster,
+      'prop.fossilSkeleton': fossilSkeleton,
+      'prop.fossilSkull': fossilSkull,
+      'prop.ancientRelief': ancientRelief,
+      'prop.ancientMural': ancientMural,
     },
   ],
   [

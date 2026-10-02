@@ -14,8 +14,9 @@
  * environment, and answer the surviveBoss objective.
  *
  * Round 12 checkpoints (LevelSpec.checkpoints): captured when the level's
- * modeSwitch lands, or (round 13) when a given beacon is planted
- * (checkpointReached; the latest capture wins); respawnState() is what a crash leaves
+ * modeSwitch lands, (round 13) when a given beacon is planted, or (round 14) when
+ * the vessel enters a region - forward only, never one listed before the current
+ * checkpoint (checkpointReached; the latest capture wins); respawnState() is what a crash leaves
  * behind, and LevelSession.create(spec, respawn) starts a fresh session from
  * it. What a respawn keeps:
  *  - the checkpoint's vessel mode, pose (CheckpointSpec.respawn, else where the
@@ -329,7 +330,24 @@ export class LevelSession {
       this.vesselState = this.vessel.state();
     }
     if (this.vesselState.crashed) return;
+    this.checkRegionCheckpoints(s.pos);
     this.checkObjectives(s);
+  }
+
+  /** Round 14: capture 'enterRegion' checkpoints the vessel is in - forward only (see CheckpointSpec.at). */
+  private checkRegionCheckpoints(p: Vec2): void {
+    const list = this.spec.checkpoints;
+    if (!list) return;
+    const cur = this.checkpoint ? list.findIndex((c) => c.id === this.checkpoint!.id) : -1;
+    for (let i = list.length - 1; i > cur; i--) {
+      const c = list[i]!;
+      const r = c.rect;
+      if (c.at !== 'enterRegion' || !r) continue;
+      if (p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h) {
+        this.capture(c);
+        return;
+      }
+    }
   }
 
   destroy(): void {

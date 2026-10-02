@@ -17,6 +17,7 @@ import { floatingIsles } from '../src/levels/floatingIsles';
 import { hangarRun } from '../src/levels/hangarRun';
 import { hollow } from '../src/levels/hollow';
 import { keeper } from '../src/levels/keeper';
+import { theThroat } from '../src/levels/theThroat';
 import { vaults } from '../src/levels/vaults';
 import { EntityView } from '../src/render/entityView';
 import { FlightView } from '../src/render/flightView';
@@ -222,6 +223,22 @@ describe('render culling', () => {
     const fg = priv.props.get(fgSpec.id)!;
     const staticProps = (lv as unknown as { staticProps: { sprite: Container }[] }).staticProps;
     expect(staticProps.some((p) => p.sprite === fg)).toBe(true);
+    lv.destroy();
+    s.destroy();
+  });
+
+  it("LevelView (round 14): The Throat's wall carvings (fossils, reliefs, mural) draw under the vessel", async () => {
+    const s = await LevelSession.create(theThroat);
+    const lv = new LevelView(s, { ...art, palettes: new Proxy({}, { get: () => ({ background: 0 }) }), getBackdropLayers: () => [] } as unknown as ArtApi);
+    const priv = lv as unknown as { world: Container; props: Map<string, Container>; flight: { over: Container } };
+    const vessel = priv.world.getChildIndex(priv.flight.over);
+    const carvings = theThroat.entities.filter((e) => e.kind === 'staticProp' && /fossil|ancient/.test(e.sprite));
+    expect(carvings.length).toBeGreaterThan(10);
+    for (const e of carvings) {
+      let c: Container = priv.props.get(e.id)!;
+      while (c.parent !== priv.world) c = c.parent!;
+      expect(priv.world.getChildIndex(c), e.id).toBeLessThan(vessel);
+    }
     lv.destroy();
     s.destroy();
   });

@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints). Level data. A level is a plain data module exporting a
+ * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints; round 14: CheckpointSpec 'enterRegion'). Level data. A level is a plain data module exporting a
  * LevelSpec (S6/S7 write them; the level loader spawns them; S1 physics
  * interprets zones/entities; S2/S4 render them).
  *
@@ -437,10 +437,16 @@ export interface CheckpointSpec {
    * When it is captured: 'modeSwitch' = right after LevelSpec.modeSwitch fires (the new
    * vessel in place); 'beaconPlanted' (round 13) = when the beacon at `siteId` is planted.
    * The latest capture wins (a later checkpoint supersedes an earlier one).
+   * 'enterRegion' (round 14) = when the vessel centre enters `rect`; FORWARD ONLY: it
+   * never captures while a checkpoint listed after it is the current one (flying back
+   * up a level never moves the respawn back), and it needs a `respawn` (the capture
+   * happens mid-flight, so the respawn must be a chosen resting spot).
    */
-  at: 'modeSwitch' | 'beaconPlanted';
+  at: 'modeSwitch' | 'beaconPlanted' | 'enterRegion';
   /** at 'beaconPlanted': the beaconSite entity id. */
   siteId?: string;
+  /** at 'enterRegion': the region (world px). */
+  rect?: Rect;
   /**
    * Where the vessel respawns (world px, vessel centre; meant as a resting spot on a
    * surface: the respawn starts at once, with no controls card). Default: where the

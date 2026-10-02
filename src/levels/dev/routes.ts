@@ -104,9 +104,13 @@ export const theThroatRoute: RouteNode[] = (() => {
     { x: 610, y: 6950, w: 120 },
     { x: 610, y: 7050, w: 120 },
     { x: 640, y: 7180, w: 120 },
+    // round 14: chamber D's main lane, right of the fin (the side branch is the detour)
+    { x: 870, y: 9050, w: 200 },
+    { x: 880, y: 9250, w: 200 },
+    { x: 850, y: 9420, w: 200 },
   ];
-  // centre-line nodes, minus those the pillars sit on (the lanes replace them)
-  const clear = THROAT_TUBE.slice(1, -2).filter((n) => !((n.y > 1950 && n.y < 2350) || (n.y > 4350 && n.y < 4750) || (n.y > 6900 && n.y < 7200)));
+  // centre-line nodes, minus those the pillars / the fin sit on (the lanes replace them)
+  const clear = THROAT_TUBE.slice(1, -2).filter((n) => !((n.y > 1950 && n.y < 2350) || (n.y > 4350 && n.y < 4750) || (n.y > 6900 && n.y < 7200) || (n.y > 9000 && n.y < 9500)));
   const pts = [...clear, ...lanes].sort((a, b) => a.y - b.y);
   const route: RouteNode[] = pts.map((p) => ({ x: p.x, y: p.y, speed: Math.min(110, Math.round(p.w * 0.45)), tol: Math.min(40, Math.round(p.w / 4)) }));
   route.push({ x: 800, y: 11500, speed: 80 });

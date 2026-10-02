@@ -5,7 +5,8 @@
  * and the collapse front (map 8), plus map 5's deepening darkness (a
  * darkening pass whose alpha follows the vessel's x-progress through
  * Section B, with an additive glow per bioluminescent prop punching through;
- * tuning in S7_DARKNESS / the vaults.ts header). Terrain and blast doors are
+ * tuning in S7_DARKNESS / the vaults.ts header) and (round 14) map 4's dark
+ * chamber C (the same pass along y, as a band). Terrain and blast doors are
  * NOT drawn here (S6's TerrainView / EntityView own them).
  *
  * Hooked into LevelView with two containers (under / over) and one render
@@ -33,9 +34,22 @@ const TENDRIL_BURN = 0xff8a30;
 
 /**
  * Progress-driven darkness per level id: alpha ramps (smoothstep) from 0 at
- * x0 to max at x1 and holds. Glow sprites punch through with an additive halo.
+ * x0 to max at x1 and holds - along world x, or along y with `axis: 'y'`
+ * (round 14: The Throat's dark chamber). With `out`, it lifts again (smoothstep
+ * from max at out[0] back to 0 at out[1]): a dark band, not a dark tail.
+ * Glow sprites punch through with an additive halo.
  */
-export const S7_DARKNESS: Record<string, { x0: number; x1: number; max: number; color: number; glowSprites: SpriteName[] }> = {
+export interface S7Darkness {
+  axis?: 'x' | 'y';
+  x0: number;
+  x1: number;
+  out?: readonly [number, number];
+  max: number;
+  color: number;
+  glowSprites: SpriteName[];
+}
+
+export const S7_DARKNESS: Record<string, S7Darkness> = {
   // map 5 (The Vaults): Section B = x 6600..13300; the camp (x ~13650) keeps full darkness
   vaults: {
     x0: 6600,
@@ -44,14 +58,47 @@ export const S7_DARKNESS: Record<string, { x0: number; x1: number; max: number; 
     color: 0x02040a,
     glowSprites: ['prop.bioParticle', 'prop.glowPlant', 'prop.glowMushroom', 'prop.crystalCluster'],
   },
+  // map 4 (The Throat), round 14: chamber C is the dark one - no god-rays, the glow-life
+  // is the only light; it closes in through squeeze 3 and lifts below squeeze 4
+  // (THROAT_DARK in theThroat.ts, kept in sync by test/throat.test.ts)
+  throat: {
+    axis: 'y',
+    x0: 6150,
+    x1: 6550,
+    out: [7700, 8250],
+    max: 0.62,
+    color: 0x010208,
+    glowSprites: ['prop.glowPlant', 'prop.glowMushroom', 'prop.crystalCluster'],
+  },
 };
 
-/** Darkness overlay alpha for a vessel at world x (0 when the level has no darkness pass). */
-export function s7DarknessAt(spec: LevelSpec, x: number): number {
+const smooth = (k: number) => {
+  const c = Math.min(1, Math.max(0, k));
+  return c * c * (3 - 2 * c);
+};
+
+/** Darkness overlay alpha for a vessel at world position (x, y) (0 when the level has no darkness pass). */
+export function s7DarknessAt(spec: LevelSpec, x: number, y = 0): number {
   const d = S7_DARKNESS[spec.id];
   if (!d) return 0;
-  const k = Math.min(1, Math.max(0, (x - d.x0) / (d.x1 - d.x0)));
-  return d.max * k * k * (3 - 2 * k);
+  const a = d.axis === 'y' ? y : x;
+  const lift = d.out ? 1 - smooth((a - d.out[0]) / (d.out[1] - d.out[0])) : 1;
+  return d.max * smooth((a - d.x0) / (d.x1 - d.x0)) * lift;
+}
+
+/**
+ * Round 14: after a checkpoint respawn the darkness settles in over RESPAWN_DARK_RAMP_S
+ * sim seconds from RESPAWN_DARK_FLOOR of its value, so a retry inside a dark chamber
+ * (The Throat's chamber C) opens with a glimpse of the pillar and the walls, not a
+ * black screen. The level start is unchanged (the dark is reached by flying into it).
+ */
+export const RESPAWN_DARK_RAMP_S = 1.25;
+export const RESPAWN_DARK_FLOOR = 0.3;
+
+/** Darkness multiplier `simTime` seconds into a session (1 unless it started from a respawn). */
+export function respawnDarkRamp(simTime: number, respawned: boolean): number {
+  if (!respawned) return 1;
+  return RESPAWN_DARK_FLOOR + (1 - RESPAWN_DARK_FLOOR) * smooth(simTime / RESPAWN_DARK_RAMP_S);
 }
 
 const GLOW = 0x8affd8;
@@ -328,8 +375,8 @@ export class S7LevelFx {
     const gl = clearIfDrawn(this.glow);
     const d = S7_DARKNESS[this.session.spec.id];
     if (!d) return;
-    const vx = this.session.state.pos.x;
-    this.darkness = s7DarknessAt(this.session.spec, vx);
+    const vp = this.session.state.pos;
+    this.darkness = s7DarknessAt(this.session.spec, vp.x, vp.y) * respawnDarkRamp(this.session.physics.simTime, !!this.session.respawnedFrom);
     // the world-covering rect is drawn once; only the layer alpha follows the progress (no per-frame rebuild)
     const dk = this.dark;
     if (dk.context.instructions.length === 0) {
@@ -341,7 +388,7 @@ export class S7LevelFx {
     if (!dk.visible) return;
     const k = this.darkness / d.max;
     for (const e of this.glowProps) {
-      if (Math.abs(e.x - vx) > GLOW_RANGE) continue;
+      if (Math.abs(e.x - vp.x) > GLOW_RANGE || Math.abs(e.y - vp.y) > GLOW_RANGE) continue;
       const r = Math.max(e.w, e.h) * (e.sprite === 'prop.bioParticle' ? 1.5 : 1.4);
       const pulse = 0.8 + 0.2 * Math.sin(nowMs * 0.003 + e.x * 0.05);
       gl.circle(e.x, e.y, r).fill({ color: GLOW, alpha: 0.10 * k * pulse });

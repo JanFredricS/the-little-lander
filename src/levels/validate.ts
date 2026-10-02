@@ -148,7 +148,18 @@ export function validateLevel(spec: LevelSpec): string[] {
     } else if (c.at === 'beaconPlanted') {
       if (!(spec.entities ?? []).some((e) => e.kind === 'beaconSite' && e.id === c.siteId)) err(`${what}: at 'beaconPlanted' needs the siteId of a beaconSite (got '${String(c.siteId)}')`);
       else if ((spec.checkpoints ?? []).some((o) => o !== c && o.at === 'beaconPlanted' && o.siteId === c.siteId)) err(`${what}: another checkpoint already captures at site '${c.siteId}'`);
+    } else if (c.at === 'enterRegion') {
+      // round 14: captured mid-flight, so it must name its resting respawn
+      rectOk(c.rect, what);
+      if (!c.respawn) err(`${what}: at 'enterRegion' needs a respawn (a resting spot)`);
     } else err(`${what}: unknown 'at' '${String(c.at)}'`);
+    // round 14: a respawn inside a LATER enterRegion checkpoint's region would capture it on the spot
+    const list = spec.checkpoints ?? [];
+    if (c.respawn) {
+      for (const o of list.slice(list.indexOf(c) + 1)) {
+        if (o.at === 'enterRegion' && o.rect && rectContainsPt(o.rect, c.respawn)) err(`${what}: respawn is inside the region of the later checkpoint '${o.id}'`);
+      }
+    }
     if (c.respawn && (!inside(c.respawn) || (c.respawn.angle !== undefined && !fin(c.respawn.angle)))) err(`${what}: respawn outside the world`);
     else if (c.respawn) {
       const why = respawnSpotError(spec, c.respawn);
@@ -399,6 +410,8 @@ function respawnSpotError(spec: LevelSpec, p: Vec2): string | null {
   }
   return null;
 }
+
+const rectContainsPt = (r: Rect, p: Vec2) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;
 
 /** y of a left-to-right polyline at x (null outside its x range). */
 function polylineYAt(pts: readonly Vec2[], x: number): number | null {
