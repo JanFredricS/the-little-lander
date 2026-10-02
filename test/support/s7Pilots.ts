@@ -93,6 +93,11 @@ export function harpoonPilot(o: HarpoonPilotOptions = {}): Pilot {
   let cooldown = 0;
   let descending = false;
   let settled = false;
+  let tipped = 0;
+  let righting = 0;
+  let padY = 0;
+  let stall = 0;
+  let stallLen = Infinity;
   return (s) => {
     const st = s.state;
     const gun = st.ropeState?.guns[0];
@@ -144,13 +149,47 @@ export function harpoonPilot(o: HarpoonPilotOptions = {}): Pilot {
           return f;
         }
       }
-      // wait for the swing to die down, then hold reel-out to the pad
-      if (Math.abs(A.x - st.pos.x) < 45 && Math.abs(st.vel.x) < 30) settled = true;
-      f.reelOut = settled;
+      // tipped over on the pad (round 17: an arrival with some swing left can roll the
+      // pod onto its side): reel in to hang it upright again, then lower once more
+      tipped = Math.abs(st.angle) > 0.6 && Math.hypot(st.vel.x, st.vel.y) < 5 ? tipped + 1 : 0;
+      if (tipped > 60) {
+        righting = 90;
+        tipped = 0;
+        settled = false;
+        padY = st.pos.y;
+      }
+      if (righting > 0) {
+        // lift just clear (~50 px), then let the swing die down before lowering again
+        righting = st.pos.y > padY - 50 ? righting - 1 : 0;
+        f.reelIn = righting > 0 && Math.hypot(st.vel.x, st.vel.y) < 60;
+        return f;
+      }
+      // wait for the swing to die down, then hold reel-out to the pad (after a righting:
+      // until the pod hangs still and upright, or it tips over again)
+      if (Math.abs(A.x - st.pos.x) < 45 && Math.abs(st.vel.x) < (padY ? 8 : 30) && (!padY || Math.abs(st.angle) < 0.15)) settled = true;
+      // pay out only while the pod hangs near upright: lowering a spinning pod onto the
+      // pad topples it
+      f.reelOut = settled && Math.abs(st.angle) < 0.3;
       return f;
     }
     const brittleSoon = gun.brittleTimeLeft !== undefined && gun.brittleTimeLeft < 0.4;
     const speed = Math.hypot(st.vel.x, st.vel.y);
+    // wedged (round 17): the winch will not pull the pod through rock (e.g. hanging just
+    // inside a chasm lip, roped to a stalactite past it: the rope drags the pod into the
+    // lip corner). Like a player: rope something more nearly overhead, then carry on
+    stall = speed < 5 && len > minLen && len >= stallLen - 0.5 ? stall + 1 : 0;
+    stallLen = Math.min(stallLen, len);
+    if (stall === 0) stallLen = len;
+    if (stall > 90 && cooldown <= 0) {
+      const up = anchorCandidates(s, fwd, { minDeg: 60, maxDeg: 125 }).filter((c) => c.point.y < st.pos.y - minRise && Math.hypot(c.point.x - A.x, c.point.y - A.y) > 40);
+      up.sort((a, b) => Math.abs(a.point.x - st.pos.x) - Math.abs(b.point.x - st.pos.x));
+      if (up[0]) {
+        fire(up[0]);
+        cooldown = 40;
+        stall = 0;
+        return f;
+      }
+    }
     const p = pick(Math.max(A.x * fwd, st.pos.x * fwd) * fwd);
     if (p) {
       descending = false;

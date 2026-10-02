@@ -60,6 +60,18 @@ const TENSION_SMOOTHING = 0.25;
 const STALL_SLACK_PX = 3;
 /** Reel-in stalls when rock is within this many px of the pod's leading side (towards the anchor). */
 const STALL_PROBE_PX = 4;
+/**
+ * Round 17: ...and when rock lies within this many px along the line from a leading
+ * corner to the ANCHOR itself (a rope anchored on a spire's flank pulls the pod along
+ * that flank: the rock converges on the rope line from the side, where the short
+ * probe above never looks). 20 px measured best on The Vaults' reel-in matrix
+ * (test/vaults.test.ts): 0 crashes at dx 0 / +-45 and 1 of 378 at dx +-90; 0 px (no
+ * probe) lost the tipped x 8650 pod, and 28-40 px stalled so early that the stall /
+ * resume cycle pumped swings (3-23 of 378 at dx +-90).
+ */
+const STALL_LINE_PX = 20;
+/** The rope-line probe stops this far short of the anchor (the anchor's own surface). */
+const STALL_LINE_SKIP_PX = 10;
 
 export class HarpoonRig {
   private readonly guns: Gun[];
@@ -185,10 +197,17 @@ export class HarpoonRig {
     const hh = pxToM(this.t.height / 2);
     const probe = pxToM(STALL_PROBE_PX);
     const ignore = [...this.host.parts];
+    const line = pxToM(STALL_LINE_PX);
+    const skip = pxToM(STALL_LINE_SKIP_PX);
     for (const [lx, ly] of [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh], [0, -hh]] as const) {
       const w = p.localToWorld(this.host.body, { x: lx, y: ly });
       if ((w.x - c.x) * d.x + (w.y - c.y) * d.y <= 0) continue;
       if (castSolid(p, c, { x: w.x + d.x * probe, y: w.y + d.y * probe }, ignore)) return true;
+      // along the rope line: from this corner straight at the anchor
+      const ta = { x: a.x - w.x, y: a.y - w.y };
+      const dist = Math.hypot(ta.x, ta.y);
+      const len = Math.min(line, dist - skip);
+      if (len > 0 && castSolid(p, w, { x: w.x + (ta.x / dist) * len, y: w.y + (ta.y / dist) * len }, ignore)) return true;
     }
     return false;
   }

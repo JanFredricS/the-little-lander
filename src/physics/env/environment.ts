@@ -17,7 +17,7 @@
  */
 
 import { FIXED_DT } from '../../contracts';
-import type { BodyHandle, BrittleRegion, EntitySpec, GameEventSink, LevelSpec, PhysicsApi, Vec2, VesselMode, ZoneSpec } from '../../contracts';
+import type { BodyHandle, BrittleRegion, EntitySpec, NoAnchorRegion, GameEventSink, LevelSpec, PhysicsApi, Vec2, VesselMode, ZoneSpec } from '../../contracts';
 import { rectContains } from '../geom';
 import { PASS_THROUGH_TAGS } from '../tags';
 import { levelReferenceGravity, type PhysicsTuning } from '../tuning';
@@ -32,7 +32,7 @@ import type { TriggerContext } from './triggers';
 import { WindSystem } from './wind';
 
 const HANDLED_ENTITIES: ReadonlySet<EntitySpec['kind']> = new Set(['staticProp', 'exitDock', 'debrisSpawner', 'gooSpawner', 'orb', 'fuelPickup', 'beaconSite']);
-const HANDLED_ZONES: ReadonlySet<ZoneSpec['kind']> = new Set(['gravityZone', 'windGustSchedule', 'radiationEmitter', 'brittleRegion']);
+const HANDLED_ZONES: ReadonlySet<ZoneSpec['kind']> = new Set(['gravityZone', 'windGustSchedule', 'radiationEmitter', 'brittleRegion', 'noAnchorRegion']);
 
 /**
  * What the environment needs from the built level (supplied by
@@ -56,6 +56,7 @@ export class FlightEnvironment {
   readonly pickups: PickupSystem;
   readonly beacons: BeaconSystem;
   readonly brittle: readonly BrittleRegion[];
+  readonly noAnchor: readonly NoAnchorRegion[];
   readonly unhandledEntities: readonly EntitySpec[];
   readonly unhandledZones: readonly ZoneSpec[];
   /** Wind acceleration (m/s²) acting on the vessel this step (designed gust × gravity.scale, like gravity). */
@@ -83,6 +84,7 @@ export class FlightEnvironment {
     this.pickups = new PickupSystem(physics, spec.entities, tuning.pickup, events);
     this.beacons = new BeaconSystem(spec, tuning.beacon, events);
     this.brittle = spec.zones.filter((z): z is BrittleRegion => z.kind === 'brittleRegion');
+    this.noAnchor = spec.zones.filter((z): z is NoAnchorRegion => z.kind === 'noAnchorRegion');
     this.unhandledEntities = spec.entities.filter((e) => !HANDLED_ENTITIES.has(e.kind));
     this.unhandledZones = spec.zones.filter((z) => !HANDLED_ZONES.has(z.kind));
     this.dynamicProps = [...level.dynamicBodies];
@@ -127,6 +129,7 @@ export class FlightEnvironment {
   /** Can a harpoon anchor here (world px)? Brittle regions return their timer. */
   anchorAt(body: BodyHandle, p: Vec2): { ok: boolean; brittleSec?: number } {
     if (!this.physics.hasBody(body) || PASS_THROUGH_TAGS.has(this.physics.getTag(body) ?? '') || this.level.nonAnchorable.has(body)) return { ok: false };
+    if (this.noAnchor.some((z) => rectContains(z.rect, p))) return { ok: false };
     const b = this.brittle.find((z) => rectContains(z.rect, p));
     return b ? { ok: true, brittleSec: b.breakAfterSec } : { ok: true };
   }

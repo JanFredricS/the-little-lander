@@ -38,7 +38,7 @@
 import { rectPoints, surfaceY } from './kit';
 import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
 import { rng, hashString } from '../physics/geom';
-import { s7Band, s7Blob, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter } from './s7Helpers';
+import { type S7Spire, s7Band, s7Blob, s7DistToPolygon, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter, s7SpireHalf, s7SpirePoints } from './s7Helpers';
 
 const W = 16000;
 const H = 2400;
@@ -175,15 +175,8 @@ const GATE_SLIDE = 120;
 const SPIRE_X0 = 900;
 const SPIRE_X1 = 15100;
 
-export interface HollowSpire {
-  id: string;
-  from: 'floor' | 'ceiling';
-  x: number;
-  /** Tip y (px). */
-  tip: number;
-  /** Base width (px). */
-  base: number;
-}
+/** A Hollow spire (the S7 spire, src/levels/s7Helpers.ts - shared with the Vaults' stalactites since round 17). */
+export type HollowSpire = S7Spire;
 
 /**
  * Things a spire must stay clear of: rock blobs (1.25 r x 1.16 r), the sheltered spots
@@ -195,8 +188,9 @@ const spireBlockers = (): { x: number; y: number; hw: number; hh: number; rock: 
   ...HOLLOW_ROCKS.map((k) => ({ x: k.x + k.r * 1.25 + 30, y: k.y, hw: 12, hh: 20, rock: false })), // bonus-orb spots (beside rocks)
 ];
 
-/** Spire half-width (px) at its base, by length. */
-const spireHalf = (len: number) => Math.min(130, Math.max(45, 0.11 * len + 30));
+function spireHalf(len: number): number {
+  return s7SpireHalf(len);
+}
 /** Spire half-width (px) at fraction t (0 base .. 1 tip), incl. the worst lean and jitter (see spirePoints). */
 const spireHalfAt = (half: number, t: number) => (half * (1 - Math.min(1, Math.max(0, t))) ** 1.15 + 7) * 1.1 + 0.25 * half;
 
@@ -312,18 +306,7 @@ export const HOLLOW_SPIRES: HollowSpire[] = (() => {
 
 /** Distance (px) from a point to a polygon's outline; 0 inside. */
 export function distToPolygon(p: Vec2, pts: readonly Vec2[]): number {
-  let inside = false;
-  let best = Infinity;
-  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-    const a = pts[i]!;
-    const b = pts[j]!;
-    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
-    const dx = b.x - a.x;
-    const dy = b.y - a.y;
-    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
-    best = Math.min(best, Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy)));
-  }
-  return inside ? 0 : best;
+  return s7DistToPolygon(p, pts);
 }
 
 /** Open air (px) between the flight line and a spire's outline (sampled every 4 px). */
@@ -340,31 +323,9 @@ export function spireRouteClearance(sp: HollowSpire): number {
   return best;
 }
 
-/** A spire as a polygon: base buried 40 px in its surface, slightly crooked flanks, a blunt tip. */
+/** A spire as a polygon (s7SpirePoints on the Hollow's floor / crust). */
 export function spirePoints(sp: HollowSpire): Vec2[] {
-  const r = rng(hashString(sp.id));
-  const dir = sp.from === 'floor' ? 1 : -1; // base side (+y for the floor)
-  const surf = sp.from === 'floor' ? Math.max(floorY(sp.x - sp.base / 2), floorY(sp.x + sp.base / 2)) : Math.min(ceilY(sp.x - sp.base / 2), ceilY(sp.x + sp.base / 2));
-  const baseY = surf + dir * 40;
-  const lean = (r() - 0.5) * 0.25 * sp.base;
-  const tipX = sp.x + lean;
-  const pts: Vec2[] = [];
-  const n = 4;
-  const side = (s: -1 | 1) => {
-    const out: Vec2[] = [];
-    for (let i = 1; i < n; i++) {
-      const t = i / n; // 0 base .. 1 tip
-      const w = (sp.base / 2) * (1 - t) ** 1.15 + 7;
-      out.push({ x: Math.round(sp.x + (tipX - sp.x) * t + s * w * (0.9 + r() * 0.2)), y: Math.round(baseY + (sp.tip - baseY) * t) });
-    }
-    return out;
-  };
-  pts.push({ x: Math.round(sp.x - sp.base / 2), y: Math.round(baseY) });
-  pts.push(...side(-1));
-  pts.push({ x: Math.round(tipX - 6), y: sp.tip }, { x: Math.round(tipX + 6), y: sp.tip });
-  pts.push(...side(1).reverse());
-  pts.push({ x: Math.round(sp.x + sp.base / 2), y: Math.round(baseY) });
-  return pts;
+  return s7SpirePoints(sp, floorY, ceilY);
 }
 
 const terrain: TerrainPiece[] = [

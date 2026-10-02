@@ -284,28 +284,32 @@ function caves(_pal: Palette): BackdropLayerPix[] {
     wrapped((dx) => halo(far, x + dx, y, r.range(10, 22), [7, 8], { core: 0.6, onlyOver: true }));
   }
   for (let i = 0; i < 220; i++) far.set(r.range(0, W), r.range(0, H), r.chance(0.8) ? 8 : 9);
-  // L2: near columns & stalactites
+  // L2: background columns & stalactites. Round 17 (The Vaults: "the stalactites I
+  // expected to be physical hindrances, not hovering background"): pushed well back
+  // so they cannot be mistaken for the solid, tile-drawn stalactites in front -
+  // thinner and shorter (w 5-12, len 35-90; were 8-22 / 60-150), flat deep-rock
+  // shades only (ramp [1, 2], no terrain highlights, no outline), dim teal drips,
+  // and slower parallax (0.3, was 0.45). Shared by The Throat (same theme).
   const near = new Pix(W, H);
   const r2 = mulberry32(45);
   for (let i = 0; i < 7; i++) {
     const x = r2.range(0, W),
-      w = r2.range(8, 22),
-      len = r2.range(60, 150);
+      w = r2.range(5, 12),
+      len = r2.range(35, 90);
     const fromTop = r2.chance(0.6);
     wrapped((dx) => {
       const pts: [number, number][] = fromTop
-        ? [[x + dx - w, 0], [x + dx + w, 0], [x + dx + w * 0.2, len], [x + dx, len + 10]]
-        : [[x + dx - w, H], [x + dx + w, H], [x + dx + w * 0.25, H - len], [x + dx - w * 0.1, H - len - 8]];
-      near.poly(pts, (px, py) => rampAt([2, 3, 4], 0.55 - (px - (x + dx)) / (w * 2) + (valueNoise(px / 2, py / 9, 46) - 0.5) * 0.5, px, py, 0.4));
+        ? [[x + dx - w, 0], [x + dx + w, 0], [x + dx + w * 0.2, len], [x + dx, len + 6]]
+        : [[x + dx - w, H], [x + dx + w, H], [x + dx + w * 0.25, H - len], [x + dx - w * 0.1, H - len - 5]];
+      near.poly(pts, (px, py) => rampAt([1, 2], 0.75 - (px - (x + dx)) / (w * 4) + (valueNoise(px / 2, py / 9, 46) - 0.5) * 0.3, px, py, 0.4));
     });
   }
-  near.outline(1);
-  // bioluminescent drips on the tips
-  near.apply((x, y, c) => (c === 1 && near.get(x, y - 1) > 1 && hash2(x, y, 47) > 0.9 ? 9 : -1));
+  // faint bioluminescent drips on the tips
+  near.apply((x, y, c) => (c !== 0 && near.get(x, y + 1) === 0 && hash2(x, y, 47) > 0.93 ? 7 : -1));
   return [
     { pix: sky, parallax: 0, offsetY: 0, repeatX: true, repeatY: false, label: 'darkness gradient' },
     { pix: far, parallax: 0.2, offsetY: 0, repeatX: true, repeatY: false, label: 'distant chamber + glow' },
-    { pix: near, parallax: 0.45, offsetY: 0, repeatX: true, repeatY: false, label: 'columns & stalactites' },
+    { pix: near, parallax: 0.3, offsetY: 0, repeatX: true, repeatY: false, label: 'background columns & stalactites' },
   ];
 }
 

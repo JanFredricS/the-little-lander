@@ -6,6 +6,10 @@
  * spire), reel in while the pod is calm, and once short (or stalled) re-rope
  * something higher. Looks at the level by ray casting, like a player; only
  * produces InputFrames.
+ *
+ * Round 17: also drives The Vaults' rope-only recovery test (test/vaults.test.ts):
+ * the target line and band are parameters, and the rope tuning follows the vessel
+ * mode (harpoon = rope guns only, harpoonThrust = The Hollow's rig).
  */
 
 import type { Vec2 } from '../../src/contracts';
@@ -21,27 +25,45 @@ import { vMToPx, vPxToM } from '../../src/physics/units';
  * the line, the pod hangs ~25 px past its anchor) or a rock beside the line.
  */
 export const ROUTE_BAND = 220;
+/** Score penalty (px of height) for an anchor that will crack. */
+const BRITTLE_PENALTY = 60;
+
+/** Where the climber is heading: `routeY(x)` and how close (px) counts as there. */
+export interface ClimbTarget {
+  routeY: (x: number) => number;
+  band: number;
+}
+
+const ropeTuning = (s: LevelSession) => (s.vessel.mode === 'harpoon' ? s.tuning.harpoon : s.tuning.harpoonThrust);
 
 /** Every acceptable anchor in the half plane above the pod (against `up`), 1° apart, within the rope range. */
-function sweep(s: LevelSession, up: Vec2): { point: Vec2; dir: Vec2 }[] {
+function sweep(s: LevelSession, up: Vec2): { point: Vec2; dir: Vec2; brittle: boolean }[] {
   const st = s.state;
-  const t = s.tuning.harpoonThrust;
+  const t = ropeTuning(s);
   const m = { x: st.pos.x + Math.sin(st.angle) * t.mountHeight, y: st.pos.y - Math.cos(st.angle) * t.mountHeight };
   const range = t.ropeRange - 10;
   const side = { x: -up.y, y: up.x };
-  const out: { point: Vec2; dir: Vec2 }[] = [];
+  const out: { point: Vec2; dir: Vec2; brittle: boolean }[] = [];
   for (let deg = 0; deg <= 180; deg++) {
     const a = (deg * Math.PI) / 180;
     const dir = { x: side.x * Math.cos(a) + up.x * Math.sin(a), y: side.y * Math.cos(a) + up.y * Math.sin(a) };
     const hit = castSolid(s.physics, vPxToM(m), vPxToM({ x: m.x + dir.x * range, y: m.y + dir.y * range }), [...s.vessel.parts]);
     if (!hit) continue;
     const point = vMToPx(hit.point);
-    if (s.vessel.hooks.anchorAt(hit.body, point).ok) out.push({ point, dir });
+    const at = s.vessel.hooks.anchorAt(hit.body, point);
+    if (at.ok) out.push({ point, dir, brittle: at.brittleSec !== undefined });
   }
   return out;
 }
 
-export function climbToRoute(s: LevelSession, maxSec: number, log?: (msg: string) => void, lateralWeight = 0.7): { reached: boolean; t: number; closest: number } {
+export function climbToRoute(
+  s: LevelSession,
+  maxSec: number,
+  log?: (msg: string) => void,
+  lateralWeight = 0.7,
+  target: ClimbTarget = { routeY: hollowRouteY, band: ROUTE_BAND },
+): { reached: boolean; t: number; closest: number } {
+  const routeY = target.routeY;
   let cooldown = 0;
   let lastLen = Infinity;
   let stall = 0;
@@ -56,17 +78,17 @@ export function climbToRoute(s: LevelSession, maxSec: number, log?: (msg: string
   const rand = mulberry32(Math.round(s.state.pos.x * 7 + lateralWeight * 1000));
   for (let i = 0; i < maxSec * 60 && !s.outcome; i++) {
     const st = s.state;
-    const off = Math.abs(st.pos.y - hollowRouteY(st.pos.x));
+    const off = Math.abs(st.pos.y - routeY(st.pos.x));
     if (off < closest - 10) sinceProgress = 0;
     else sinceProgress++;
     closest = Math.min(closest, off);
-    if (off <= ROUTE_BAND) return { reached: true, t: i / 60, closest };
+    if (off <= target.band) return { reached: true, t: i / 60, closest };
     const g = s.vessel.hooks.gravityAt?.(st.pos) ?? s.spec.gravity;
     const gl = Math.hypot(g.x, g.y) || 1;
     // "up" = towards the flight line (against gravity in the down / UP zones; in the
     // sideways zones gravity says little about where the line is)
-    const up = { x: 0, y: hollowRouteY(st.pos.x) < st.pos.y ? -1 : 1 };
-    const offAt = (p: Vec2) => Math.abs(p.y - hollowRouteY(p.x));
+    const up = { x: 0, y: routeY(st.pos.x) < st.pos.y ? -1 : 1 };
+    const offAt = (p: Vec2) => Math.abs(p.y - routeY(p.x));
     const height = (p: Vec2) => off - offAt(p);
     const lateral = (p: Vec2) => Math.abs(p.x - st.pos.x);
     const speed = Math.hypot(st.vel.x, st.vel.y);
@@ -87,7 +109,8 @@ export function climbToRoute(s: LevelSession, maxSec: number, log?: (msg: string
           if (h < minGain) continue;
           if (wedged.dirs.some((d) => d.x * c.dir.x + d.y * c.dir.y > 0.8)) continue;
           // across a gravity boundary only as a last resort
-          const score = h - lateralWeight * lateral(c.point) - (sameGravity(c.point) ? 0 : 1000);
+          // a brittle anchor only when it is clearly better (round-17 audit: it breaks mid-climb)
+          const score = h - lateralWeight * lateral(c.point) - (sameGravity(c.point) ? 0 : 1000) - (c.brittle ? BRITTLE_PENALTY : 0);
           if (!best || score > best.score) best = { dir: c.dir, score, point: c.point };
       }
       return best;
@@ -131,7 +154,7 @@ export function climbToRoute(s: LevelSession, maxSec: number, log?: (msg: string
       }
     } else if (gun.phase === 'anchored' && gun.head) {
       const len = gun.length ?? 0;
-      const tmin = s.tuning.harpoonThrust.ropeMin;
+      const tmin = ropeTuning(s).ropeMin;
       if (lower > 0) {
         // nothing else to rope from the wedge: pay out a little and look again
         lower--;
@@ -141,7 +164,8 @@ export function climbToRoute(s: LevelSession, maxSec: number, log?: (msg: string
         continue;
       }
       f.reelIn = speed < 70 && len > tmin + 2;
-      stall = len < lastLen - 0.5 ? 0 : stall + 1;
+      // stalled = reeling in but not shortening (a swing too fast to reel is not a wedge)
+      stall = !f.reelIn || len < lastLen - 0.5 ? 0 : stall + 1;
       lastLen = Math.min(lastLen, len);
       if (cooldown <= 0 && speed < 40 && len <= tmin + 8) {
         const p = pick(Math.max(30, height(gun.head) + 25));

@@ -1,5 +1,5 @@
 /**
- * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints; round 14: CheckpointSpec 'enterRegion'; round 15: TerrainPiece.oneWay, CrumblePlatformEntity oneWay / regrowSec). Level data. A level is a plain data module exporting a
+ * FROZEN (S0; round 12 amendment: LevelSpec.checkpoints; round 14: CheckpointSpec 'enterRegion'; round 15: TerrainPiece.oneWay, CrumblePlatformEntity oneWay / regrowSec; round 17: ZoneSpec NoAnchorRegion). Level data. A level is a plain data module exporting a
  * LevelSpec (S6/S7 write them; the level loader spawns them; S1 physics
  * interprets zones/entities; S2/S4 render them).
  *
@@ -407,6 +407,18 @@ export interface BrittleRegion {
 }
 
 /**
+ * Round 17 (Vaults audit M1): harpoon heads hitting rock inside `rect` find no
+ * purchase (harpoonMissed). Marks spots where a rope would be a trap, e.g. the
+ * blunt tip of a hanging stalactite: a short rope anchored there lets the pod
+ * orbit the tip and the rope then drags it through the spire. Invisible.
+ */
+export interface NoAnchorRegion {
+  kind: 'noAnchorRegion';
+  id: string;
+  rect: Rect;
+}
+
+/**
  * A moving kill line (map 8 collapse front). Starts at `start` along `axis`
  * and moves at `speed` px/s (negative = towards 0, e.g. rising up the
  * screen). The vessel crashes when on the wrong side of it.
@@ -420,7 +432,7 @@ export interface KillFront {
   activate?: TriggerSpec;
 }
 
-export type ZoneSpec = GravityZone | WindGustSchedule | RadiationEmitter | BrittleRegion | KillFront;
+export type ZoneSpec = GravityZone | WindGustSchedule | RadiationEmitter | BrittleRegion | NoAnchorRegion | KillFront;
 
 // --------------------------------------------------------------- objectives
 

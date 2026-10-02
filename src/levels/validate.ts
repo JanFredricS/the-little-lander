@@ -386,6 +386,9 @@ function checkZone(
       rectOk(z.rect, what);
       if (!pos(z.breakAfterSec)) err(`${what}: breakAfterSec must be positive`);
       break;
+    case 'noAnchorRegion':
+      rectOk(z.rect, what);
+      break;
     case 'killFront':
       if (z.axis !== 'x' && z.axis !== 'y') err(`${what}: axis must be x or y`);
       if (!(fin(z.start) && fin(z.speed))) err(`${what}: start/speed must be finite`);
