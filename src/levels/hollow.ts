@@ -16,6 +16,13 @@
  *    and the sun; there is a sheltered spot within ~300 px of the flight line
  *    everywhere (HOLLOW_SHELTERS, tested).
  *  - Exit: the dark tunnel mouth in the east wall (towards the Keeper).
+ *  - Round 18 (player feedback): the requirement is explicit (collectOrbs count 22,
+ *    HUD "ORBS x/22") against 30 placed - a 36% surplus, and no stretch between two
+ *    respawn points holds more than the 8 spare orbs. 13 enterRegion checkpoints
+ *    (HOLLOW_CHECKPOINTS) leave ~2 orbs between respawns (4-5 across the sideways
+ *    zones, which cannot host a resting respawn). The gravity zones got a stronger
+ *    look in FlightView (edge curtains + scrolling edge dashes + drifting motes);
+ *    their physics and placement are unchanged.
  *
  * Playtest notes (S7, headless autopilots in test/s7.playtest.test.ts —
  * thrust-only waypoint pilots, no rope use, so a floor for a real player):
@@ -35,8 +42,8 @@
  *    map 5) let a player hang in the shade for free.
  */
 
-import { rectPoints, surfaceY } from './kit';
-import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
+import { crossingsAt, rectPoints, surfaceY } from './kit';
+import type { CheckpointSpec, EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
 import { rng, hashString } from '../physics/geom';
 import { type S7Spire, s7Band, s7Blob, s7DistToPolygon, s7Noise, s7Piece, s7Profile, s7Prop, s7Scatter, s7SpireHalf, s7SpirePoints } from './s7Helpers';
 
@@ -383,6 +390,46 @@ const decor: EntitySpec[] = [
   ...s7Scatter('farRock', 'prop.floatingRock', 400, 15600, () => 3, (x, r) => ({ y: 500 + r() * 1200, w: 32, h: 20 })),
 ];
 
+// ------------------------------------------------------------------ checkpoints
+
+/**
+ * Round 18 (player feedback: "checkpoints every ~2 orbs"): enterRegion checkpoints
+ * spaced so ~2 orbs lie between consecutive ones. Each respawn is a resting spot on a
+ * floating rock at its flattest x: on TOP of the rock in the down bands (angle 0), and
+ * UNDER it, upside down, in the up zones (angle pi: "down" points at the crust there).
+ * The sideways zones (west1, east1) get none - a pod can't rest under a sideways pull
+ * (the validator rejects it), so those two stretches stay 4-5 orbs (isle22 and isle28,
+ * the rocks flanking east1's ends, are boxed in by crust 'gate' spires: no way out). The band is a
+ * full-height 40 px strip ending 20 px before the respawn (so a respawn never sits in
+ * its own or a later band). Respawn y is the rock surface +- 11 px (pod half-height).
+ */
+const HOLLOW_CP_ROCKS: readonly { id: string; rock: string; x: number; under?: boolean }[] = [
+  { id: 'isle1', rock: 'isle1', x: 1215 },
+  { id: 'isle3', rock: 'isle3', x: 2069 },
+  { id: 'up1', rock: 'isle6', x: 3611, under: true },
+  { id: 'isle8', rock: 'isle8', x: 4726 },
+  { id: 'isle9', rock: 'isle9', x: 5287 },
+  { id: 'isle13', rock: 'isle13', x: 7398 }, // ~100 px clear of west1's east edge (east of 7400 the top tips the pod)
+  { id: 'isle14', rock: 'isle14', x: 7950 }, // east of crust spire tite20's tip (it reaches this rock)
+  { id: 'isle15', rock: 'isle15', x: 8345 }, // (isle16's top carries a crust spire tip)
+  { id: 'up2a', rock: 'isle18', x: 9722, under: true },
+  { id: 'up2b', rock: 'isle19', x: 10302, under: true },
+  { id: 'isle21', rock: 'isle21', x: 11375 },
+  { id: 'isle26', rock: 'isle26', x: 14044 }, // east of crust spire tite38's tip
+  { id: 'isle27', rock: 'isle27', x: 14439 },
+];
+export const HOLLOW_CHECKPOINTS: readonly CheckpointSpec[] = HOLLOW_CP_ROCKS.map((c) => {
+  const piece = terrain.find((t) => t.id === c.rock)!;
+  const ys = crossingsAt(piece.points, c.x);
+  const y = c.under ? Math.round(Math.max(...ys)) + 11 : Math.round(Math.min(...ys)) - 11;
+  return {
+    id: c.id,
+    at: 'enterRegion' as const,
+    rect: { x: c.x - 60, y: 0, w: 40, h: H },
+    respawn: c.under ? { x: c.x, y, angle: Math.PI } : { x: c.x, y },
+  };
+});
+
 const zones: ZoneSpec[] = [
   ...HOLLOW_GRAVITY.map((z): ZoneSpec => ({ kind: 'gravityZone', id: z.id, rect: { x: z.x0, y: 0, w: z.x1 - z.x0, h: H }, gravity: z.g })),
   { kind: 'radiationEmitter', id: 'sunPulse', x: HOLLOW_SUN.x, y: HOLLOW_SUN.y, range: 9000, periodSec: 13, warnSec: 3.5, fuelLoss: 0.3, firstAtSec: 16 },
@@ -409,6 +456,7 @@ export const hollow: LevelSpec = {
     { kind: 'collectOrbs', id: 'orbs', count: 22 },
     { kind: 'reachExit', id: 'tunnel', exitId: 'tunnel' },
   ],
+  checkpoints: HOLLOW_CHECKPOINTS.map((c) => ({ ...c, rect: { ...c.rect! }, respawn: { ...c.respawn! } })),
   camera: { bias: 'horizontal', lookAhead: 100 },
   physicsOverrides: {
     'harpoonThrust.burnSeconds': 70,

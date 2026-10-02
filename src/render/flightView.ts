@@ -9,8 +9,10 @@
  * beacons (obj.beaconSite / obj.beacon), goo (obj.goo), debris (theme
  * boulders / collapse rubble / obj.debris*), rope (obj.ropeSegment tiled
  * along the sagging polyline), wind (fx.windStreak) are pooled sprites
- * (spritePool.ts: no per-frame allocation). Gravity zones are a faint tint
- * with chevrons drifting along the zone's gravity. Every per-frame element
+ * (spritePool.ts: no per-frame allocation). Gravity zones are a tint with
+ * chevrons and (round 18) faster dust motes drifting along the zone's
+ * gravity, edged by a lit, breathing curtain with dashes running along it
+ * (built once; frames only move / fade them). Every per-frame element
  * (chevrons, beacon sites, pickups, radiation glow + pulse lines, debris,
  * goo, rope segments) is culled to the view rect (+CULL_MARGIN) before it
  * touches a pool or Graphics; the rope polyline is a reused scratch array.
@@ -46,7 +48,13 @@ const ANIM_MS = 140;
 /** Rope segment sprite length (px, obj.ropeSegment is 2x4). */
 const ROPE_STEP = 4;
 /** Gravity-zone chevron grid spacing (px). */
-const CHEVRON_GRID = 48;
+const CHEVRON_GRID = 56;
+/** Round 18: gravity-zone dust motes - lattice spacing (px) and the jitter period (cells). */
+const MOTE_GRID = 28;
+const MOTE_PERIOD = 4;
+/** Round 18: gravity-zone edge curtain - scrolling dash length + gap (px). */
+const EDGE_DASH = 16;
+const EDGE_DASH_GAP = 24;
 /** Dark outline behind the beacon landing column + brackets. */
 const BEACON_OUTLINE = 0x0c2a16;
 const BEACON_GREEN = 0x60ff90;
@@ -63,7 +71,21 @@ const S_GLOW_OUTER = { color: RADIATION_GLOW, alpha: 0.12 } as const;
 const S_GLOW_INNER = { color: RADIATION_GLOW, alpha: 0.25 } as const;
 const S_PULSE_HIT = { width: 3, color: 0xff4040 } as const;
 const S_PULSE_MISS = { width: 1, color: 0x909090 } as const;
-const S_CHEVRON = { width: 1, color: 0xb8a0ff, alpha: 0.55 } as const;
+// round 18 (playtest: "gravity zones too subtle, I don't notice where they start / end"):
+// bigger, brighter chevrons, a second layer of faster dust motes, and a lit edge curtain
+const S_CHEVRON = { width: 2, color: 0xc8b4ff, alpha: 0.7 } as const;
+const S_MOTE = { color: 0xe4dcff, alpha: 0.8 } as const;
+const ZONE_EDGE = 0xc8b0ff;
+/** Round-18 audit L6: lavender, not white - a white vertical line read as a waterfall prop. */
+const S_EDGE_DASH = { width: 3, color: 0xdcc8ff, alpha: 0.8 } as const;
+/** Edge curtain: [offset into the zone, width, alpha] bands (negative offset = outside). */
+const EDGE_BANDS: readonly (readonly [number, number, number])[] = [
+  [-6, 6, 0.12],
+  [0, 3, 0.85],
+  [3, 8, 0.24],
+  [11, 16, 0.11],
+  [27, 28, 0.05],
+];
 
 /** Pre-built beacon-site fx: the pulsing landing column (+ frame) and the hold bar. */
 interface SiteFx {
@@ -77,10 +99,17 @@ interface SiteFx {
 interface ZoneFx {
   zone: GravityZone;
   pattern: Graphics;
+  /** Round 18: the faster dust-mote layer. */
+  motes: Graphics;
+  /** Round-18 audit L6: pattern + motes share ONE masked container (one stencil per zone interior). */
+  inner: Container;
   /** Unit drift direction (px per px of shift). */
   ux: number;
   uy: number;
   speed: number;
+  /** Round 18: the lit edge curtain (static bands, shimmered by alpha) and its scrolling dashes. */
+  edges: Graphics;
+  dashes: Graphics;
 }
 /** Off-view margin (px) kept when culling bodies, markers and rope. */
 const CULL_MARGIN = 32;
@@ -511,10 +540,23 @@ export class FlightView {
   private renderGravityZones(nowMs: number): void {
     for (const zf of this.zonePatterns) {
       const r = zf.zone.rect;
-      zf.pattern.visible = r.x + r.w >= this.cx0 && r.x <= this.cx1 && r.y + r.h >= this.cy0 && r.y <= this.cy1;
-      if (!zf.pattern.visible) continue;
-      const shift = ((nowMs / 1000) * zf.speed) % CHEVRON_GRID;
+      // the curtain glows 6 px outside the zone: cull with that margin
+      const on = r.x + r.w + 8 >= this.cx0 && r.x - 8 <= this.cx1 && r.y + r.h + 8 >= this.cy0 && r.y - 8 <= this.cy1;
+      zf.inner.visible = on;
+      zf.edges.visible = on;
+      zf.dashes.visible = on;
+      if (!on) continue;
+      const t = nowMs / 1000;
+      const shift = (t * zf.speed) % CHEVRON_GRID;
       zf.pattern.position.set(Math.round(zf.ux * shift), Math.round(zf.uy * shift));
+      const moteShift = (t * zf.speed * 2.2) % (MOTE_GRID * MOTE_PERIOD);
+      zf.motes.position.set(Math.round(zf.ux * moteShift), Math.round(zf.uy * moteShift));
+      // edge shimmer: a slow breathing glow, dashes running along the edge with the pull's
+      // vertical sense (or downwards for a sideways pull)
+      zf.edges.alpha = 0.75 + 0.25 * Math.sin(t * 3.4);
+      const dir = zf.uy < -0.3 ? -1 : 1;
+      zf.dashes.position.set(0, dir * ((t * 60) % (EDGE_DASH + EDGE_DASH_GAP)));
+      zf.dashes.alpha = 0.55 + 0.45 * Math.sin(t * 5.1 + 1);
     }
   }
 
@@ -585,25 +627,66 @@ export class FlightView {
       const uy = z.gravity.y / gl;
       const r = z.rect;
       const pattern = new Graphics();
-      // a 5 px "V" pointing along the pull (perpendicular = (-uy, ux))
-      const px = -uy * 3;
-      const py = ux * 3;
+      // a 12 px "V" pointing along the pull (perpendicular = (-uy, ux)); round 18: was 5 px / 1 px
+      const px = -uy * 6;
+      const py = ux * 6;
       for (let cy = r.y - CHEVRON_GRID / 2; cy < r.y + r.h + CHEVRON_GRID; cy += CHEVRON_GRID) {
         for (let cx = r.x - CHEVRON_GRID / 2; cx < r.x + r.w + CHEVRON_GRID; cx += CHEVRON_GRID) {
           pattern
-            .moveTo(cx - px - ux * 3, cy - py - uy * 3)
+            .moveTo(cx - px - ux * 6, cy - py - uy * 6)
             .lineTo(cx, cy)
-            .lineTo(cx + px - ux * 3, cy + py - uy * 3);
+            .lineTo(cx + px - ux * 6, cy + py - uy * 6);
         }
       }
       pattern.stroke(S_CHEVRON);
+      // dust motes: 2 px dots on a jittered lattice (the jitter repeats every MOTE_PERIOD cells,
+      // so a drift of one period is seamless), one extra period on every side
+      const motes = new Graphics();
+      const span = MOTE_GRID * MOTE_PERIOD;
+      for (let row = 0, cy = r.y - span; cy < r.y + r.h + span; cy += MOTE_GRID, row++) {
+        for (let col = 0, cx = r.x - span; cx < r.x + r.w + span; cx += MOTE_GRID, col++) {
+          const h = moteHash(col % MOTE_PERIOD, row % MOTE_PERIOD);
+          if (h < 0.35) continue;
+          motes.rect(Math.round(cx + h * 19), Math.round(cy + ((h * 7.3) % 1) * 19), 2, 2);
+        }
+      }
+      motes.fill(S_MOTE);
       const mask = new Graphics();
       if (z.polygon) mask.poly(z.polygon.flatMap((q) => [q.x, q.y])).fill(0xffffff);
       else mask.rect(r.x + 4, r.y + 4, Math.max(0, r.w - 8), Math.max(0, r.h - 8)).fill(0xffffff);
-      pattern.mask = mask;
-      pattern.visible = false;
-      this.zoneFx.addChild(mask, pattern);
-      this.zonePatterns.push({ zone: z, pattern, ux, uy, speed: 14 * Math.min(2, gl / 3) });
+      const inner = new Container();
+      inner.addChild(motes, pattern);
+      inner.mask = mask;
+      inner.visible = false;
+      // the edge curtain: lit bands just inside each edge (and a faint glow just outside, so it
+      // reads on the approach), plus dashes scrolling along it; polygon zones get a bright outline
+      const edges = new Graphics();
+      const dashes = new Graphics();
+      if (z.polygon) {
+        edges.poly(z.polygon.flatMap((q) => [q.x, q.y])).stroke({ width: 3, color: ZONE_EDGE, alpha: 0.8 });
+      } else {
+        for (const [o, w, a] of EDGE_BANDS) {
+          const style = { color: ZONE_EDGE, alpha: a };
+          edges.rect(r.x + o, r.y, w, r.h).fill(style); // west edge, inward = +x
+          edges.rect(r.x + r.w - o - w, r.y, w, r.h).fill(style); // east edge, inward = -x
+          if (r.w > 120 && r.h > 120) {
+            edges.rect(r.x, r.y + o, r.w, w).fill(style); // top
+            edges.rect(r.x, r.y + r.h - o - w, r.w, w).fill(style); // bottom
+          }
+        }
+        const step = EDGE_DASH + EDGE_DASH_GAP;
+        for (let y = r.y - step; y < r.y + r.h + step; y += step) {
+          for (const x of [r.x + 1.5, r.x + r.w - 1.5]) dashes.moveTo(x, y).lineTo(x, y + EDGE_DASH);
+        }
+        dashes.stroke(S_EDGE_DASH);
+        const dmask = new Graphics().rect(r.x - 4, r.y, r.w + 8, r.h).fill(0xffffff);
+        dashes.mask = dmask;
+        this.zoneFx.addChild(dmask);
+      }
+      edges.visible = false;
+      dashes.visible = false;
+      this.zoneFx.addChild(mask, edges, inner, dashes);
+      this.zonePatterns.push({ zone: z, pattern, motes, inner, ux, uy, speed: 18 * Math.min(2, gl / 3), edges, dashes });
     }
   }
 
@@ -673,8 +756,8 @@ export class FlightView {
         { x: z.rect.x, y: z.rect.y + z.rect.h },
       ];
       const flat = pts.flatMap((p) => [p.x, p.y]);
-      g.poly(flat).fill({ color: 0x7040ff, alpha: 0.08 });
-      g.poly(flat).stroke({ width: 1, color: 0x9070ff, alpha: 0.3 });
+      // round 18: a stronger in-zone tint (was 0.08); the edges are the curtain (buildZonePatterns)
+      g.poly(flat).fill({ color: 0x7040ff, alpha: 0.13 });
     }
     // goo nests: a cluster of dormant blobs where a spawner sits
     for (const e of spec.entities) {
@@ -693,6 +776,12 @@ export class FlightView {
       }
     }
   }
+}
+
+/** Deterministic 0..1 hash of a mote lattice cell (no Math.random: frames / runs match). */
+function moteHash(c: number, r: number): number {
+  const v = Math.sin(c * 127.1 + r * 311.7) * 43758.5453;
+  return v - Math.floor(v);
 }
 
 /** Halo canvas per vessel sprite frame canvas (ArtApi memoises frames): retries / later levels reuse it. */

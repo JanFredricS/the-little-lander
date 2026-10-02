@@ -286,9 +286,13 @@ export function thrustPilot(o: ThrustPilotOptions) {
   const maxTilt = o.maxTilt ?? 0.8;
   let i = 0;
   let shelter: Vec2 | null = null;
-  const pilot: Pilot = (s) => {
+  let still = 0;
+  let lift = 0;
+  const pilot: Pilot = (s, tick) => {
     const st = s.state;
     const f = frame();
+    // round 18: started mid-level (a checkpoint respawn) - fly on from here, don't turn back
+    if (tick === 0) while (i < o.path.length - 1 && o.path[i]!.x < st.pos.x) i++;
     // advance waypoints
     while (i < o.path.length - 1) {
       const w = o.path[i]!;
@@ -344,6 +348,19 @@ export function thrustPilot(o: ThrustPilotOptions) {
     if ((shelter || (isLast && o.hover)) && dist < 12) {
       vd.x = 0;
       vd.y = 0;
+    }
+    // round 18 (checkpoint respawns rest on rocks): a pod resting (or tipped) on rock cannot
+    // pivot, and a mostly-sideways or downward demand never passes steer's burn gate - the
+    // pilot sat there forever. Still for 0.75 s: lift off along the local "up" for 2/3 s.
+    const speed = Math.hypot(st.vel.x, st.vel.y);
+    still = speed < 6 ? still + 1 : 0;
+    if (still > 45 && !isLast && !shelter) lift = 40;
+    if (lift > 0 && !isLast && !shelter) {
+      lift--;
+      const g = s.vessel.hooks.gravityAt?.(st.pos) ?? s.spec.gravity;
+      const gl = Math.hypot(g.x, g.y) || 1;
+      vd.x = (-g.x / gl) * 80;
+      vd.y = (-g.y / gl) * 80;
     }
     steer(s, f, vd, maxTilt);
     return f;

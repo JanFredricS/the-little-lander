@@ -401,33 +401,65 @@ function checkZone(
 
 /** Max fall (px) from a checkpoint respawn point to the terrain below it: a resting spot, not a drop. */
 export const RESPAWN_MAX_DROP = 40;
+/** Max tilt (rad) of a checkpoint respawn from upright against the local gravity (round-18 audit L3). */
+export const RESPAWN_MAX_TILT = 0.35;
 
 /**
  * Round 12: a checkpoint respawn must be a resting spot - in open air (not inside a
  * terrain piece), with terrain at most RESPAWN_MAX_DROP px below, and clear of every
  * beacon site's landing zone (a respawn must never plant a beacon by itself).
  * Static terrain only (moving islands are not a spot to respawn on).
+ * Round 18: "below" follows the gravity there - inside an inverted (UP) gravityZone
+ * the pod rests against terrain ABOVE it (respawn angle pi); a respawn in a sideways
+ * zone is rejected (nothing to rest on squarely).
+ * Round-18 audit L3: the respawn angle (default 0) must stand the pod upright against
+ * that gravity (nose along -g, within RESPAWN_MAX_TILT): angle pi in an UP zone, 0 in a
+ * down one. Known simplifications: zero gravity counts as "down" (atan2(0, 0) = 0), and
+ * a level gravityRamp is ignored (the spec's base gravity is used).
  */
-function respawnSpotError(spec: LevelSpec, p: Vec2): string | null {
+export function respawnSpotError(spec: LevelSpec, p: Vec2 & { angle?: number }): string | null {
+  const zone = spec.zones.find((z) => z.kind === 'gravityZone' && rectContainsPt(z.rect, p) && (!z.polygon || pointInPoly(z.polygon, p)));
+  const g = zone && zone.kind === 'gravityZone' ? zone.gravity : spec.gravity;
+  if (Math.abs(g.x) > 0.5 * Math.abs(g.y)) return `is in a sideways gravity zone '${zone?.id ?? 'level'}'`;
+  const upright = Math.atan2(-g.x, g.y);
+  const a = p.angle ?? 0;
+  const tilt = Math.abs(Math.atan2(Math.sin(a - upright), Math.cos(a - upright)));
+  if (tilt > RESPAWN_MAX_TILT) return `angle ${a.toFixed(2)} is not upright against the gravity there (want ${upright.toFixed(2)})`;
+  const up = g.y < 0; // the pod falls towards -y
   let below = Infinity;
   for (const piece of spec.terrain?.pieces ?? []) {
     if (piece.kind === 'polygon') {
       const ys = crossingsAt(piece.points, p.x);
       if (ys.filter((y) => y <= p.y).length % 2 === 1) return `inside terrain '${piece.id}'`;
-      for (const y of ys) if (y > p.y) below = Math.min(below, y - p.y);
+      for (const y of ys) {
+        if (!up && y > p.y) below = Math.min(below, y - p.y);
+        if (up && y < p.y) below = Math.min(below, p.y - y);
+      }
       continue;
     }
     // ground: open polyline, solid below it; ceiling: solid above it
     const y = polylineYAt(piece.points, p.x);
     if (y === null) continue;
     if (piece.kind === 'ground' ? p.y >= y : p.y <= y) return `inside terrain '${piece.id}'`;
-    if (piece.kind === 'ground') below = Math.min(below, y - p.y);
+    if (piece.kind === 'ground' && !up) below = Math.min(below, y - p.y);
+    if (piece.kind === 'ceiling' && up) below = Math.min(below, p.y - y);
   }
-  if (below > RESPAWN_MAX_DROP) return `has no terrain within ${RESPAWN_MAX_DROP} px below`;
+  if (below > RESPAWN_MAX_DROP) return `has no terrain within ${RESPAWN_MAX_DROP} px ${up ? 'above (inverted gravity)' : 'below'}`;
   for (const e of spec.entities) {
     if (e.kind === 'beaconSite' && Math.abs(p.x - e.x) <= e.w / 2 + 20 && Math.abs(p.y - e.y) <= 60) return `is in beacon site '${e.id}'s landing zone`;
   }
   return null;
+}
+
+/** Even-odd point-in-polygon. */
+function pointInPoly(poly: readonly Vec2[], p: Vec2): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i]!;
+    const b = poly[j]!;
+    if (a.y > p.y !== b.y > p.y && p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
 }
 
 const rectContainsPt = (r: Rect, p: Vec2) => p.x >= r.x && p.x <= r.x + r.w && p.y >= r.y && p.y <= r.y + r.h;

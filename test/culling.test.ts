@@ -138,6 +138,26 @@ describe('render culling', () => {
     }
   });
 
+  it('round-18 audit L6: a gravity zone costs at most 2 stencil masks (pattern + motes share one masked container)', async () => {
+    const s = await LevelSession.create(hollow);
+    s.start();
+    const fv = new FlightView(s, art);
+    const seen = new Set<Container>();
+    let masked = 0;
+    const walk = (c: Container) => {
+      if (seen.has(c)) return;
+      seen.add(c);
+      if (c.mask) masked++;
+      for (const ch of c.children) walk(ch);
+    };
+    for (const v of Object.values(fv)) if (v instanceof Container) walk(v);
+    const zones = hollow.zones.filter((z) => z.kind === 'gravityZone').length;
+    expect(zones).toBe(4);
+    expect(masked).toBe(2 * zones); // was 3 per zone (pattern, motes, edge dashes)
+    fv.destroy();
+    s.destroy();
+  });
+
   it('ropePolylineInto reuses its scratch points and matches ropePolyline', () => {
     const out: Vec2[] = [];
     const a = ropePolylineInto(out, 0, 0, { x: 100, y: 0 }, 130);
