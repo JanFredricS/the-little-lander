@@ -634,6 +634,98 @@ describe('App story flow (real App, faked render/DOM seams)', () => {
     app.destroy();
   });
 
+  it('round 19 (user: "add check points after each beacon"): all five beacon checkpoints through the App - each plant shows "BEACON n/5 PLANTED · CHECKPOINT" (the 5th: "OBJECTIVE COMPLETE · CHECKPOINT"), a crash after it offers RETRY FROM CHECKPOINT, and RETRY resumes on that beacon\'s respawn with every beacon kept (swaying site 4 included); the last life finishes', { timeout: 600_000 }, async () => {
+    Object.assign(h, { session: null, pilot: null, tick: 0, loop: null, click: null, pending: null, steps: 0 });
+    h.resumes = [];
+    h.levelsStarted = [];
+    h.kbDirect = [];
+    const { Autopilot } = await import('../src/levels/dev/autopilot');
+    const { floatingIslesRoute: R } = await import('../src/levels/dev/routes');
+    const { BEACON_CHECKPOINTS, floatingIsles } = await import('../src/levels/floatingIsles');
+    const { hudReduce, initHud } = await import('../src/ui/hud/hudState');
+    const landIdx = R.map((n, i) => (n.land ? i : -1)).filter((i) => i >= 0);
+    const sessions: LevelSession[] = [];
+    /** Life k (0-based): fly the route from where it starts; once site k+1 is planted, hover 1 s (banner up), then crash. Life 5 finishes. */
+    h.pilotOverride = () => {
+      const s = h.session!;
+      sessions.push(s);
+      const k = sessions.length - 1;
+      const x0 = s.state.pos.x;
+      const route = k === 0 ? R : R.slice(landIdx[k - 1]! + 1).filter((n) => n.x >= x0 - 100);
+      const ap = new Autopilot(route);
+      let after = -1;
+      return (q: LevelSession, t: number) => {
+        if (k < 5 && q.env.beacons.isPlanted(`site${k + 1}`)) {
+          if (after < 0) after = t;
+          if (t - after === 60) q.vessel.crash('impact');
+          return emptyFrame();
+        }
+        return ap.frame(q);
+      };
+    };
+    const save = new SaveStore(memoryStorage());
+    const events: GameEvent[] = [];
+    const app = new App({} as HTMLElement, { art: {} as ArtApi, save, onEvent: (e) => events.push(e) });
+    await app.start();
+    app.dispatch({ type: 'start' });
+    app.dispatch({ type: 'selectLevel', levelId: 'floatingIsles' });
+    const drive = async (until: () => boolean) => {
+      for (let guard = 0; guard < 400_000 && !until(); guard++) {
+        if (guard % 30 === 0) await flush();
+        if (h.pending) {
+          const c = h.pending;
+          h.pending = null;
+          c.onDone(false);
+          continue;
+        }
+        if (app.state.id !== 'playing' || !h.session || h.loop!.paused) {
+          await flush();
+          continue;
+        }
+        h.loop!.step();
+        h.steps++;
+      }
+      expect(until(), JSON.stringify(app.state)).toBe(true);
+    };
+    const labels = () => h.model!().items.map((i) => i.label);
+    // the real HUD reducer over the App's event stream: the banner right after each checkpoint event
+    let hud = initHud(floatingIsles);
+    const banners: string[] = [];
+    let seenEvents = 0;
+    const foldHud = () => {
+      for (; seenEvents < events.length; seenEvents++) {
+        const e = events[seenEvents]!;
+        hud = hudReduce(hud, e);
+        if (e.type === 'checkpointReached') banners.push(hud.banner?.text ?? '');
+      }
+    };
+    for (let k = 1; k <= 5; k++) {
+      await drive(() => app.state.id === 'results');
+      foldHud();
+      const cps = events.filter((e) => e.type === 'checkpointReached').map((e) => e.type === 'checkpointReached' && e.checkpointId);
+      expect(cps.at(-1), `life ${k}`).toBe(`afterBeacon${k}`);
+      // the last plant also completes the objective: its banner reads OBJECTIVE COMPLETE, still suffixed with the checkpoint
+      expect(banners.at(-1), `life ${k}`).toBe(k < 5 ? `BEACON ${k}/5 PLANTED · CHECKPOINT` : 'OBJECTIVE COMPLETE · CHECKPOINT');
+      expect(labels(), `life ${k}`).toEqual(['RETRY FROM CHECKPOINT', 'RESTART LEVEL', 'LEVELS']);
+      h.click!('retry');
+      await drive(() => sessions.length === k + 1 && h.session === sessions[k]);
+      const s = sessions[k]!;
+      const want = BEACON_CHECKPOINTS[k - 1]!.respawn;
+      expect(s.respawnedFrom?.checkpoint.id, `life ${k + 1}`).toBe(`afterBeacon${k}`);
+      expect(s.state.mode).toBe('lander');
+      expect(Math.hypot(s.state.pos.x - want.x, s.state.pos.y - want.y), `life ${k + 1}`).toBeLessThan(2);
+      for (let j = 1; j <= 5; j++) expect(s.env.beacons.isPlanted(`site${j}`), `life ${k + 1} site${j}`).toBe(j <= k);
+    }
+    // the dragon's checkpoint came first (life 1); one capture per plant, never repeated in a respawned life
+    expect(events.filter((e) => e.type === 'checkpointReached').map((e) => e.type === 'checkpointReached' && e.checkpointId)).toEqual(['afterDragon', ...[1, 2, 3, 4, 5].map((k) => `afterBeacon${k}`)]);
+    // life 6 (from beacon 5's checkpoint) reaches the outpost
+    await drive(() => app.state.id === 'results');
+    expect(app.state.id === 'results' && app.state.outcome).toMatchObject({ kind: 'complete' });
+    expect(events.filter((e) => e.type === 'beaconPlanted')).toHaveLength(5);
+    expect(errors, JSON.stringify(errors.slice(0, 3))).toEqual([]);
+    app.destroy();
+  });
+
   it('a persisted DIRECT steering setting does not disable pilot sources that emit physical engine frames', { timeout: 120_000 }, async () => {
     // the save says DIRECT, and the pilot fires both engines as PHYSICAL flags (no `thrust`): a frame the DIRECT
     // layer would drop (it reads only steer / thrust / rotate / the top pair). Marked engineFrames, it must reach

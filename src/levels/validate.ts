@@ -371,6 +371,10 @@ function checkZone(
       }
       if (z.repeatEverySec !== undefined && !pos(z.repeatEverySec)) err(`${what}: repeatEverySec must be positive`);
       if (z.fade && !(fin(z.fade.y0) && fin(z.fade.y1) && z.fade.y0 !== z.fade.y1)) err(`${what}: fade needs finite y0 !== y1`);
+      // round 19: progress ramp
+      if (z.xRamp && !(fin(z.xRamp.x0) && fin(z.xRamp.x1) && z.xRamp.x0 < z.xRamp.x1 && [z.xRamp.from, z.xRamp.to].every((f) => fin(f) && f >= 0 && f <= 2))) err(`${what}: xRamp needs finite x0 < x1 and factors 0..2`);
+      // audit L4: a ramp whose span misses the zone is a constant factor in disguise (and usually a typo)
+      else if (z.xRamp && z.rect && (z.xRamp.x1 <= z.rect.x || z.xRamp.x0 >= z.rect.x + z.rect.w)) err(`${what}: xRamp x ${z.xRamp.x0}..${z.xRamp.x1} does not overlap the zone (x ${z.rect.x}..${z.rect.x + z.rect.w})`);
       if (z.turbulence && !(fin(z.turbulence.seed) && fin(z.turbulence.amount) && z.turbulence.amount >= 0 && fin(z.turbulence.lateral) && z.turbulence.lateral >= 0 && pos(z.turbulence.hz)))
         err(`${what}: turbulence needs finite seed, amount >= 0, lateral >= 0, hz > 0`);
       if (z.speedCap !== undefined && !pos(z.speedCap)) err(`${what}: speedCap must be positive`);

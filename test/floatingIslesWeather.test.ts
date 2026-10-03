@@ -12,7 +12,7 @@ import { LevelSession } from '../src/game/session';
 import { floatingIsles, WEATHER } from '../src/levels/floatingIsles';
 import { floatingIslesRoute } from '../src/levels/dev/routes';
 import { validateLevel } from '../src/levels/validate';
-import { WindSystem, windFade, windNoise } from '../src/physics/env/wind';
+import { WindSystem, windFade, windNoise, windXRamp } from '../src/physics/env/wind';
 import { pilotFor } from './support/storyPilots';
 import { levelReferenceGravity, resolveTuning } from '../src/physics/tuning';
 import { mToPx } from '../src/physics/units';
@@ -369,7 +369,10 @@ describe('floatingIsles weather: D CSM crosswinds', () => {
     const maxA = s.env.maxThrustAccel('csm');
     // its strength at rest (the cap only fades it once the craft moves with it)
     const w = new WindSystem(only('csmCross'), () => {}, s.tuning.gravity.scale);
-    expect(w.update(10, { x: 2000, y: 1000 }, maxA).x).toBeCloseTo(-WEATHER.csmGusts.strong * maxA, 9);
+    // round 19: scaled by the zone's x ramp (0.45 at the CSM start, 0.6 at its end)
+    const ramp = (x: number) => windXRamp({ xRamp: WEATHER.sideRamp.csm }, x);
+    expect(ramp(2000)).toBeCloseTo(0.45 + 0.15 * (2000 / 6300), 9);
+    expect(w.update(10, { x: 2000, y: 1000 }, maxA).x).toBeCloseTo(-WEATHER.csmGusts.strong * maxA * ramp(2000), 9);
     expect(w.update(10, { x: 2000, y: 1000 }, maxA, { x: -WEATHER.csmGusts.speedCap, y: 0 }).x).toBe(0);
     expect(WEATHER.csmGusts.strong).toBeGreaterThanOrEqual(0.6);
     expect(WEATHER.csmGusts.strong).toBeLessThanOrEqual(0.8);
@@ -377,9 +380,10 @@ describe('floatingIsles weather: D CSM crosswinds', () => {
     const strong = track.filter((p) => p.t > 9.55 && p.t < 11.4);
     expect(strong.length).toBeGreaterThan(30);
     expect(strong.every((p) => p.wx < 0 || p.wx === 0)).toBe(true);
-    expect(strong.some((p) => p.wx < -0.9 * WEATHER.csmGusts.strong * maxA)).toBe(true);
-    // felt: well beyond the old lander gusts (3 m/s² designed)
-    expect(mToPx(WEATHER.csmGusts.strong * maxA)).toBeGreaterThan(mToPx(3 * s.tuning.gravity.scale) * 3);
+    expect(strong.some((p) => p.wx < -0.9 * WEATHER.csmGusts.strong * maxA * ramp(p.x))).toBe(true);
+    // felt: even at the ramp's gentlest (0.45) still beyond the old lander gusts (3 m/s² designed)
+    expect(mToPx(WEATHER.csmGusts.strong * maxA * WEATHER.sideRamp.csm.from)).toBeGreaterThan(mToPx(3 * s.tuning.gravity.scale));
+    expect(mToPx(WEATHER.csmGusts.strong * maxA * WEATHER.sideRamp.csm.to)).toBeGreaterThan(mToPx(3 * s.tuning.gravity.scale) * 1.5);
     const cross = gustEvents(events, 'csmCross').map((e) => e.phase);
     expect(cross.slice(0, 6)).toEqual(['warning', 'start', 'end', 'warning', 'start', 'end']);
     // the lander stretch never hears it (local telegraph)

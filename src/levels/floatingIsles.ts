@@ -10,20 +10,27 @@
  *                  you and gives chase; when it catches the CSM (or at the
  *                  x 6,300 backstop) -> 'csmSeized' cutscene -> lander.
  *   6,800-7,600    beacon 1: open pad on a broad island. No wind.
- *   8,800-9,800    beacon 2: a pocket between solid trees. Gusts 1.5 m/s².
+ *   8,800-9,800    beacon 2: a pocket between solid trees. Gusts 1.5 m/s²
+ *                  designed, ~1.1 felt since round 19.
  *   10,300-11,200  beacon 3: pad under an overhang (110 px headroom), fly
- *                  in from the open right side. Gusts 3 m/s².
+ *                  in from the open right side. Gusts 2.2 m/s² (windB)
+ *                  designed, ~1.37 felt since round 19.
  *   12,600         beacon 4: small swaying island - the site rides it
  *                  (runtime/islands.ts); peak 13.5 px/s, well
- *                  under the 24 px/s soft-land limit). Gusts 2.2 m/s².
+ *                  under the 24 px/s soft-land limit). Gusts 2.2 m/s²
+ *                  designed, ~1.86 felt since round 19.
  *   14,300-15,000  beacon 5: a 110 px vine-hung shaft, 500 px deep; the
  *                  shaft and the hover above it are sheltered, the approach
- *                  is not (3 m/s²).
+ *                  is not (3 m/s²; since round 19 it builds 2.2 -> 3 over
+ *                  x 13,900-14,580; the shaft / outpost zones unchanged).
  *   16,200-17,800  the abandoned outpost: soft-land on its pad to finish.
  *
  * Tuning notes (map 3 = the difficulty step: first precision landings).
- * Autopilot playtest: complete in ~290 s (seized at x 5,320 / 42 s,
- * beacons at 68 / 102 / 147 / 199 / 241 s), fuel 0.54 left, hull 1.0.
+ * Autopilot playtest (re-run round 19, ramped wind): complete in ~296 s,
+ * beacons at 72 / 108 / 159 / 192 / 243 s, fuel 0.74 left, hull 1.0 (same
+ * build with the ramp stripped: 296 s, 80 / 115 / 161 / 195 / 243 s, fuel
+ * 0.76 - the reference autopilot is wind-tolerant, its timing is gust-phase
+ * noise; the sloppy-pilot sweep in the round 19 note is the honest measure).
  * Real game (browser, csmSeized cutscene skipped by hand): same result.
  *  - gravity 0.7 g: floaty islands; the lander's 1.6x total thrust needs
  *    ~0.4 rad of tilt to hold station in a 3 m/s² gust (clamp-level for a
@@ -40,6 +47,17 @@
  *    230 px/s vs the CSM's ~140 cruise, so it strikes around x 5,500;
  *    the x 6,300 backstop covers a player who outruns it (first draft:
  *    190 px/s from 500 px back never caught the autopilot).
+ *  - Round 19 (user: "reduce side winds - with a gradual increase later in the
+ *    map"): sideways gusts scale with the vessel's x (WEATHER.sideRamp): CSM
+ *    crosswinds × 0.45 -> 0.6; on the lander stretch one continuous felt curve
+ *    (0.9 m/s² at x 8,000 -> 1.25 at 10,300 -> 2.2 at 13,900 -> 3 at 14,580, no
+ *    step at a zone edge, never above the old strength): beacons 2 / 3 / 4 feel
+ *    ~1.1 / 1.37 / 1.86 m/s² peaks (were 1.5 / 2.2 / 2.2); beacon 5's shaft and the
+ *    outpost are unchanged. Sloppy-pilot sweep (48 seeds per segment, lag 7 / hold
+ *    6, from each checkpoint), pre-round-19 -> now: CSM stretch 48 -> 41 s and
+ *    2 -> 1 crashes; to beacon 2 64 -> 53 s; beacon 3 42 -> 48 of 48 planted
+ *    (83 -> 64 s); beacon 4 37 -> 43 of 48 (80 -> 70 s); to beacon 5 48 of 48
+ *    (69 s); the outpost identical (full wind there).
  */
 
 import type { EntitySpec, LevelSpec, TerrainPiece, Vec2, ZoneSpec } from '../contracts';
@@ -291,7 +309,40 @@ export const WEATHER = {
    * at 120 px/s per axis, so a drifting craft is not carried off the map.
    */
   csmGusts: { strong: 0.7, moderate: 0.56, speedCap: 120 },
+  /**
+   * Round 19 (user: "reduce side winds - with a gradual increase later in the map"): the
+   * SIDEWAYS gusts (csmCross, windA-C) are scaled by the vessel's x (WindGustSchedule.xRamp);
+   * the sky ceiling and low turbulence (vertical: the map's walls) are unchanged.
+   *  - CSM stretch: × 0.45 at the start -> × 0.6 at the seizure (x 6,300). No side wind over b1.
+   *  - Lander stretch: one continuous FELT curve, peak gust in designed m/s² at these x knots
+   *    (each zone's ramp is the straight piece over its own span, factor = felt / its designed
+   *    peak), so there is no step at a zone boundary (audit L2: the old shared × ramp kept the
+   *    designed 2.2 -> 3 jump at x 13,900). It steepens as it goes: +0.15, +0.26, +1.18 m/s²
+   *    per 1,000 px, and is never above the pre-round-19 strength anywhere. Felt peak:
+   *    beacon 2 (x 9,300) 1.10, beacon 3 (10,760) 1.37, beacon 4 (12,620) 1.86, x 13,900 2.2
+   *    (windB's full designed strength), full 3.0 over beacon 5's approach from x 14,580;
+   *    windC2 / windD (beacon 5's shaft, the outpost) are not ramped at all - exactly as
+   *    before round 19.
+   * Gust timing, telegraphs and character unchanged. Picked from sloppy-pilot sweeps (numbers
+   * in the header) over a one-slope 0.45 -> 1.0 ramp (x 2,000-13,000), which left beacons 2-3
+   * barely gentler.
+   */
+  sideRamp: {
+    csm: { x0: 0, x1: 6300, from: 0.45, to: 0.6 },
+    landerFelt: [
+      [8000, 0.9],
+      [10300, 1.25],
+      [13900, 2.2],
+      [14580, 3],
+    ],
+  },
 } as const;
+
+/** Round 19: zone `i`'s piece of the lander felt curve as an xRamp on a zone whose designed peak is `peak` m/s². */
+export function landerRamp(i: number, peak: number): { x0: number; x1: number; from: number; to: number } {
+  const K = WEATHER.sideRamp.landerFelt;
+  return { x0: K[i]![0], x1: K[i + 1]![0], from: K[i]![1] / peak, to: K[i + 1]![1] / peak };
+}
 
 const SKY = WEATHER.sky;
 /** 7 s cycle, never calm: moderate, a strong gust for 3 s (telegraphed 1.5 s ahead), moderate again. */
@@ -354,6 +405,7 @@ const zones: ZoneSpec[] = [
     unit: 'vesselThrust',
     speedCap: WEATHER.csmGusts.speedCap,
     local: true,
+    xRamp: { ...WEATHER.sideRamp.csm },
   },
   {
     kind: 'windGustSchedule',
@@ -365,6 +417,7 @@ const zones: ZoneSpec[] = [
     ],
     repeatEverySec: 16,
     local: true,
+    xRamp: landerRamp(0, 1.5),
   },
   {
     kind: 'windGustSchedule',
@@ -376,11 +429,12 @@ const zones: ZoneSpec[] = [
     ],
     repeatEverySec: 14,
     local: true,
+    xRamp: landerRamp(1, 2.2),
   },
   // the shaft (x 14,580-14,710 below y 1,180) is sheltered. Round 10 audit: the lander-stretch
   // gusts stop at the turbulence band (y 2,200): their small net drift (e.g. windD +1.5 m/s·s per
   // cycle) carried a craft riding the turbulence off the map
-  { kind: 'windGustSchedule', id: 'windC', rect: band(13900, 14580, 0, TB.calmY), gusts: GUSTS_C, repeatEverySec: 12, local: true },
+  { kind: 'windGustSchedule', id: 'windC', rect: band(13900, 14580, 0, TB.calmY), gusts: GUSTS_C, repeatEverySec: 12, local: true, xRamp: landerRamp(2, 3) },
   { kind: 'windGustSchedule', id: 'windC2', rect: band(14580, 14730, 0, 1000), gusts: GUSTS_C, repeatEverySec: 12, local: true },
   { kind: 'windGustSchedule', id: 'windD', rect: band(14730, W, 0, TB.calmY), gusts: GUSTS_C, repeatEverySec: 12, local: true },
 ];

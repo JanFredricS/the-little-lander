@@ -360,6 +360,15 @@ export interface WindGustSchedule {
   /** Strength ramps with altitude: 0 at world y = y0, full at y = y1 (linear, clamped; y0 !== y1). */
   fade?: { y0: number; y1: number };
   /**
+   * Round 19 amendment: strength scales with the vessel's world x - × `from` at x <= x0,
+   * × `to` at x >= x1, linear in between (x0 < x1; factors 0..2; the span must overlap the
+   * zone's rect). Multiplies the push, the streak telegraph's size and the windGust event's
+   * accel alike (legacy 'mps2' events: designed accel × ramp); gust timing and character
+   * are unchanged. Allowed on any schedule, vertical ones included - it scales whatever the
+   * gusts push. Default: × 1.
+   */
+  xRamp?: { x0: number; x1: number; from: number; to: number };
+  /**
    * Irregular, deterministic turbulence on top of each gust: strength swells by
    * ±amount and a sideways kick of up to lateral × |accel| wanders, both noise
    * of (time × hz, position, seed).

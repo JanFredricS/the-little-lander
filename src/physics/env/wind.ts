@@ -21,6 +21,10 @@
  *    vessel leaves, and bobbing across the margin never re-telegraphs it (at
  *    most one warning / whoosh per gust instance).
  *  - gust.silent: background force, never telegraphed.
+ *
+ * Round 19: xRamp - strength scales with the vessel's world x (the wind builds
+ * with progress through a level). It scales the push, the ActiveGust accel (the
+ * streak telegraph) and the windGust event accel (the whoosh volume) alike.
  */
 
 import type { GameEventSink, Vec2, WindGust, WindGustSchedule, ZoneSpec } from '../../contracts';
@@ -76,6 +80,15 @@ export function windFade(z: Pick<WindGustSchedule, 'fade'>, y: number): number {
   if (!f) return 1;
   if (f.y1 === f.y0) return 0; // rejected by validateLevel
   return Math.min(1, Math.max(0, (y - f.y0) / (f.y1 - f.y0)));
+}
+
+/** Progress ramp factor at world x (1 without an xRamp). */
+export function windXRamp(z: Pick<WindGustSchedule, 'xRamp'>, x: number): number {
+  const r = z.xRamp;
+  if (!r) return 1;
+  if (r.x1 <= r.x0) return r.to; // rejected by validateLevel
+  const u = Math.min(1, Math.max(0, (x - r.x0) / (r.x1 - r.x0)));
+  return r.from + (r.to - r.from) * u;
 }
 
 /** Smooth deterministic noise in -1..1 (value noise, cosine-interpolated). */
@@ -142,7 +155,8 @@ export class WindSystem {
     const accel = { x: 0, y: 0 };
     this.active = [];
     this.schedules.forEach((z, zi) => {
-      const unit = z.unit === 'vesselThrust' ? thrustAccel : this.gravityScale;
+      const ramp = windXRamp(z, vesselPos.x);
+      const unit = (z.unit === 'vesselThrust' ? thrustAccel : this.gravityScale) * ramp;
       const local = !!z.local;
       const near = heard(z, vesselPos);
       const inside = !z.rect || rectContains(z.rect, vesselPos);
@@ -165,8 +179,8 @@ export class WindSystem {
           }
         }
         this.phases[zi]![gi] = cur;
-        // legacy events carry the designed accel; thrust-relative ones the felt m/s²
-        const ev = (): Vec2 => (z.unit === 'vesselThrust' ? { x: g.accel.x * unit, y: g.accel.y * unit } : { ...g.accel });
+        // legacy events carry the designed accel (× the x ramp, round 19 audit L1); thrust-relative ones the felt m/s²
+        const ev = (): Vec2 => (z.unit === 'vesselThrust' ? { x: g.accel.x * unit, y: g.accel.y * unit } : z.xRamp ? { x: g.accel.x * ramp, y: g.accel.y * ramp } : { ...g.accel });
         if (cur !== prev) {
           if (prev === 'active' || (local && prev === 'warning' && cur === 'idle')) this.events({ type: 'windGust', zoneId: z.id, phase: 'end', accel: ev() });
           if (cur === 'warning') this.events({ type: 'windGust', zoneId: z.id, phase: 'warning', accel: ev() });
