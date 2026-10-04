@@ -6,11 +6,11 @@
  *     three god-ray holes to the surface (you must swing past them — no
  *     anchor in the light shaft), alien glow-vegetation, three gentle pits
  *     whose roof dips so a pod that drops in can always rope back out, and
- *     seven short solid stalactites (70-80 px) to swing past or rope.
+ *     nine solid stalactites (120-150 px, two close pairs) to swing past or rope.
  *  B. Mastery (x 6600-13300): four chasms (a fall is fatal), three brittle
  *     roof stretches (anchors crack after 1.4 s: keep re-anchoring), two
  *     roof collapses that rain debris while you cross, a higher roof in
- *     places (longer ropes), seven longer stalactites (100-180 px; three hang
+ *     places (longer ropes), seven longer stalactites (150-220 px; most hang
  *     low enough that a lazy pendulum clips them, five are brittle), seven
  *     short lip pegs by the chasm lips (always sound, even in a brittle
  *     stretch), darkness deepening while bioluminescent spores thicken.
@@ -35,10 +35,11 @@
  * (VAULTS_DRIP_CLEAR) and the caves backdrop's silhouettes were pushed back
  * (src/art/backdrops.ts: smaller, flat deep-rock shades, no outline, parallax
  * 0.3 — this also changes The Throat, which shares the caves theme).
- * What the playtests taught (24 harpoon-pilot variants, test/support/s7Pilots.ts):
+ * What the round-17 playtests taught (24 harpoon-pilot variants, test/support/s7Pilots.ts;
+ * the lengths and measurements in this paragraph are historical - round 20 below supersedes them):
  *  - longer A stalactites (90-150 px) gave lower anchors, so pendulums scraped
  *    the pit lips (A hull loss median ~0.13 vs 0.00 before): cut to 70-80 px
- *    (now median 0.07, max 0.20);
+ *    (then median 0.07, max 0.20; round 20 lengthened them again, see below);
  *  - a stalactite over a chasm let a long pendulum swing below lip level into
  *    the far wall, and one just past a lip held the pod against the chasm wall,
  *    roped into the corner with nothing else in reach (a soft-lock): both
@@ -51,7 +52,8 @@
  * Round-17 audit fixes:
  *  - M1, the winch dragged the pod into the spire it was roped to (a tipped pod
  *    at x 8650 roped stalactite 10's flank and died reeling in; a short rope on
- *    stalactite 14's tip let the pod orbit the tip into its far flank, 249 px/s).
+ *    stalactite 14's tip (round-17 numbering; x 8600 / 11720) let the pod orbit
+ *    the tip into its far flank, 249 px/s).
  *    Fixed generally in harpoonRig.ts (the winch also stalls on rock within 20 px
  *    of a leading corner along the rope line to the anchor) and here: the bottom
  *    VAULTS_TIP_NO_ANCHOR px of each tip is a noAnchorRegion (10 px on the pegs,
@@ -67,13 +69,28 @@
  *  - L3, the lip pegs at 8770 / 10570 / 12070 stand in brittle stretches but hold
  *    (VAULTS_BRITTLE_SPANS cut the brittle zones around them; the roof beside
  *    them still cracks).
- * Measured (after the audit fixes, 24 variants): all 24 reach the camp on their
+ * Measured in round 17 (historical; after the audit fixes, 24 variants): all 24 reach the camp on their
  * first life (no checkpoint needed); time median 101 s (HEAD 99), hull median
  * 0.86 / min 0.47 (HEAD 0.90 / 0.58; before the audit fixes 0.78 / 0.32); hull
  * lost in A median 0.04 (HEAD 0.00), in B 0.10 (HEAD 0.09). The reference pilot:
- * 102 s, hull 0.90. Nearly all damage is floor scrapes and collapse debris; no
- * pilot run struck a stalactite head-on (they shape the swings instead) — a
- * pendulum swung under one does strike it (pinned).
+ * 102 s, hull 0.90. Nearly all damage was floor scrapes and collapse debris; no
+ * round-17 pilot run struck a stalactite head-on (they shaped the swings instead) -
+ * round 20 changed that on purpose; a pendulum swung under one does strike it (pinned).
+ *
+ * Round 20 — bigger stalactites (user: "the stalacites are too small and the map still
+ * too easy, can you increase those a bit so there is slightly more challange"). A: 7 x
+ * 70-80 px -> 9 x 120-150 px (two weaving pairs); B: 100-180 -> 150-220 px. Every
+ * placement rule above still holds (holes, pits, collapses, VAULTS_LIP_CLEAR, drips,
+ * tip no-anchor cuts are derived from the new outlines, lip pegs unchanged). Re-measured
+ * (24 variants, same pilots): all 24 still finish on their first life; hull median
+ * 0.86 -> 0.74, min 0.47 -> 0.39; hull lost in A median 0.04 -> 0.11, in B 0.10 -> 0.19;
+ * pilot impacts on a stalactite 0 -> 23; time median 101 -> 103 s. Reel-in matrix (now
+ * 23 spires x 27): 0 crashes; rope-only recovery grids (upright + tipped): 0 fails.
+ * Round-20 audit: stalactite 7 (x 5300) 150 -> 140 px for an adversarial mid-air reel
+ * crash there (dx +45, rope 180, 246 px/s); with it at 150 the sweep read 23/24 first
+ * life, hull median 0.79, A loss 0.03 - the pilots are chaotic at this margin.
+ * Longer still (B low ones at 230-240 px) left pilots resting under them reeling into
+ * the spire overhead until the time-out, and broke the reel-in matrix - see the plan.
  *
  * Playtest notes (S7): played headless by the reference autopilot
  * (test/s7.playtest.test.ts: ray-cast "what's on screen" anchor picks,
@@ -241,31 +258,37 @@ const roofY = (x: number) => surfaceY(VAULTS_CEILING, x);
 export const VAULTS_LIP_CLEAR = { below: 20, reach: 330 };
 
 const STALACTITE_PLAN: readonly [number, number][] = [
-  // A: seven, 750-1100 px apart, 70-80 px long (tips >= 170 px above the floor), on
-  // the flats between holes and pits: short enough that the swing school's
-  // pendulums pass under them (round-17 playtests: 90-110 px ones put the anchors
-  // low enough that pendulums scraped the pit lips)
-  [900, 70],
-  [2000, 70],
-  [2750, 70],
-  [3650, 80],
-  [4400, 80],
-  [5300, 70],
-  [6300, 80],
-  // B: seven, 350-1450 px apart (the chasms between them), 100-180 px long; the low
-  // ones mid-ledge, where a lazy pendulum clips them. Five hang in the brittle
-  // stretches, so they crack like the roof there. None hangs over or near a chasm
-  // (VAULTS_LIP_CLEAR): round-17 playtests found two traps there - a stalactite
-  // over a chasm let a long pendulum swing below lip level into the far wall, and
-  // one just past a lip held the pod against the chasm wall, roped into the corner
-  // with nothing else in reach
-  [6950, 130],
-  [8250, 180], // low
-  [8600, 130],
-  [10050, 180], // low
-  [10420, 130],
-  [11720, 170], // low
-  [13150, 100], // the last: short, so the run-in to the camp stays calm
+  // A: nine, 120-150 px long (tips 120-160 px above the floor, 30-50 px above the
+  // swing line), on the flats between holes and pits. Round 20 (user: "the stalacites
+  // are too small and the map still too easy"): was seven at 70-80 px that the
+  // pendulums passed under untouched; now a low pendulum clips them, and two pairs
+  // (3545 / 3800, 5300 / 5530, ~250 px apart) make the line weave between them
+  [900, 140],
+  [2000, 140],
+  [2750, 120],
+  [3545, 140],
+  [3800, 140],
+  [4420, 130],
+  [5300, 140], // round-20 audit: was 150 (an adversarial mid-air reel crash)
+  [5530, 130],
+  [6300, 150],
+  // B: seven, 350-1450 px apart (the chasms between them), 150-220 px long (round 20:
+  // was 100-180); the low ones mid-ledge, tips within ~20 px of the swing line, where
+  // a lazy pendulum clips them. Five hang in the brittle stretches, so they crack like
+  // the roof there. None hangs over or near a chasm (VAULTS_LIP_CLEAR): round-17
+  // playtests found two traps there - a stalactite over a chasm let a long pendulum
+  // swing below lip level into the far wall, and one just past a lip held the pod
+  // against the chasm wall, roped into the corner with nothing else in reach.
+  // Round-20 tuning: the low three at 230-240 px left pilots resting on the floor right
+  // under them reeling into the spire overhead for minutes (11720 at 230 px also failed
+  // the reel-in matrix); 210-220 px keeps every variant moving
+  [6950, 200],
+  [8250, 210], // low
+  [8600, 190],
+  [10050, 220], // low
+  [10420, 200],
+  [11720, 200], // low
+  [13150, 150], // the last: shorter, so the run-in to the camp stays calmer
 ];
 
 /**
@@ -454,9 +477,9 @@ const cp = (id: string, bandX: number, x: number) => ({
   respawn: { x, y: Math.round(floorY(x)) - 9 },
 });
 export const VAULTS_CHECKPOINTS = [
-  cp('sectionB', VAULTS_SECTION_B - 40, 6620), // between stalactites 7 and 8
+  cp('sectionB', VAULTS_SECTION_B - 40, 6620), // between the stalactites at 6300 and 6950
   cp('chasm1', 7940, 8000), // chasm 1's east ledge, before lip peg 1
-  cp('chasm2', 9740, 10250), // past the lip crystal and stalactite 11, clear of collapse 1
+  cp('chasm2', 9740, 10250), // past the lip crystal and the stalactite at 10050, clear of collapse 1
   cp('chasm3', 11360, 11420), // chasm 3's east ledge, before lip peg 5
   cp('chasm4', 12810, 12870), // chasm 4's east ledge, before lip peg 7
 ];

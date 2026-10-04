@@ -15,9 +15,10 @@
 
 import { Container, Graphics, Sprite, Text, Texture, TextureSource, TilingSprite } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
-import type { ArtApi, BackdropLayer, BodyHandle, LevelSpec } from '../contracts';
+import type { ArtApi, BackdropLayer, BodyHandle, LevelSpec, SpriteName } from '../contracts';
 import type { LevelSession } from '../game/session';
 import { mToPx } from '../physics/units';
+import { CrystalSpireView } from './crystalSpires';
 import { EntityView } from './entityView';
 import { FeelFx, type FeelOptions } from './feelFx';
 import { FlightView } from './flightView';
@@ -37,6 +38,8 @@ export class LevelView {
   private readonly originScratch = { x: 0, y: 0 };
   private readonly flight: FlightView;
   private readonly terrain: TerrainView;
+  /** Round 20: The Hollow's roof crystal (terrain the tile painter skips). */
+  private readonly crystal: CrystalSpireView | null;
   private readonly entities: EntityView;
   /** S7 hook: level-owned systems (boss, rocks, ledges, collapse front, S7 gates). */
   private readonly s7: S7LevelFx | null;
@@ -48,6 +51,8 @@ export class LevelView {
   private readonly movers: { sprite: Sprite; body: BodyHandle }[] = [];
   /** Props that never move (decor + static solid props) with their world AABB, for per-frame culling. */
   private readonly staticProps: { sprite: Sprite; x0: number; y0: number; x1: number; y1: number }[] = [];
+  /** Round 20: static props that cycle their frames (StaticPropEntity.animFps). */
+  private readonly animProps: { sprite: Sprite; name: SpriteName; fps: number; phase: number }[] = [];
   private readonly hud: Text | null;
   private hudNextMs = 0;
   private fpsFrames = 0;
@@ -84,6 +89,11 @@ export class LevelView {
     this.entities = new EntityView(session, art);
     this.world.addChild(this.entities.back);
     this.world.addChild(this.flight.under);
+    // round 20: the roof crystal just UNDER the terrain - the crust hides its buried base, a
+    // rock hanging from a spire hides the tip that ends inside it
+    const pal = art.palettes[spec.themeId];
+    this.crystal = CrystalSpireView.wanted(spec) ? new CrystalSpireView(spec, pal.colors[pal.outline] ?? 0x000000, { reducedMotion: feel.reducedMotion }) : null;
+    if (this.crystal) this.world.addChild(this.crystal.root);
     this.world.addChild(this.terrain.root);
     this.world.addChild(this.entities.mid);
     this.world.addChild(this.drawExits(spec));
@@ -97,6 +107,9 @@ export class LevelView {
       s.height = e.h;
       s.position.set(e.x, e.y);
       s.rotation = e.angle ?? 0;
+      if (e.tint !== undefined) s.tint = e.tint;
+      if (e.alpha !== undefined) s.alpha = e.alpha;
+      if (e.animFps && !feel.reducedMotion && this.flight.tex.frameCount(e.sprite) > 1) this.animProps.push({ sprite: s, name: e.sprite, fps: e.animFps, phase: (e.x * 0.37) % 1 });
       this.props.set(e.id, s);
       (e.foreground ? this.propsFront : this.propsBack).addChild(s);
       if (!e.dynamic) {
@@ -154,6 +167,12 @@ export class LevelView {
     const sh = this.feel.shake;
     this.world.position.set(-o.x + sh.x, -o.y + sh.y);
     this.terrain.update(o);
+    if (this.crystal) {
+      const em = s.env.radiation.emitters;
+      let charge = 0;
+      for (const e of em) charge = Math.max(charge, s.env.radiation.charge(e, s.simTime));
+      this.crystal.update(o, nowMs, charge);
+    }
     this.entities.render(alpha, o, nowMs);
     // parallax: 0 = fixed to the screen, 1 = moves with the world
     for (const { layer, view } of this.backdrop) {
@@ -174,6 +193,7 @@ export class LevelView {
     const vx1 = o.x + VIEW_WIDTH;
     const vy1 = o.y + VIEW_HEIGHT;
     for (const p of this.staticProps) p.sprite.visible = p.x1 > o.x && p.x0 < vx1 && p.y1 > o.y && p.y0 < vy1;
+    for (const p of this.animProps) if (p.sprite.visible) p.sprite.texture = this.flight.tex.get(p.name, (nowMs / 1000) * p.fps + p.phase * 4).tex;
 
     this.flight.hitFlash = this.feel.flashing;
     this.flight.render(alpha, nowMs, o);
@@ -240,6 +260,7 @@ export class LevelView {
     this.forEachTextureSource((src) => sources.push(src));
     this.feel.destroy();
     this.terrain.destroy();
+    this.crystal?.destroy();
     this.entities.destroy();
     this.flight.destroy(); // halos + sprite cache teardown (its containers leave the tree)
     this.root.destroy({ children: true });

@@ -9,6 +9,7 @@
  */
 import { PALETTES } from '../../src/art/palettes';
 import { preparePiece, TileSource } from '../../src/render/terrainTiles';
+import { isCrystalSpire } from '../../src/render/crystalSpires';
 import type { LevelSpec } from '../../src/contracts';
 
 let nextImg = 1;
@@ -201,7 +202,8 @@ export const stubArt = {
 
 /** Prepared pieces, brittle rects and a tile source for `spec` on the stub canvas. */
 export function setupPainter(spec: LevelSpec) {
-  const pieces = spec.terrain.pieces.map((p) => preparePiece(p, spec.worldSize.h));
+  // as TerrainView: crystal spires (round 20) have their own render layer
+  const pieces = spec.terrain.pieces.filter((p) => !isCrystalSpire(p)).map((p) => preparePiece(p, spec.worldSize.h));
   const cracks = spec.zones.flatMap((z) => (z.kind === 'brittleRegion' ? [z.rect] : []));
   const src = new TileSource(stubArt, spec.themeId, (w, h) => new StubImage(w, h) as never);
   return { pieces, cracks, src };

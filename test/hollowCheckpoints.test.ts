@@ -30,10 +30,11 @@ const segBounds = [hollow.spawn.x, ...HOLLOW_CHECKPOINTS.map((c) => c.respawn!.x
 const orbsIn = (a: number, b: number) => placed.filter((o) => o.x >= a && o.x < b);
 
 describe('round 18: The Hollow orb surplus', () => {
-  it('an explicit requirement (22) below the placed count (30): a 36% surplus, nothing mandatory-perfect', () => {
-    expect(required).toBe(22);
+  it('an explicit requirement (20 since round 20, was 22) below the placed count (30): a 50% surplus, 10 spares, nothing mandatory-perfect', () => {
+    expect(required).toBe(20);
     expect(placed.length).toBe(30);
-    expect(placed.length).toBeGreaterThanOrEqual(Math.ceil(required * 1.25));
+    expect(surplus).toBe(10);
+    expect(placed.length).toBeGreaterThanOrEqual(Math.ceil(required * 1.5));
     // no stretch between consecutive respawn points holds more than the surplus: skipping a
     // whole stretch (or any surplus-many orbs anywhere) still leaves the requirement
     for (let i = 0; i + 1 < segBounds.length; i++) expect(orbsIn(segBounds[i]!, segBounds[i + 1]!).length, `segment ${segBounds[i]}`).toBeLessThanOrEqual(surplus);
@@ -41,9 +42,10 @@ describe('round 18: The Hollow orb surplus', () => {
 
   it('HUD and mission text count toward the requirement, not the placed total', () => {
     expect(initHud(hollow).orbTarget).toBe(required);
-    // HUD reads "ORBS x/22" (hudView: `ORBS ${orbs}/${orbTarget}`), the mission card "COLLECT 22 ORBS"
+    // HUD reads "ORBS x/20" (hudView: `ORBS ${orbs}/${orbTarget}`), the mission card "COLLECT 20 ORBS"
+    expect(initHud(hollow).orbTarget).toBe(20);
     expect(initHud(hollow).objectives.find((o) => o.kind === 'collectOrbs')!.total).toBe(required);
-    expect(missionPhrase(hollow.objectives[0]!)).toBe(`COLLECT ${required} ORBS`);
+    expect(missionPhrase(hollow.objectives[0]!)).toBe('COLLECT 20 ORBS');
   });
 });
 

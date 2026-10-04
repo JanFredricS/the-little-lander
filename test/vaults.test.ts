@@ -9,7 +9,9 @@
  *  - rope-only recovery: from floor spots all across both sections (chasms
  *    excepted - a fall there is fatal by design) the rope alone hauls the pod
  *    back up under the roof (test/support/hollowClimber.ts, generalised);
- *  - the reference swing pilot and 11 variants still reach the camp;
+ *  - the reference swing pilot and 11 variants still reach the camp (round 20: the
+ *    stalactites grew - A 70-80 -> 120-150 px, two more; B 100-180 -> 150-220 px - so a
+ *    checkpoint respawn is allowed, most finish on their first life, and some hit them);
  *  - the caves backdrop's silhouettes read as scenery (dim, small, far back);
  *  - round-17 audit: the winch never drags the pod into a spire it is roped to
  *    (M1: rope-line stall probe + no anchors on the tips), checkpoints through
@@ -71,12 +73,13 @@ const swingY = (x: number) => (Math.min(floorY(x), 700) + roofY(x)) / 2 + 40;
 const lipLine = ([a, b]: readonly [number, number]) => Math.min(floorY(a - 40), floorY(b + 40)) + VAULTS_LIP_CLEAR.below;
 
 describe('round 17: The Vaults stalactites - placement', () => {
-  it('level validates; solid rock stalactites through both sections, sparse + short in A', () => {
+  it('level validates; solid rock stalactites through both sections, shorter in A, longer in B', () => {
     expect(validateLevel(vaults)).toEqual([]);
-    expect(inA.length).toBe(7);
+    // round 20 (user: "the stalacites are too small and the map still too easy"): A 7 -> 9
+    expect(inA.length).toBe(9);
     expect(inB.length).toBe(7);
     // a lip peg on the ledge side of every chasm lip but chasm 1's west one (its ledge
-    // reaches stalactite 8 / the lip crystal)
+    // reaches the stalactite at 6950 / the lip crystal)
     expect(pegs.length).toBe(7);
     for (const sp of pegs) expect(sp.x).toBeGreaterThan(VAULTS_SECTION_B);
     for (const { sp } of polys) {
@@ -87,30 +90,45 @@ describe('round 17: The Vaults stalactites - placement', () => {
       expect(sp.from).toBe('ceiling');
     }
     const len = (sp: (typeof VAULTS_STALACTITES)[number]) => sp.tip - roofY(sp.x);
-    expect(Math.max(...inA.map(len))).toBeLessThanOrEqual(85);
-    expect(Math.max(...inB.map(len))).toBeGreaterThanOrEqual(165);
+    // round 20: A 70-80 -> 120-150 px, B 100-180 -> 150-220 px
+    for (const sp of inA) {
+      expect(len(sp), sp.id).toBeGreaterThanOrEqual(115);
+      expect(len(sp), sp.id).toBeLessThanOrEqual(155);
+    }
+    for (const sp of inB) {
+      expect(len(sp), sp.id).toBeGreaterThanOrEqual(145);
+      expect(len(sp), sp.id).toBeLessThanOrEqual(225);
+    }
+    expect(Math.max(...inB.map(len))).toBeGreaterThanOrEqual(215);
   });
 
-  it('spacing: >= 700 px in A; in B >= 300 px between stalactites, >= 150 px to a lip peg', () => {
+  it('spacing: in A >= 600 px but for two weaving pairs (230-300 px); in B >= 300 px between stalactites, >= 150 px to a lip peg', () => {
     const all = [...VAULTS_STALACTITES].sort((a, b) => a.x - b.x);
+    let pairs = 0;
     for (let i = 1; i < all.length; i++) {
       const [p, q] = [all[i - 1]!, all[i]!];
-      const min = q.x < VAULTS_SECTION_B ? 700 : p.id.startsWith('lipPeg') || q.id.startsWith('lipPeg') ? 150 : 300;
+      if (q.x < VAULTS_SECTION_B && q.x - p.x < 300) pairs++;
+      else if (q.x < VAULTS_SECTION_B) expect(q.x - p.x, `${p.id} -> ${q.id}`).toBeGreaterThanOrEqual(600);
+      const min = q.x < VAULTS_SECTION_B ? 230 : p.id.startsWith('lipPeg') || q.id.startsWith('lipPeg') ? 150 : 300;
       expect(q.x - p.x, `${p.id} -> ${q.id}`).toBeGreaterThanOrEqual(min);
     }
+    expect(pairs).toBe(2);
     expect(spikes.filter((sp) => sp.x >= VAULTS_SECTION_B).every((sp, i, a) => i === 0 || sp.x - a[i - 1]!.x >= 300)).toBe(true);
   });
 
-  it('floor clearance: >= 170 px under every tip in A, >= 150 px in B', () => {
+  it('floor clearance: >= 120 px under every tip in A, >= 100 px in B (round 20: was 170 / 150)', () => {
     for (const { sp, pts } of polys) {
       const [x0, x1] = span(pts);
       const floor = Math.min(floorY(x0), floorY(sp.x), floorY(x1));
-      expect(floor - sp.tip, sp.id).toBeGreaterThanOrEqual(sp.x < VAULTS_SECTION_B ? 170 : 150);
+      expect(floor - sp.tip, sp.id).toBeGreaterThanOrEqual(sp.x < VAULTS_SECTION_B ? 120 : 100);
     }
   });
 
-  it('A: the low swing-school spikes stay above the swing line; B: the low ones hang within 50 px of it', () => {
-    for (const sp of inA) expect(swingY(sp.x) - sp.tip, sp.id).toBeGreaterThan(80);
+  it('A: the swing-school spikes stay above the swing line, low enough that a lazy pendulum clips them; B: the low ones hang within 50 px of it', () => {
+    for (const sp of inA) {
+      expect(swingY(sp.x) - sp.tip, sp.id).toBeGreaterThan(25);
+      expect(swingY(sp.x) - sp.tip, sp.id).toBeLessThan(60); // round 20: was > 80
+    }
     const low = inB.filter((sp) => swingY(sp.x) - sp.tip < 50);
     expect(low.length).toBeGreaterThanOrEqual(3);
   });
@@ -227,8 +245,8 @@ describe('round 17: The Vaults stalactites - physics', () => {
             n++;
             if (r.crash?.type === 'crash') crashes.push(`${sp.id} dx ${dx} angle ${angle} ${aim}: ${Math.round(r.crash.speed)} px/s at ${Math.round(r.crash.pos.x)},${Math.round(r.crash.pos.y)}`);
           }
-    expect(n).toBe(21 * 27);
-    // pre-fix: 11/376 (auditor) - e.g. stalactite14 dx -45 tipped, tip shot: 249 px/s
+    expect(n).toBe(VAULTS_STALACTITES.length * 27);
+    // pre-fix: 11/376 (auditor) - e.g. round-17 stalactite14 (x 11720) dx -45 tipped, tip shot: 249 px/s
     expect(crashes).toEqual([]);
   });
 
@@ -243,7 +261,7 @@ describe('round 17: The Vaults stalactites - physics', () => {
     }
   });
 
-  it('audit M1: the tipped pod at x 8650 (ropes stalactite 10\'s brittle flank, it breaks, re-ropes, reels) recovers', { timeout: 120_000 }, async () => {
+  it('audit M1: the tipped pod at x 8650 (ropes the brittle flank of the stalactite at 8600, it breaks, re-ropes, reels) recovers', { timeout: 120_000 }, async () => {
     for (const angle of [1.3, -1.3]) {
       const x = 8650;
       const s = await LevelSession.create({ ...vaults, spawn: { x, y: floorY(x) - 12, angle } });
@@ -465,30 +483,73 @@ describe('round 17: The Vaults - swing playtest over the new geometry', () => {
     c3: { minAdvance: 90, wildSpeed: 190 },
   };
 
-  it('the reference pilot and 11 variants all reach the camp; stalactites carry a share of the anchors', { timeout: 600_000 }, async () => {
+  it('the reference pilot and 11 variants all reach the camp (round 20: checkpoints allowed); stalactites carry anchors and now take hits', { timeout: 600_000 }, async () => {
     const fails: string[] = [];
     const lossA: number[] = [];
+    let firstLife = 0;
+    let spikeHits = 0;
+    const rows: string[] = [];
+    const times: number[] = [];
+    const hulls: number[] = [];
     for (const [name, o] of Object.entries(VARIANTS)) {
-      let prev = 1;
-      let a = 0;
-      const r = await runPilot(vaults, () => harpoonPilot({ landX: 13480, ...o }), 240, (s) => {
-        if (s.state.hull < prev - 0.001) {
-          if (s.state.pos.x < VAULTS_SECTION_B) a += prev - s.state.hull;
-          prev = s.state.hull;
+      let respawn: RespawnState | null = null;
+      let done = false;
+      let lives = 0;
+      let totalSec = 0;
+      let finalHull = 0;
+      for (; lives < 4 && !done; lives++) {
+        const s = await LevelSession.create(vaults, respawn ?? undefined);
+        const events: GameEvent[] = [];
+        s.on((e) => events.push(e));
+        s.start();
+        const pilot = harpoonPilot({ landX: 13480, ...o });
+        let prev = s.state.hull;
+        let a = 0;
+        for (let i = 0; i < 240 * 60 && !s.outcome; i++) {
+          s.step(pilot(s, i));
+          if (s.state.hull < prev - 0.001) {
+            if (s.state.pos.x < VAULTS_SECTION_B) a += prev - s.state.hull;
+            prev = s.state.hull;
+          }
         }
-      });
-      lossA.push(a);
-      if (r.outcome?.kind !== 'complete' || r.last.hull < 0.15 || r.timeSec > 200) fails.push(`${name}: ${r.outcome?.kind ?? 'none'} hull ${r.last.hull.toFixed(2)} t ${r.timeSec.toFixed(0)} maxX ${Math.round(r.maxX)}`);
-      if (name === 'base') {
-        const onSpikes = r.events.filter((e) => e.type === 'ropeAttached' && polys.some(({ pts }) => s7DistToPolygon(e.anchor, pts) < 4)).length;
-        expect(onSpikes, 'base: anchors on stalactites').toBeGreaterThanOrEqual(10);
+        spikeHits += events.filter((e) => e.type === 'impact' && polys.some(({ pts }) => s7DistToPolygon(e.pos, pts) < 8)).length;
+        if (lives === 0) {
+          lossA.push(a);
+          if (name === 'base') {
+            const onSpikes = events.filter((e) => e.type === 'ropeAttached' && polys.some(({ pts }) => s7DistToPolygon(e.anchor, pts) < 4)).length;
+            expect(onSpikes, 'base: anchors on stalactites').toBeGreaterThanOrEqual(10);
+          }
+        }
+        done = s.outcome?.kind === 'complete';
+        totalSec += s.simTime;
+        if (done) finalHull = s.state.hull;
+        rows.push(`${name} life ${lives}: ${s.outcome?.kind ?? 'timeout'} x ${Math.round(s.state.pos.x)} hull ${s.state.hull.toFixed(2)} @${s.checkpoint?.id ?? '-'}`);
+        if (done && lives === 0) firstLife++;
+        respawn = done ? null : s.respawnState();
+        s.destroy();
+        if (!done && !respawn) break;
       }
+      // the round-17 bars, kept: not a scrape-through (hull >= 0.15 at the camp) and not a
+      // crawl (<= 200 s, now summed over every life incl. the respawned one). Measured: final
+      // hull min 0.51, total time max 119 s
+      if (!done || finalHull < 0.15 || totalSec > 200) fails.push(`${name}: hull ${finalHull.toFixed(2)} t ${totalSec.toFixed(0)} ${rows.filter((r) => r.startsWith(name)).join(' / ')}`);
+      times.push(totalSec);
+      hulls.push(finalHull);
     }
+    // round 20 (bigger stalactites, "slightly more challenge"): every variant still
+    // reaches the camp, most on their first life (measured 12 / 12, 11 / 12 with stalactite 7 at
+    // 150 px - pilot runs are chaotic at this margin; round 17: 12 / 12)
     expect(fails).toEqual([]);
+    expect(firstLife, rows.join('\n')).toBeGreaterThanOrEqual(10);
+    // ... and the stalactites are now in the way (round 17: no pilot ever struck one)
+    expect(spikeHits).toBeGreaterThanOrEqual(3); // measured 5
     // section A stays the swing school: little hull lost there
     lossA.sort((a, b) => a - b);
     expect(lossA[Math.floor(lossA.length / 2)]!).toBeLessThan(0.12);
-    expect(Math.max(...lossA)).toBeLessThan(0.3);
+    // measured median 0.107, max 0.305 (round 20, audit fix; 0.033 / 0.28 with stalactite 7
+    // at 150 px): the median bar 0.12 is a deliberate tripwire (round 17 cut A's spikes when
+    // pit-lip scrapes pushed it to ~0.13); the max bar has headroom for pilot noise
+    expect(Math.max(...lossA)).toBeLessThan(0.35);
   });
 });
 

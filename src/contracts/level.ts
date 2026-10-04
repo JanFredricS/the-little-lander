@@ -35,6 +35,13 @@ export interface TerrainStyle {
   decorDensity?: number;
   /** Picks tile variants deterministically. Default: hash of the piece id. */
   variantSeed?: Seed;
+  /**
+   * Round 20: 'crystalSpire' = drawn as a translucent faceted crystal by the render layer
+   * (src/render/crystalSpires.ts) instead of fill tiles - a 'polygon' in s7SpirePoints
+   * order (base corner, one flank, the tip's two points, the other flank, base corner).
+   * Visual only. Default: tiles.
+   */
+  look?: 'crystalSpire';
 }
 
 /**
@@ -105,6 +112,14 @@ export interface StaticPropEntity extends EntityBase {
   angle?: number;
   /** Draw in front of the vessel. Default false. */
   foreground?: boolean;
+  /**
+   * Round 20: per-placement colour multiply (0xRRGGBB) and opacity (0..1) over the themed
+   * sprite - a per-level look without touching the shared prop art. Visual only. Default none.
+   */
+  tint?: number;
+  alpha?: number;
+  /** Round 20: cycle the sprite's frames at this rate (frames/s); frame 0 under reduced motion. Default static. */
+  animFps?: number;
 }
 
 /** Spawns falling dynamic debris inside `area` while active. */

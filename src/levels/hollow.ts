@@ -9,16 +9,17 @@
  *  - Alternating gravity zones: down / UP / down / sideways (against you) /
  *    down / UP / sideways (with you — brake!) / down. The zone boundaries are
  *    announced by gravityChanged (HUD arrow). Thrust in every direction.
- *  - 30 tech orbs (22 needed): fuel refills + points, strung along the
+ *  - 30 tech orbs (20 needed): fuel refills + points, strung along the
  *    natural flight line; four bonus orbs sit off the line.
  *  - The sun pulses every 13 s with a 3.5 s glow telegraph. A hit costs 30%
  *    of CURRENT fuel. Cover = get a floating rock (or terrain) between you
  *    and the sun; there is a sheltered spot within ~300 px of the flight line
  *    everywhere (HOLLOW_SHELTERS, tested).
  *  - Exit: the dark tunnel mouth in the east wall (towards the Keeper).
- *  - Round 18 (player feedback): the requirement is explicit (collectOrbs count 22,
- *    HUD "ORBS x/22") against 30 placed - a 36% surplus, and no stretch between two
- *    respawn points holds more than the 8 spare orbs. 13 enterRegion checkpoints
+ *  - Round 18 (player feedback): the requirement is explicit (collectOrbs count,
+ *    HUD "ORBS x/20") against 30 placed, and no stretch between two respawn points
+ *    holds more than the spare orbs. Round 20 (user): 22 -> 20 needed - a 50%
+ *    surplus, 10 spares. 13 enterRegion checkpoints
  *    (HOLLOW_CHECKPOINTS) leave ~2 orbs between respawns (4-5 across the sideways
  *    zones, which cannot host a resting respawn). The gravity zones got a stronger
  *    look in FlightView (edge curtains + scrolling edge dashes + drifting motes);
@@ -335,6 +336,9 @@ export function spirePoints(sp: HollowSpire): Vec2[] {
   return s7SpirePoints(sp, floorY, ceilY);
 }
 
+/** Round 20: the waterfalls' per-placement look (StaticPropEntity tint / alpha / animFps). */
+export const HOLLOW_FALLS_LOOK = { tint: 0x4fb4f4, alpha: 0.75, animFps: 8 } as const;
+
 const terrain: TerrainPiece[] = [
   s7Piece('crust', 'ceiling', CEILING, { material: 'rock', decorDensity: 0.3 }),
   s7Piece('jungle', 'ground', GROUND, { material: 'organic', decorDensity: 0.5 }),
@@ -351,11 +355,12 @@ const terrain: TerrainPiece[] = [
   ...HOLLOW_ROCKS.map((k) => s7Piece(k.id, 'polygon', s7Blob(k.id, k.x, k.y, k.r * 1.25, k.r, 12, 0.14), { material: 'organic' })),
   // floor spires are rock (they cast sun shadows like the jungle rocks); roof
   // spires are translucent crystal: solid and anchorable, but the sun shines
-  // through them, so they tighten the corridor without handing out free cover
+  // through them, so they tighten the corridor without handing out free cover.
+  // Round 20: drawn as faceted see-through crystal (src/render/crystalSpires.ts)
   ...HOLLOW_SPIRES.map((sp) =>
     sp.from === 'floor'
       ? s7Piece(sp.id, 'polygon', spirePoints(sp), { material: 'rock', decorDensity: 0.2 })
-      : s7Piece(sp.id, 'polygon', spirePoints(sp), { material: 'crystal', decorDensity: 0.2 }, { castsShadow: false }),
+      : s7Piece(sp.id, 'polygon', spirePoints(sp), { material: 'crystal', decorDensity: 0, look: 'crystalSpire' }, { castsShadow: false }),
   ),
 ];
 
@@ -382,7 +387,10 @@ export const HOLLOW_ORBS: EntitySpec[] = (() => {
 const decor: EntitySpec[] = [
   s7Prop('sun', 'prop.sunLarge', HOLLOW_SUN.x, HOLLOW_SUN.y, 128, 128),
   // waterfalls pouring from the crust (drawn behind; not solid)
-  ...[1200, 3900, 6100, 9900, 12800, 14700].map((x, i) => s7Prop(`falls${i}`, 'prop.waterfallWide', x, ceilY(x) + 300, 48, 600)),
+  // round 20: the 'core' palette's water ramp is cream (shared natureRamps art), so the
+  // six falls read as pale slabs hanging from the crust - the user's "white stalactites"
+  // may have been these too. Tinted blue-cyan, see-through and animated, Hollow only.
+  ...[1200, 3900, 6100, 9900, 12800, 14700].map((x, i) => s7Prop(`falls${i}`, 'prop.waterfallWide', x, ceilY(x) + 300, 48, 600, HOLLOW_FALLS_LOOK)),
   ...s7Scatter('palm', 'prop.palm', 300, 15600, () => 7, (x) => ({ y: floorY(x) - 30, w: 40, h: 60 })),
   ...s7Scatter('fern', 'prop.fern', 300, 15600, () => 10, (x) => ({ y: floorY(x) - 8, w: 20, h: 16 })),
   ...s7Scatter('stalactite', 'prop.stalactite', 300, 15600, () => 4, (x) => ({ y: ceilY(x) + 14, w: 12, h: 28 })),
@@ -453,7 +461,7 @@ export const hollow: LevelSpec = {
   ],
   zones,
   objectives: [
-    { kind: 'collectOrbs', id: 'orbs', count: 22 },
+    { kind: 'collectOrbs', id: 'orbs', count: 20 },
     { kind: 'reachExit', id: 'tunnel', exitId: 'tunnel' },
   ],
   checkpoints: HOLLOW_CHECKPOINTS.map((c) => ({ ...c, rect: { ...c.rect! }, respawn: { ...c.respawn! } })),

@@ -21,7 +21,7 @@ describe('S7 playtests (autopilot completes the map)', () => {
     expect(r.timeSec).toBeLessThan(200);
   });
 
-  it('map 6 — The Hollow: through every gravity zone, 22+ orbs, into the tunnel', { timeout: 120_000 }, async () => {
+  it('map 6 — The Hollow: through every gravity zone, 22+ orbs (20 needed), into the tunnel', { timeout: 120_000 }, async () => {
     const r = await runPilot(hollow, () => hollowPilot(), 300);
     expect(r.outcome?.kind).toBe('complete');
     expect(r.counts.orbCollected).toBeGreaterThanOrEqual(22);

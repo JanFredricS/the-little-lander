@@ -62,6 +62,7 @@
 import { Container, Sprite, Texture } from 'pixi.js';
 import { VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, LevelSpec, PixelCanvas, TerrainPiece, TerrainStyle, Vec2 } from '../contracts';
+import { isCrystalSpire } from './crystalSpires';
 import { paintPieces, piecesTouch, preparePiece, TileSource, type PaintRect, type PreparedPiece } from './terrainTiles';
 
 export const TERRAIN_CHUNK = 256;
@@ -220,7 +221,8 @@ export class TerrainView {
     private readonly clock: () => number = now,
   ) {
     this.tiles = new TileSource(art, spec.themeId, makeCanvas);
-    this.pieces = spec.terrain.pieces.map((p) => preparePiece(p, spec.worldSize.h));
+    // round 20: crystal spires are drawn by their own layer (crystalSpires.ts)
+    this.pieces = spec.terrain.pieces.filter((p) => !isCrystalSpire(p)).map((p) => preparePiece(p, spec.worldSize.h));
     this.cracks = spec.zones.flatMap((z) => (z.kind === 'brittleRegion' ? [z.rect] : []));
   }
 
