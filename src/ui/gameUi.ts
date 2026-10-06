@@ -16,7 +16,7 @@ import { resolveSteering, VIEW_HEIGHT, VIEW_WIDTH } from '../contracts';
 import type { ArtApi, GameEvent, InputFrame, LevelId, LevelSpec, ScreenAction, ScreenState, SteeringScheme, StickSide, VesselMode, VesselState } from '../contracts';
 import type { PixiHost } from '../render/pixiApp';
 import type { VirtualControlsSource } from '../shell/input';
-import { frameHasInput, missionLines } from './controlsHelp';
+import { frameHasInput, missionLines, missionTips } from './controlsHelp';
 import { FpsMeter, fpsText, TerrainDiagMeter, terrainText, type TerrainDiag } from './fpsMeter';
 import { PixelText } from './pixelText';
 import { hudReduce, hudTick, initHud, initHudResume, type HudState } from './hud/hudState';
@@ -366,7 +366,8 @@ export class GameUi {
     this.mmPose[1] = resume ? resume.pose.y : spec.spawn.y;
     this.mmPose[2] = resume ? resume.pose.angle : (spec.spawn.angle ?? 0);
     // round 10 (G): the start card states the mission, readable while it holds the level
-    this.mission = missionLines(spec.objectives).join('\n');
+    // round 21: plus how-to lines where the objective needs them (the Keeper: drop the roof rocks on it)
+    this.mission = [...missionLines(spec.objectives), ...missionTips(spec.objectives)].join('\n');
     if (!resume) {
       this.helpMode = spec.vesselMode;
       this.helpBlocks = true;

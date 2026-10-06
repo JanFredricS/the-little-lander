@@ -5,6 +5,12 @@ import { frameHasInput, helpCard, helpCardKey } from '../src/ui/controlsHelp';
 import { emptyFrame } from '../src/shell/input';
 import {
   BANNER_TTL,
+  BOSS_HINT_FIRST_AT,
+  BOSS_HINT_REPEAT,
+  BOSS_HINT_SHOW,
+  BOSS_HINT_STOP_HITS,
+  BOSS_HINTS,
+  initHudResume,
   fuelLow,
   hudReduce,
   hudTick,
@@ -172,6 +178,87 @@ describe('HUD reducer', () => {
     s = run([{ type: 'bossDefeated' }], s);
     expect(s.bossHp).toBe(0);
     expect(objectiveLines(s)[0]).toEqual({ text: 'DEFEAT THE KEEPER', done: true });
+  });
+
+  describe('round 21: boss-fight coaching (how to hurt the Keeper)', () => {
+    const bossSpec = { id: 'keeper', vesselMode: 'harpoonThrust', objectives: [{ kind: 'surviveBoss', id: 'b', bossEntityId: 'k' }] } as const;
+    /** Advance `sec` sim seconds; returns the hint text at every step. */
+    const advance = (s0: HudState, sec: number) => {
+      let s = s0;
+      const seen: (string | null)[] = [];
+      for (let i = 0; i < Math.round(sec / FIXED_DT); i++) {
+        s = hudTick(s, null, FIXED_DT);
+        seen.push(s.bossHint);
+      }
+      return { s, seen };
+    };
+    const rockHit = (hp: number): GameEvent => ({ type: 'bossHit', damage: 0.145, hp, source: 'rock' });
+
+    it('the hints fit the HUD: two lines of at most 40 characters each', () => {
+      expect(BOSS_HINTS.length).toBeGreaterThanOrEqual(2);
+      for (const h of BOSS_HINTS) {
+        expect(h.split('\n')).toHaveLength(2);
+        for (const l of h.split('\n')) expect(l.length, l).toBeLessThanOrEqual(40);
+      }
+      expect(BOSS_HINTS[0]).toMatch(/HARPOON A CRACKED ROCK.*\n.*REEL IN.*KEEPER/);
+      expect(BOSS_HINTS[1]).toMatch(/LURE/);
+    });
+
+    it('first hint after BOSS_HINT_FIRST_AT s for BOSS_HINT_SHOW s; the next one (the lure) after BOSS_HINT_REPEAT s without a rock hit', () => {
+      let s = run([{ type: 'bossPhase', phase: 1, hp: 1 }], initHud(bossSpec));
+      expect(s.bossHint).toBeNull();
+      ({ s } = advance(s, BOSS_HINT_FIRST_AT - 0.1));
+      expect(s.bossHint).toBeNull();
+      ({ s } = advance(s, 0.2));
+      expect(s.bossHint).toBe(BOSS_HINTS[0]);
+      ({ s } = advance(s, BOSS_HINT_SHOW - 0.3));
+      expect(s.bossHint).toBe(BOSS_HINTS[0]);
+      ({ s } = advance(s, 0.3));
+      expect(s.bossHint).toBeNull();
+      ({ s } = advance(s, BOSS_HINT_REPEAT - 0.2));
+      expect(s.bossHint).toBeNull();
+      ({ s } = advance(s, 0.3));
+      expect(s.bossHint).toBe(BOSS_HINTS[1]);
+      // and round again: the hints alternate while no rock lands
+      ({ s } = advance(s, BOSS_HINT_SHOW + BOSS_HINT_REPEAT + 0.1));
+      expect(s.bossHint).toBe(BOSS_HINTS[0]);
+    });
+
+    it('a rock hit clears the hint at once and restarts the wait; after BOSS_HINT_STOP_HITS rock hits it never shows again', () => {
+      let s = advance(initHud(bossSpec), BOSS_HINT_FIRST_AT + 1).s;
+      expect(s.bossHint).toBe(BOSS_HINTS[0]);
+      s = run([rockHit(0.855)], s);
+      expect(s.bossHint).toBeNull();
+      expect(s.bossRockHits).toBe(1);
+      let r = advance(s, BOSS_HINT_REPEAT - 0.2);
+      expect(r.seen.every((h) => h === null)).toBe(true);
+      r = advance(r.s, 0.3);
+      expect(r.s.bossHint).toBe(BOSS_HINTS[1]);
+      // a tendril burn is not a rock drop: the coaching keeps its clock
+      s = run([{ type: 'bossHit', damage: 0.035, hp: 0.82, source: 'exhaust' }], r.s);
+      expect(s.bossHint).toBe(BOSS_HINTS[1]);
+      for (let i = 1; i < BOSS_HINT_STOP_HITS; i++) s = run([rockHit(0.7)], s);
+      expect(s.bossHint).toBeNull();
+      r = advance(s, 10 * (BOSS_HINT_SHOW + BOSS_HINT_REPEAT));
+      expect(r.seen.every((h) => h === null)).toBe(true);
+    });
+
+    it('no coaching once the boss is defeated, after a crash, or in a level without a boss', () => {
+      const defeated = run([{ type: 'bossDefeated' }], initHud(bossSpec));
+      expect(advance(defeated, 120).seen.every((h) => h === null)).toBe(true);
+      let s = advance(initHud(bossSpec), BOSS_HINT_FIRST_AT + 1).s;
+      expect(s.bossHint).not.toBeNull();
+      s = run([{ type: 'crash', cause: 'boss', pos: { x: 0, y: 0 }, speed: 0 }], s);
+      expect(s.bossHint).toBeNull();
+      expect(advance(s, 120).seen.every((h) => h === null)).toBe(true);
+      expect(advance(initHud(spec), 120).seen.every((h) => h === null)).toBe(true);
+    });
+
+    it('a checkpoint respawn counts the first hint from the respawn (HUD time carries the earlier lives)', () => {
+      const s = initHudResume(bossSpec, { mode: 'harpoonThrust', fuel: 1, hull: 1, planted: [], completed: [], orbs: 0, score: 0, time: 100 });
+      expect(advance(s, BOSS_HINT_FIRST_AT - 0.1).s.bossHint).toBeNull();
+      expect(advance(s, BOSS_HINT_FIRST_AT + 0.1).s.bossHint).toBe(BOSS_HINTS[0]);
+    });
   });
 
   it('VesselState polling is authoritative for fuel/hull/goo/mode and advances time', () => {

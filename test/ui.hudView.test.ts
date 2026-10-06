@@ -9,7 +9,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Graphics } from 'pixi.js';
 import { HudView } from '../src/ui/hud/hudView';
-import { initHud, type HudState } from '../src/ui/hud/hudState';
+import { BOSS_HINTS, initHud, type HudState } from '../src/ui/hud/hudState';
 
 vi.mock('../src/ui/pixelText', async () => {
   const { Container } = await import('pixi.js');
@@ -101,5 +101,24 @@ describe('HudView redraws', () => {
     hud.render({ ...s, orbs: 1 }, 600);
     expect(extra.setTexts).toBe(e0 + 1);
     expect(obj.text).toContain('REACH THE EXIT');
+  });
+
+  it('round 21: the boss coaching shows centred under the banner (below the exit hint if both), hidden otherwise', () => {
+    const { hud } = setup();
+    const text = (hud as unknown as { bossHintText: { visible: boolean; text: string; x: number; y: number; width: number } }).bossHintText;
+    const s = { ...base(), bossHp: 1 };
+    hud.render(s, 0);
+    expect(text.visible).toBe(false);
+    expect(hud.bossHintShown).toBe('');
+    hud.render({ ...s, bossHint: BOSS_HINTS[0]! }, 16);
+    expect(text.visible).toBe(true);
+    expect(text.text).toBe(BOSS_HINTS[0]);
+    expect(hud.bossHintShown).toBe(BOSS_HINTS[0]);
+    expect(text.y).toBe(128);
+    expect(text.x + text.width / 2).toBeCloseTo(320, 0);
+    hud.render({ ...s, bossHint: BOSS_HINTS[0]!, exitHint: 'LAND ON THE PAD TO FINISH' }, 33);
+    expect(text.y).toBeGreaterThan(128);
+    hud.render(s, 50);
+    expect(text.visible).toBe(false);
   });
 });

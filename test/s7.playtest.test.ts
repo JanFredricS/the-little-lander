@@ -7,7 +7,8 @@
 
 import { describe, expect, it } from 'vitest';
 import { hollow } from '../src/levels/hollow';
-import { keeper } from '../src/levels/keeper';
+import { KEEPER_ROCK_X, keeper } from '../src/levels/keeper';
+import { KEEPER_TUNING } from '../src/levels/boss/keeperTuning';
 import { MADDASH_ROUTE, madDash } from '../src/levels/madDash';
 import { vaults } from '../src/levels/vaults';
 import { runPilot } from './support/s7Harness';
@@ -58,6 +59,74 @@ describe('S7 playtests (autopilot completes the map)', () => {
     }
     expect(wins.length).toBeGreaterThanOrEqual(2);
     expect(Math.max(...wins)).toBeGreaterThan(0.4);
+  });
+
+  it('map 7 — The Keeper, round 21 winnability audit: 20 lure variants, rock supply, the lined-up glow tells the truth', { timeout: 300_000 }, async () => {
+    // never more rock hits needed than rocks on the roof (7 of 12; they regrow too: 14 s, and all at a slam)
+    expect(Math.ceil(1 / KEEPER_TUNING.rockDamage)).toBeLessThanOrEqual(KEEPER_ROCK_X.length * 0.6);
+    // every rock can be lured under: the Keeper's hover range covers every rock, and the lure spot one dead zone past it is in the arena
+    const a = keeper.entities.find((e) => e.kind === 'bossSpawn')!;
+    if (a.kind !== 'bossSpawn') throw new Error('no boss');
+    const m = KEEPER_TUNING.bodyRadius + 40;
+    for (const x of KEEPER_ROCK_X) {
+      expect(x).toBeGreaterThanOrEqual(a.arena.x + m);
+      expect(x).toBeLessThanOrEqual(a.arena.x + a.arena.w - m);
+      expect(x - KEEPER_TUNING.followDeadzone).toBeGreaterThan(a.arena.x);
+      expect(x + KEEPER_TUNING.followDeadzone).toBeLessThan(a.arena.x + a.arena.w);
+    }
+    let wins = 0;
+    let runs = 0;
+    let minHanging = Infinity;
+    let lined = 0;
+    let linedHits = 0;
+    let torn = 0;
+    let rockHits = 0;
+    for (const offset of [120, 130, 140, 150, 160])
+      for (const below of [160, 175, 190, 210]) {
+        const seen = new Set<number>();
+        const linedIds = new Set<number>();
+        let prev = new Set<number>();
+        let hitsNow = 0;
+        let hooked = false;
+        const r = await runPilot(keeper, () => keeperPilot({ attempts: 0, drops: 0 }, { offset, below }), 480, (s) => {
+          if (!hooked) {
+            hooked = true;
+            s.on((e) => {
+              if (e.type === 'bossHit' && e.source === 'rock') hitsNow++;
+            });
+          }
+          const rk = s.systems.rocks!;
+          const b = s.systems.keeper!.brain;
+          minHanging = Math.min(minHanging, rk.rocks.filter((h) => h.body !== null).length);
+          const cur = new Set<number>();
+          for (const f of rk.falling) {
+            cur.add(f.id);
+            if (seen.has(f.id)) continue;
+            seen.add(f.id);
+            if (b.linedUpUnder(rk.rocks.find((h) => h.entity.id === f.siteId)!.entity.x)) linedIds.add(f.id);
+          }
+          // a rock shattered on the Keeper leaves the falling list in the step its bossHit fires
+          for (const id of prev)
+            if (!cur.has(id) && hitsNow > 0) {
+              hitsNow--;
+              if (linedIds.has(id)) linedHits++;
+            }
+          hitsNow = 0;
+          prev = cur;
+        });
+        runs++;
+        if (r.outcome?.kind === 'complete') wins++;
+        torn += seen.size;
+        lined += linedIds.size;
+        rockHits += r.events.filter((e) => e.type === 'bossHit' && e.source === 'rock').length;
+      }
+    // measured (round 21): 17/20 wins (the losses die in phase 3, 1-2 hits short), 9+ rocks always hanging,
+    // 107 rocks torn -> 102 hits, 96 torn while lined up -> 95 hits
+    expect(wins, `${wins}/${runs} lure variants win`).toBeGreaterThanOrEqual(14);
+    expect(minHanging).toBeGreaterThanOrEqual(6);
+    expect(rockHits / torn).toBeGreaterThan(0.85);
+    expect(lined / torn).toBeGreaterThan(0.8);
+    expect(linedHits / lined).toBeGreaterThan(0.95);
   });
 
   it('map 8 — The Mad Dash: out-climbs the collapse, beats every closing gate, out through the crust', { timeout: 300_000 }, async () => {

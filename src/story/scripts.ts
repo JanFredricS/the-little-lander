@@ -121,7 +121,9 @@ export const CUTSCENES: Readonly<Record<CutsceneId, CutsceneScript>> = {
       say('wrenPortrait', 'wren', 'Can we talk it down?'),
       shot('hollowSunKeeper', 'keeper', secs(2.5), '...KEPT. KEPT. KEPT.'),
       say('wrenPortrait', 'wren', "Right. Not a talker. Io, how's my fuel?"),
-      say('ioPortrait', 'io', 'Enough to be brave. Not enough to be silly.', "Burn the tendrils, drop rocks on it. You've got this."),
+      say('ioPortrait', 'io', 'Enough to be brave. Not enough to be silly.', 'See the cracked rocks in the roof? Harpoon one and reel in hard.'),
+      // round 21: name the mechanic (players did not see how to hurt it)
+      say('ioPortrait', 'io', 'Lure the keeper under it first, then down it comes. Bonk.', "Grabbed? Burn the tendril with your exhaust. You've got this."),
     ],
   },
 

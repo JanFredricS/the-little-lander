@@ -35,6 +35,9 @@ const TELEGRAPH = 0xffd040;
 const TELEGRAPH_LOCKED = 0xff4030;
 const TENDRIL = 0x7a3aa8;
 const TENDRIL_BURN = 0xff8a30;
+/** Round 21: the crack glint on every hanging boss-arena rock, and the ring + drop line on one lined up over the Keeper. */
+const ROCK_GLINT = 0xfff0c0;
+const ROCK_LINED_UP = 0xffd040;
 
 /**
  * Progress-driven darkness per level id: alpha ramps (smoothstep) from 0 at
@@ -200,6 +203,8 @@ export class S7LevelFx {
     const sys = s.systems;
     const p = s.physics;
     const g = clearIfDrawn(this.g);
+    // round 21: the rock cue draws on `front` (above the rock sprites: `g` sits under them, so a crack drawn there is hidden)
+    const fg = clearIfDrawn(this.front);
     this.pool.begin();
     this.nowMs = nowMs;
     if (o) {
@@ -255,14 +260,18 @@ export class S7LevelFx {
 
     // ---- loose rocks (hanging, straining under the winch) and falling rocks
     if (sys.rocks) {
+      const boss = sys.keeper?.brain ?? null;
       for (const r of sys.rocks.rocks) {
         if (!r.body || !p.hasBody(r.body)) continue;
         const e = r.entity;
         const strain = Math.min(1, r.pull / Math.max(0.01, e.breakForce));
         const t = this.at(r.body, alpha);
-        if (!this.visible(t.x, t.y, e.radius + 4)) continue;
+        // round 21: the glow ring + drop line reach down to the Keeper, so cull on the column, not the rock
+        const lined = boss !== null && boss.linedUpUnder(e.x);
+        if (!(lined ? this.boxVisible(t.x - e.radius - 6, t.y - e.radius - 6, t.x + e.radius + 6, Math.max(t.y + e.radius + 6, boss.pos.y)) : this.visible(t.x, t.y, e.radius + 6))) continue;
         const x = t.x + (strain > 0.3 ? this.shake(2 * strain) : 0);
         this.rock(x, t.y, e.radius, t.angle);
+        if (boss) this.rockCue(fg, x, t.y, e.radius, lined ? boss.pos.y - boss.t.bodyRadius : null);
         if (strain > 0.5) g.moveTo(x - e.radius * 0.6, t.y - e.radius).lineTo(x + e.radius * 0.6, t.y - e.radius).stroke({ width: 1, color: 0xffe0a0, alpha: strain - 0.4 });
       }
       for (const f of sys.rocks.falling) {
@@ -337,7 +346,6 @@ export class S7LevelFx {
     this.pool.end();
 
     // ---- collapse front: a dark churning mass with a burning edge (teeth + embers culled to the view)
-    const fg = clearIfDrawn(this.front);
     if (sys.killFront) {
       const { w, h } = s.spec.worldSize;
       for (const f of sys.killFront.fronts) {
@@ -423,6 +431,34 @@ export class S7LevelFx {
     for (let i = 0; i < cracks; i++) {
       const cx = x + ((i + 1) * w) / (cracks + 1);
       g.moveTo(cx, y + 3).lineTo(cx + (i % 2 ? 3 : -3), y + h * 0.5).lineTo(cx + (i % 2 ? 1 : -1), y + h + hang * 0.4).stroke({ width: 1, color: ISLET_DARK });
+    }
+  }
+
+  /**
+   * Round 21 (players did not see how to hurt the Keeper): the boss arena's
+   * loose rocks read as "the thing to use". Every hanging rock carries a
+   * faint glinting crack (staggered per rock); one the Keeper hovers right
+   * under (KeeperBrain.linedUpUnder: tear it loose NOW and it lands) gets a
+   * pulsing gold ring and a dashed drop line down to the Keeper's head.
+   * `dropTo` = the Keeper's top (world y) when lined up, else null. Drawn on
+   * `front` (over the rock sprites, which are opaque). Reduced motion: steady alphas, no pulse.
+   */
+  private rockCue(g: Graphics, x: number, y: number, r: number, dropTo: number | null): void {
+    const t = this.nowMs;
+    const still = !!this.opts.reducedMotion;
+    // the glinting crack: a jagged light line across the rock's face
+    const glint = still ? 0.45 : 0.2 + 0.4 * Math.max(0, Math.sin(t * 0.004 + x * 0.013));
+    g.moveTo(x - r * 0.55, y - r * 0.15)
+      .lineTo(x - r * 0.15, y + r * 0.2)
+      .lineTo(x + r * 0.1, y - r * 0.1)
+      .lineTo(x + r * 0.5, y + r * 0.3)
+      .stroke({ width: 1, color: ROCK_GLINT, alpha: glint });
+    if (dropTo === null) return;
+    const pulse = still ? 0.8 : 0.55 + 0.45 * Math.sin(t * 0.012);
+    g.circle(x, y, r + 4 + (still ? 0 : 2 * pulse)).stroke({ width: 2, color: ROCK_LINED_UP, alpha: 0.5 + 0.4 * pulse });
+    const dash = 8;
+    for (let d = y + r + 6; d < dropTo - 4; d += dash * 2) {
+      g.moveTo(x, d).lineTo(x, Math.min(dropTo - 4, d + dash)).stroke({ width: 1, color: ROCK_LINED_UP, alpha: 0.35 + 0.35 * pulse });
     }
   }
 

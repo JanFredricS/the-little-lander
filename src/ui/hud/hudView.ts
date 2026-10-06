@@ -1,7 +1,7 @@
 /**
  * HUD renderer (Pixi, 640×360 virtual px): fuel bar (flashes under 25%),
  * hull bar, goo count, orbs, mode badge, objective tracker, wind-gust
- * warning arrow, radiation-charge warning, banners, boss hp, and the
+ * warning arrow, radiation-charge warning, banners, boss hp + coaching, and the
  * per-mode controls help card. Reads HudState only.
  */
 
@@ -37,6 +37,8 @@ export class HudView {
   /** Round 8: inside the exit rect but a gate holds the vessel back (HudState.exitHint). */
   private readonly exitText = new PixelText('', { color: UI.danger, outline: UI.outline, scale: 2 });
   private readonly bossLabel = new PixelText('THE KEEPER', { color: UI.ink, shadow: UI.outline });
+  /** Round 21: boss-fight coaching (HudState.bossHint), two centred lines under the banner. */
+  private readonly bossHintText = new PixelText('', { color: UI.accent, outline: UI.outline, align: 'center' });
   // help card
   private readonly help = new Container();
   private readonly helpG = new Graphics();
@@ -46,6 +48,7 @@ export class HudView {
   private readonly helpBody = new PixelText('', { color: UI.ink });
   private readonly helpHint = new PixelText('', { color: UI.dim });
   private helpKey = '';
+  private bossHintFor = '';
   private missionShown = '';
   /**
    * Inputs of the last vector redraw. Pixi rebuilds a Graphics' geometry (and
@@ -67,7 +70,7 @@ export class HudView {
 
   constructor() {
     for (let i = 0; i < MAX_OBJECTIVE_LINES; i++) this.objTexts.push(new PixelText('', { color: UI.ink, shadow: UI.outline }));
-    this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.exitText, this.bossLabel);
+    this.root.addChild(this.g, this.fuelLabel, this.hullLabel, this.extra, this.modeText, ...this.objTexts, this.warnText, this.radText, this.bannerText, this.exitText, this.bossHintText, this.bossLabel);
     this.help.addChild(this.helpG, this.helpTitle, this.helpMission, this.helpBody, this.helpHint);
     this.help.visible = false;
     this.root.addChild(this.help);
@@ -108,6 +111,11 @@ export class HudView {
   /** The mission text on the shown card ('' if none / hidden). */
   get helpMissionText(): string {
     return this.help.visible ? this.missionShown : '';
+  }
+
+  /** Round 21: the boss coaching text on screen ('' if none). */
+  get bossHintShown(): string {
+    return this.bossHintFor;
   }
 
   get helpVisible(): boolean {
@@ -242,6 +250,14 @@ export class HudView {
       this.exitText.setText(s.exitHint);
       this.exitText.position.set(Math.round(VIEW_WIDTH / 2 - this.exitText.width / 2), 128);
     } else this.exitText.visible = false;
+
+    // --- boss coaching (under the banner / exit hint)
+    this.bossHintFor = s.bossHint ?? '';
+    if (s.bossHint) {
+      this.bossHintText.visible = true;
+      this.bossHintText.setText(s.bossHint);
+      this.bossHintText.position.set(Math.round(VIEW_WIDTH / 2 - this.bossHintText.width / 2), s.exitHint ? 150 : 128);
+    } else this.bossHintText.visible = false;
 
     // --- boss hp (bottom centre)
     this.bossLabel.visible = s.bossHp !== null;

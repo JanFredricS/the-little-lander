@@ -379,3 +379,39 @@ describe('Keeper brain — attacks', () => {
     }
   });
 });
+
+describe('Keeper brain — round 21 lined-up cue (the rock glow)', () => {
+  it('a rock site within one body radius of the Keeper is "lined up" — only while it is alive and out of its intro', () => {
+    const { brain } = make();
+    const x = brain.pos.x;
+    expect(brain.mode).toBe('intro');
+    expect(brain.linedUpUnder(x)).toBe(false);
+    runUntil(brain, () => inp({ x: x + 60, y: 400 }), () => brain.mode === 'idle');
+    expect(brain.linedUpUnder(brain.pos.x)).toBe(true);
+    expect(brain.linedUpUnder(brain.pos.x + T.bodyRadius)).toBe(true);
+    expect(brain.linedUpUnder(brain.pos.x - T.bodyRadius - 1)).toBe(false);
+    brain.hit(1, 'rock');
+    expect(brain.linedUpUnder(brain.pos.x)).toBe(false);
+  });
+
+  it('... and not while it lunges (a sweep moves it 300-400 px/s: a rock torn then lands where it was)', () => {
+    const { brain } = make();
+    const v = { x: 1560, y: 400 };
+    runUntil(brain, () => inp(v), () => brain.mode === 'sweepWindup');
+    expect(brain.mode).toBe('sweepWindup');
+    expect(brain.linedUpUnder(brain.pos.x)).toBe(true); // shivering in place: still a fair drop
+    runUntil(brain, () => inp(v), () => brain.mode === 'sweep', 3);
+    expect(brain.mode).toBe('sweep');
+    expect(brain.linedUpUnder(brain.pos.x)).toBe(false);
+  });
+
+  it('lined up = a rock dropped there lands: one radius out it still overlaps the body (body + rock radius)', () => {
+    const { brain } = make();
+    runUntil(brain, () => inp({ x: 1560, y: 400 }), () => brain.mode === 'idle');
+    const hp = brain.hp;
+    const edge = brain.pos.x + T.bodyRadius;
+    expect(brain.linedUpUnder(edge)).toBe(true);
+    brain.update(inp({ x: 1560, y: 400 }, { rocks: [{ id: 9, pos: { x: edge, y: brain.pos.y - 20 }, vel: { x: 0, y: 200 }, radius: T.refRockRadius }] }));
+    expect(brain.hp).toBeLessThan(hp);
+  });
+});

@@ -40,6 +40,7 @@ import {
   VAULTS_SECTION_B,
   VAULTS_STALACTITES,
   VAULTS_PEG_TIP_NO_ANCHOR,
+  VAULTS_RESPAWN_SHELVES,
   VAULTS_TIP_NO_ANCHOR,
   vaults,
   vaultsStalactitePoints,
@@ -600,5 +601,111 @@ describe('round 17: the caves backdrop silhouettes read as scenery', () => {
     expect(bright).toBe(0);
     expect(longest).toBeLessThanOrEqual(110);
     expect(filled / (near.pix.w * near.pix.h)).toBeLessThan(0.04);
+  });
+});
+
+describe('round 21: every Vaults checkpoint respawn can rope out with the aims a player really has', () => {
+  // Player report: "respawned at a checkpoint, resting on the floor, and the roof is out of
+  // harpoon reach - stuck". The rope-recovery grids above aim with a 1-degree sweep; a player
+  // has the default aim (straight up: HarpoonRig.lastAim before any aim input), the keyboard's
+  // 8 directions (arrow keys), or a hand-aimed mouse / touch drag with no aim guide. Before
+  // round 21 the straight-up shot missed at chasm2 / chasm3 / chasm4 (roof 328-343 px from the
+  // mount, rope 320) and the only anchors were a 2-4 degree window on a lip peg's flank
+  // (chasm3 / chasm4) or brittle stalactites at 45 degrees (chasm2).
+  const respawnAt = (id: string): RespawnState => {
+    const c = VAULTS_CHECKPOINTS.find((q) => q.id === id)!;
+    return { checkpoint: { id, mode: 'harpoon', spawn: { pos: { ...c.respawn }, angle: 0, vel: { x: 0, y: 0 }, fuel: 1, hull: 0.8 }, resting: true, pickups: [], completed: [] }, planted: [], elapsed: 0 };
+  };
+  const mount = (s: LevelSession) => ({ x: s.state.pos.x + Math.sin(s.state.angle) * tuning.harpoon.mountHeight, y: s.state.pos.y - Math.cos(s.state.angle) * tuning.harpoon.mountHeight });
+  /** Where a shot along `deg` (0 = up, + = clockwise) from the resting pod lands: sound / brittle / no anchor, and how far. */
+  const shot = (s: LevelSession, deg: number) => {
+    const m = mount(s);
+    const a = (deg * Math.PI) / 180;
+    const hit = castSolid(s.physics, vPxToM(m), vPxToM({ x: m.x + Math.sin(a) * tuning.harpoon.ropeRange, y: m.y - Math.cos(a) * tuning.harpoon.ropeRange }), [...s.vessel.parts]);
+    if (!hit) return { kind: 'miss' as const, dist: Infinity };
+    const p = vMToPx(hit.point);
+    const at = s.vessel.hooks.anchorAt(hit.body, p);
+    return { kind: !at.ok ? ('noAnchor' as const) : at.brittleSec !== undefined ? ('brittle' as const) : ('sound' as const), dist: Math.hypot(p.x - m.x, p.y - m.y) };
+  };
+
+  it('from rest the default / keyboard-Up shot and every hand aim within +-6 deg of it anchor on sound rock with rope to spare', async () => {
+    const rows: string[] = [];
+    for (const c of VAULTS_CHECKPOINTS) {
+      const s = await LevelSession.create(vaults, respawnAt(c.id));
+      s.start();
+      for (let i = 0; i < 60; i++) s.step(frame());
+      const up = shot(s, 0);
+      const fan = [-6, -4, -2, 2, 4, 6].map((d) => shot(s, d));
+      rows.push(`${c.id} up ${up.kind} ${Math.round(up.dist)} fan ${fan.map((f) => `${f.kind[0]}${Math.round(f.dist)}`).join(' ')}`);
+      expect(up.kind, rows.join('\n')).toBe('sound');
+      // round 21: >= 15 px of rope to spare (round 20's chasm1 had 5)
+      expect(up.dist, rows.join('\n')).toBeLessThanOrEqual(tuning.harpoon.ropeRange - 15);
+      expect(fan.every((f) => f.kind === 'sound'), rows.join('\n')).toBe(true);
+      s.destroy();
+    }
+  });
+
+  it('the shelves are sound rock, out of the brittle zones, and carry no brittle marker (the chasm2 shelf sits in a brittle stretch)', () => {
+    for (const [x0, x1] of VAULTS_RESPAWN_SHELVES) {
+      expect(VAULTS_BRITTLE_SPANS.some(([a, b]) => b > x0 && a < x1), `${x0}-${x1}`).toBe(false);
+      const marks = vaults.entities.filter((e) => e.kind === 'staticProp' && e.sprite === 'prop.brittleRock' && e.x + e.w / 2 > x0 && e.x - e.w / 2 < x1);
+      expect(marks.map((e) => e.id), `${x0}-${x1}`).toEqual([]);
+    }
+    // the markers still line the brittle stretches themselves
+    expect(vaults.entities.filter((e) => e.kind === 'staticProp' && e.sprite === 'prop.brittleRock').length).toBeGreaterThanOrEqual(20);
+  });
+
+  it('... and firing with no aim input (or keyboard Up), then holding reel-in, lifts the pod off the floor and up under the roof unharmed', async () => {
+    for (const c of VAULTS_CHECKPOINTS) {
+      for (const aim of [{ x: 0, y: 0 }, { x: 0, y: -1 }]) {
+        const s = await LevelSession.create(vaults, respawnAt(c.id));
+        const events: GameEvent[] = [];
+        s.on((e) => events.push(e));
+        s.start();
+        for (let i = 0; i < 60; i++) s.step(frame());
+        const y0 = s.state.pos.y;
+        s.step(frame({ aim, fire: true }));
+        for (let i = 0; i < 30; i++) s.step(frame());
+        const tag = `${c.id} aim ${JSON.stringify(aim)}`;
+        expect(s.state.ropeState?.guns[0]?.phase, tag).toBe('anchored');
+        for (let i = 0; i < 5 * 60; i++) s.step(frame({ reelIn: true }));
+        const g = s.state.ropeState!.guns[0]!;
+        expect(s.outcome, tag).toBeNull();
+        expect(g.phase, tag).toBe('anchored'); // sound rock: nothing cracked
+        expect(y0 - s.state.pos.y, tag).toBeGreaterThan(200); // off the floor, well up
+        expect(s.state.pos.y - roofY(s.state.pos.x), tag).toBeLessThan(70); // hanging under the roof, where every swing starts
+        expect(s.state.hull, tag).toBeCloseTo(0.8, 5);
+        expect(events.some((e) => e.type === 'crash'), tag).toBe(false);
+        s.destroy();
+      }
+    }
+  });
+
+  it('from every checkpoint: rope out with the keyboard-Up shot, then swing on (the reference pilot) to the camp', { timeout: 600_000 }, async () => {
+    const rows: string[] = [];
+    for (const c of VAULTS_CHECKPOINTS) {
+      const s = await LevelSession.create(vaults, respawnAt(c.id));
+      s.start();
+      const pilot = harpoonPilot({ landX: 13480 });
+      let phase: 'rest' | 'reel' | 'pilot' = 'rest';
+      let t = 0;
+      for (; t < 150 * 60 && !s.outcome; t++) {
+        const g = s.state.ropeState?.guns[0];
+        if (phase === 'rest' && t >= 30) {
+          s.step(frame({ aim: { x: 0, y: -1 }, fire: true }));
+          phase = 'reel';
+        } else if (phase === 'reel') {
+          // the shot must hold (no precise re-aim by the pilot to bail it out)
+          if (t > 60 && g?.phase !== 'anchored') break;
+          const done = t > 30 + 6 * 60 || (g?.phase === 'anchored' && (g.length ?? 999) <= tuning.harpoon.ropeMin + 6);
+          if (done) phase = 'pilot';
+          s.step(frame({ reelIn: g?.phase === 'anchored' }));
+        } else if (phase === 'pilot') s.step(pilot(s, t));
+        else s.step(frame());
+      }
+      rows.push(`${c.id}: ${s.outcome?.kind ?? (phase === 'reel' ? 'stuck on the floor (the Up shot missed)' : 'timeout')} t ${(t / 60).toFixed(0)} s x ${Math.round(s.state.pos.x)} hull ${s.state.hull.toFixed(2)}`);
+      s.destroy();
+    }
+    expect(rows.every((r) => r.includes(': complete')), rows.join('\n')).toBe(true);
   });
 });

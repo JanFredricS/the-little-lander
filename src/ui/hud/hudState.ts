@@ -34,6 +34,26 @@ export const BANNER_TTL = 2.5;
  */
 export const EXIT_HINT_GRACE = 0.6;
 
+/**
+ * Round 21 (players did not see how to hurt the Keeper): a surviveBoss level
+ * coaches the rock drop in flight. The first hint shows BOSS_HINT_FIRST_AT s
+ * into the fight (after the PHASE 1 banner) for BOSS_HINT_SHOW s; the hints
+ * then alternate, each again after BOSS_HINT_REPEAT s without a rock hit.
+ * A rock hit clears the hint at once (it worked) and restarts the wait; after
+ * BOSS_HINT_STOP_HITS rock hits the player has it and the coaching stops.
+ * The in-world half of the cue: a rock the Keeper is lined up under glows
+ * (src/render/s7LevelFx.ts rockCue).
+ */
+export const BOSS_HINT_FIRST_AT = 3;
+export const BOSS_HINT_SHOW = 9;
+export const BOSS_HINT_REPEAT = 30;
+export const BOSS_HINT_STOP_HITS = 2;
+/** The hints in turn (2 lines each, ≤ 40 chars a line: scale-1 text, centred clear of the touch clusters). */
+export const BOSS_HINTS: readonly string[] = [
+  'HARPOON A CRACKED ROCK IN THE ROOF,\nREEL IN HARD TO DROP IT ON THE KEEPER',
+  'LURE IT: WAIT JUST PAST A ROCK.\nTHE ROCK GLOWS WHEN THE KEEPER IS BELOW',
+];
+
 export interface HudObjective {
   id: string;
   kind: ObjectiveSpec['kind'];
@@ -99,6 +119,16 @@ export interface HudState {
   exitHint: string | null;
   /** Sim seconds spent inside the exit rect held back by a gate (reset when it leaves). */
   exitHeld: number;
+  /** Round 21: the boss-fight coaching line(s) on screen now (BOSS_HINTS entry), or null. */
+  bossHint: string | null;
+  /** HUD time the next boss hint shows (Infinity = no more: no boss, defeated, or the player has it). */
+  bossHintAt: number;
+  /** HUD time the boss hint on screen hides. */
+  bossHintUntil: number;
+  /** Boss hints shown so far (picks the next BOSS_HINTS entry). */
+  bossHintsShown: number;
+  /** Rock hits on the boss so far. */
+  bossRockHits: number;
 }
 
 export function objectiveLabel(o: ObjectiveSpec): string {
@@ -155,6 +185,11 @@ export function initHud(spec?: Pick<LevelSpec, 'id' | 'vesselMode' | 'objectives
     exitObjectiveId: exit && exitObj ? exitObj.id : null,
     exitHint: null,
     exitHeld: 0,
+    bossHint: null,
+    bossHintAt: spec?.objectives.some((o) => o.kind === 'surviveBoss') ? BOSS_HINT_FIRST_AT : Infinity,
+    bossHintUntil: 0,
+    bossHintsShown: 0,
+    bossRockHits: 0,
   };
 }
 
@@ -193,6 +228,8 @@ export function initHudResume(spec: Parameters<typeof initHud>[0] & {}, r: HudRe
       return done.has(o.id) ? { ...o, done: true, progress: o.total } : { ...o, progress };
     }),
     banner: { text: CHECKPOINT_BANNER, ttl: BANNER_TTL },
+    // the boss hint clock counts from this life's start (HUD time carries the earlier lives)
+    bossHintAt: s.bossHintAt + r.time,
   };
 }
 
@@ -220,7 +257,7 @@ export function hudReduce(s: HudState, e: GameEvent): HudState {
     case 'vesselModeChanged':
       return { ...s, mode: e.to };
     case 'crash':
-      return { ...s, crashed: true, wind: null, radiation: null };
+      return { ...s, crashed: true, wind: null, radiation: null, bossHint: null };
     case 'softLand':
       return { ...s, landed: true };
     case 'orbCollected': {
@@ -262,12 +299,19 @@ export function hudReduce(s: HudState, e: GameEvent): HudState {
       };
     case 'bossPhase':
       return { ...s, bossHp: clamp01(e.hp), banner: { text: `PHASE ${e.phase}`, ttl: BANNER_TTL } };
-    case 'bossHit':
-      return { ...s, bossHp: clamp01(e.hp) };
+    case 'bossHit': {
+      if (e.source !== 'rock') return { ...s, bossHp: clamp01(e.hp) };
+      // round 21: a rock landed - the coaching worked: clear it, and wait again (or stop: they have it)
+      const hits = s.bossRockHits + 1;
+      return { ...s, bossHp: clamp01(e.hp), bossRockHits: hits, bossHint: null, bossHintUntil: 0, bossHintAt: hits >= BOSS_HINT_STOP_HITS ? Infinity : s.time + BOSS_HINT_REPEAT };
+    }
     case 'bossDefeated':
       return {
         ...s,
         bossHp: 0,
+        bossHint: null,
+        bossHintUntil: 0,
+        bossHintAt: Infinity,
         objectives: mapObjectives(s, 'surviveBoss', (o) => ({ ...o, done: true, progress: o.total })),
       };
     case 'checkpointReached':
@@ -310,6 +354,19 @@ export function hudTick(s: HudState, v: VesselState | null, dt: number): HudStat
     const overdue = (s.radiation.overdue ?? 0) + Math.max(0, dt - s.radiation.inSec);
     // No radiationHit (vessel was in cover / out of range): clear shortly after the pulse.
     next.radiation = overdue > RADIATION_GRACE ? null : { ...s.radiation, inSec: Math.max(0, s.radiation.inSec - dt), overdue };
+  }
+  // round 21: boss coaching (see BOSS_HINTS)
+  if (s.bossHint !== null || next.time >= s.bossHintAt) {
+    if (next.crashed) {
+      next.bossHint = null;
+    } else {
+      if (next.time >= s.bossHintAt) {
+        next.bossHintUntil = next.time + BOSS_HINT_SHOW;
+        next.bossHintAt = next.bossHintUntil + BOSS_HINT_REPEAT;
+        next.bossHint = BOSS_HINTS[s.bossHintsShown % BOSS_HINTS.length]!;
+        next.bossHintsShown = s.bossHintsShown + 1;
+      } else if (next.time >= s.bossHintUntil) next.bossHint = null;
+    }
   }
   if (s.radiationHit > 0) next.radiationHit = Math.max(0, s.radiationHit - dt);
   if (s.banner) {

@@ -54,6 +54,21 @@
  *   S8 difficulty pass: burnSeconds 90 -> 110. The reference pilots bottomed
  *   out at 22% fuel with the canisters not respawning, the tightest margin
  *   of the campaign; a slower human fight could strand the pod mid-arena.
+ *  Round 21 (players did not see how to hurt it): winnability re-checked, no
+ *  tuning change. keeperPilot over 20 lure variants (offset 120-160 x below
+ *  160-210): 17 win (losses die in phase 3, 1-2 hits short); 9+ of the 12
+ *  rocks always hanging (7 hits needed, regrowth 14 s + at every slam); the
+ *  Keeper's hover range covers every rock and every lure spot is inside the
+ *  arena, so no rock is unusable and none can run out. 107 rocks torn -> 102
+ *  hits. Guarded by the round-21 audit in test/s7.playtest.test.ts. Teaching
+ *  added, layered: the start card adds "HARPOON THE CRACKED ROCKS IN THE
+ *  ROOF, / REEL IN HARD TO DROP THEM ON THE KEEPER" (controlsHelp
+ *  missionTips); in flight the HUD coaches 3 s in for 9 s and again after 30 s
+ *  without a rock hit, alternating the drop and the lure hint, until 2 rock
+ *  hits (hudState BOSS_HINTS); every hanging rock glints, and one the Keeper
+ *  is lined up under (KeeperBrain.linedUpUnder: within one body radius; 95 of
+ *  96 such drops hit) glows gold with a drop line down to it (s7LevelFx
+ *  rockCue); Io's keeperWakes briefing names the harpoon + reel + lure.
  */
 
 import { rectPoints, surfaceY } from './kit';

@@ -3,7 +3,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ObjectiveSpec } from '../src/contracts';
 import { LEVELS } from '../src/levels/registry';
-import { MISSION_LINE_CHARS, missionLines, missionPhrase } from '../src/ui/controlsHelp';
+import { MISSION_LINE_CHARS, missionLines, missionPhrase, missionTips } from '../src/ui/controlsHelp';
 
 describe('mission line', () => {
   it('one phrase per objective kind', () => {
@@ -47,5 +47,21 @@ describe('mission line', () => {
       expect(lines[0], id).toMatch(/^MISSION: /);
       for (const l of lines) expect(l.length, id).toBeLessThanOrEqual(MISSION_LINE_CHARS);
     }
+  });
+
+  it('round 21: the Keeper card says HOW to hurt it (harpoon a cracked roof rock, reel in); other levels add nothing', () => {
+    const keeper = LEVELS.keeper!;
+    const tips = missionTips(keeper.objectives);
+    expect(tips.join(' ')).toBe('HARPOON THE CRACKED ROCKS IN THE ROOF, REEL IN HARD TO DROP THEM ON THE KEEPER');
+    for (const l of tips) expect(l.length).toBeLessThanOrEqual(MISSION_LINE_CHARS);
+    // the start card's mission block (GameUi.levelStarted): the mission line, then the tips
+    expect([...missionLines(keeper.objectives), ...tips]).toEqual([
+      'MISSION: DEFEAT THE KEEPER',
+      'HARPOON THE CRACKED ROCKS IN THE ROOF,',
+      'REEL IN HARD TO DROP THEM ON THE KEEPER',
+    ]);
+    // each objective kind's tips once, however many objectives of that kind
+    expect(missionTips([...keeper.objectives, ...keeper.objectives])).toEqual(tips);
+    for (const [id, spec] of Object.entries(LEVELS)) if (!spec!.objectives.some((o) => o.kind === 'surviveBoss')) expect(missionTips(spec!.objectives), id).toEqual([]);
   });
 });

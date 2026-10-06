@@ -23,7 +23,8 @@
  * along the whole route; the roof is never out of reach over a chasm except
  * at god-ray holes, which are narrower than a rope swing; from EVERY floor
  * spot in both sections (50 px grid, chasms excepted) the rope alone hauls
- * the pod back up under the roof; no rope can hold the pod below lip level
+ * the pod back up under the roof; from every checkpoint respawn the default
+ * (straight-up) shot does it (round 21); no rope can hold the pod below lip level
  * over a chasm (VAULTS_LIP_CLEAR); stalactites keep >= 250 px from the holes,
  * >= 100 px from the A pits and the collapses; the bottom 20 px of every
  * stalactite (10 px of a lip peg) takes no harpoon.
@@ -91,6 +92,27 @@
  * life, hull median 0.79, A loss 0.03 - the pilots are chaotic at this margin.
  * Longer still (B low ones at 230-240 px) left pilots resting under them reeling into
  * the spire overhead until the time-out, and broke the reel-in matrix - see the plan.
+ *
+ * Round 21 — checkpoint soft-locks (players: "respawned on the floor, the roof is out of
+ * reach, stuck"). The rope-recovery grids aim with a 1-degree sweep (test/support/
+ * hollowClimber.ts); a player has the default aim (straight up), the keyboard's 8
+ * directions, or a hand-aimed mouse / touch drag with no aim guide. From the chasm2-4
+ * respawns the straight-up shot missed (roof 328-343 px from the rope mount, rope 320) and
+ * all that was in reach was a 2-4 degree window on a lip peg's flank (chasm3 / chasm4) or a
+ * brittle stalactite at 45 degrees (chasm2); chasm1 had 5 px of rope to spare. Fix:
+ * VAULTS_RESPAWN_SHELVES, a roof shelf over each of those four respawns (292-300 px above the
+ * mount; every aim within +-6 deg of up lands on sound rock; chasm2's is cut out of its
+ * brittle zone; the two by a chasm lip slope up towards it so VAULTS_LIP_CLEAR still holds).
+ * Pinned: from every respawn the no-aim / keyboard-Up shot holds and reeling in hauls the pod
+ * up under the roof unharmed, and a resumed run (that shot, then the reference pilot) reaches
+ * the camp. A wider chasm2 shelf (10140-10360) left an 8 px pocket against stalactite 14
+ * that a pilot (adv110) dangled in until the time-out; 10180-10320 does not. Re-measured (24
+ * variants): 24 / 24 on the first life (HEAD 24); hull median 0.75 -> 0.68, min 0.51 -> 0.52;
+ * A loss 0.107 (same); B loss 0.16 -> 0.21 - by x bucket that is the collapse rains (pilot
+ * timing, chaotic), while the shelf ledges lost less; time median 103 -> 102 s.
+ * Still open (not a checkpoint): with only the 8 keyboard aims, 30 of 74 B floor spots (50
+ * px grid, off the lips) have nothing in reach and 18 only brittle rock; a pod that settles
+ * there unharmed needs a hand-aimed shot.
  *
  * Playtest notes (S7): played headless by the reference autopilot
  * (test/s7.playtest.test.ts: ray-cast "what's on screen" anchor picks,
@@ -216,9 +238,36 @@ export const VAULTS_COLLAPSES: readonly [number, number][] = [
   [12450, 12800],
 ];
 
+/**
+ * Round 21: roof shelves over the checkpoint respawns. A respawn rests on the floor with no
+ * thrusters, so the rope is the only way up - and a player's aims are the default (straight
+ * up), the keyboard's 8 directions, or a hand-aimed mouse / touch drag with no aim guide.
+ * B's roof is 330-370 px above its floor (rope 320), so at chasm2-4 the straight-up shot
+ * missed and the only anchors were brittle stalactites at 45 deg or a 2-4 deg window on a lip
+ * peg's flank: a soft-lock for most players. Each shelf drops the roof over its respawn to
+ * ~290-300 px above the pod's rope mount (>= 15 px of rope to spare, every aim within +-6 deg
+ * of straight up lands on it); sound rock (cut out of the brittle zones, like the lip pegs).
+ * A shelf near a chasm lip slopes up towards the lip: VAULTS_LIP_CLEAR still holds (pinned).
+ * [x0, x1, y at the west end of the flat, y at its east end]; walls VAULTS_SHELF_WALL px wide.
+ * sectionB needs none (its roof is 282 px above the mount).
+ */
+export const VAULTS_RESPAWN_SHELVES: readonly (readonly [x0: number, x1: number, yWest: number, yEast: number])[] = [
+  [7940, 8050, 330, 334], // chasm1 (8000): was 315 px straight up, 5 px to spare
+  [10180, 10320, 354, 354], // chasm2 (10250): was 343 px, between two brittle stalactites
+  [11365, 11485, 339, 350], // chasm3 (11420): was 338 px; slopes up to the chasm 3 lip
+  [12820, 12935, 349, 358], // chasm4 (12870): was 328 px; slopes up to the chasm 4 lip
+];
+export const VAULTS_SHELF_WALL = 30;
+
 function ceilingPoints() {
   let pts = s7Band(0, W, 60, ceilProfile, 16, ceilNoise);
   for (const [a, b] of VAULTS_HOLES) pts = s7Notch(pts, a, b, 24, 12);
+  for (const [x0, x1, yW, yE] of VAULTS_RESPAWN_SHELVES) {
+    const yAt = (x: number) => Math.round(surfaceY(pts, x));
+    const before = pts.filter((p) => p.x < x0);
+    const after = pts.filter((p) => p.x > x1);
+    pts = [...before, { x: x0, y: yAt(x0) }, { x: x0 + VAULTS_SHELF_WALL, y: yW }, { x: x1 - VAULTS_SHELF_WALL, y: yE }, { x: x1, y: yAt(x1) }, ...after];
+  }
   return pts;
 }
 
@@ -366,9 +415,12 @@ const decor: EntitySpec[] = [
     const bottom = Math.min(floorY(x), 900) - 20;
     return bottom > top ? { y: top + r() * (bottom - top), w: 6, h: 6, foreground: r() < 0.25 } : null;
   }),
-  // brittle rock markers on the brittle roof stretches
+  // brittle rock markers on the brittle roof stretches (round 21: none on a respawn shelf -
+  // it is sound rock, cut out of the zone, and the respawn's default shot lands there)
   ...VAULTS_BRITTLE.flatMap(([a, b], i) =>
-    Array.from({ length: Math.floor((b - a) / 90) }, (_, k) => s7Prop(`brittleMark${i}_${k}`, 'prop.brittleRock', a + 45 + k * 90, roofY(a + 45 + k * 90) + 6, 16, 12)),
+    Array.from({ length: Math.floor((b - a) / 90) }, (_, k) => a + 45 + k * 90)
+      .filter((x) => !VAULTS_RESPAWN_SHELVES.some(([x0, x1]) => x + 8 > x0 && x - 8 < x1))
+      .map((x, k) => s7Prop(`brittleMark${i}_${k}`, 'prop.brittleRock', x, roofY(x) + 6, 16, 12)),
   ),
   // the camp
   s7Prop('campLander', 'prop.parkedLander', 13820, 620 - 22, 48, 44),
@@ -401,16 +453,19 @@ const entities: EntitySpec[] = [
 /**
  * The brittle zones as actually laid (round-17 audit L3): each VAULTS_BRITTLE stretch
  * minus the x-span of any lip peg inside it (8770, 10570, 12070 - the west lips of
- * chasms 2-4, where a player most needs an anchor that holds). The roof stays brittle
+ * chasms 2-4, where a player most needs an anchor that holds) and, round 21, of any
+ * respawn shelf (VAULTS_RESPAWN_SHELVES: chasm2's, 10180-10320). The roof stays brittle
  * right up to the peg's flanks; the peg, and the roof it is rooted in, do not crack.
  */
 export const VAULTS_BRITTLE_SPANS: readonly [number, number][] = VAULTS_BRITTLE.flatMap(([a, b]) => {
-  const cuts = VAULTS_STALACTITES.filter((sp) => sp.id.startsWith('lipPeg') && sp.x > a && sp.x < b)
-    .map((sp) => {
+  const cuts = [
+    ...VAULTS_STALACTITES.filter((sp) => sp.id.startsWith('lipPeg') && sp.x > a && sp.x < b).map((sp) => {
       const xs = vaultsStalactitePoints(sp).map((q) => q.x);
       return [Math.floor(Math.min(...xs)) - 2, Math.ceil(Math.max(...xs)) + 2] as const;
-    })
-    .sort((m, n) => m[0] - n[0]);
+    }),
+    // round 21: the respawn shelves are sound too (a respawn's first rope must hold)
+    ...VAULTS_RESPAWN_SHELVES.filter(([x0, x1]) => x1 > a && x0 < b).map(([x0, x1]) => [x0 - 2, x1 + 2] as const),
+  ].sort((m, n) => m[0] - n[0]);
   const out: [number, number][] = [];
   let x = a;
   for (const [c0, c1] of cuts) {
@@ -469,6 +524,8 @@ const zones: ZoneSpec[] = [
  * ledge floor between the hanging rock (>= 45 px off every stalactite / peg outline),
  * outside the collapse rains, and is never inside a later band. A respawn is a fresh
  * session: brittle anchors are per-rope timers, so nothing about the roof carries over.
+ * Round 21: each respawn lies under sound roof within reach straight up (sectionB's own
+ * roof, VAULTS_RESPAWN_SHELVES for the other four) - the default aim, keyboard Up.
  */
 const cp = (id: string, bandX: number, x: number) => ({
   id,

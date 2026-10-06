@@ -163,6 +163,26 @@ export function missionLines(objectives: readonly ObjectiveSpec[]): string[] {
 }
 
 /**
+ * Round 21: how-to lines under the mission on the level-start card, per objective kind
+ * (players did not see how to hurt the Keeper). Each ≤ MISSION_LINE_CHARS.
+ */
+const MISSION_TIPS: Partial<Record<ObjectiveSpec['kind'], readonly string[]>> = {
+  surviveBoss: ['HARPOON THE CRACKED ROCKS IN THE ROOF,', 'REEL IN HARD TO DROP THEM ON THE KEEPER'],
+};
+
+/** Round 21: the start card's how-to lines for these objectives (each kind once, in order; [] if none). */
+export function missionTips(objectives: readonly ObjectiveSpec[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<ObjectiveSpec['kind']>();
+  for (const o of objectives) {
+    if (seen.has(o.kind)) continue;
+    seen.add(o.kind);
+    out.push(...(MISSION_TIPS[o.kind] ?? []));
+  }
+  return out;
+}
+
+/**
  * Any control in a frame counts as "first input" (a DIRECT steer too). Aim counts only from keys
  * or a touch drag (aimTarget === null): a mouse merely hovering over the
  * canvas always reports an aim and must not dismiss the card.

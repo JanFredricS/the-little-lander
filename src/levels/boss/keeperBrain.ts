@@ -127,6 +127,21 @@ export class KeeperBrain {
     return this.mode === 'dead';
   }
 
+  /**
+   * Round 21 (the "how do I hurt it?" cue): would a rock torn loose at x now
+   * land on the Keeper? It is alive, in view (not the intro), not mid-lunge (a
+   * sweep moves it 300-400 px/s: gone before the rock lands) and its centre is
+   * within one body radius of x - a rock (radius ~16) hits at body + rock
+   * radius, so the margin covers a little drift while the rock falls (~1.8 s
+   * from the roof to the hover band at this gravity; an idle Keeper parked in
+   * its follow dead zone does not move). The render layer makes such a rock
+   * glow (s7LevelFx).
+   */
+  linedUpUnder(x: number): boolean {
+    if (this.defeated || this.mode === 'intro' || this.mode === 'sweep' || this.mode === 'dying' || this.mode === 'dead') return false;
+    return Math.abs(x - this.pos.x) <= this.t.bodyRadius;
+  }
+
   /** Is the vessel currently held by a tendril? */
   get grabbing(): boolean {
     return this.tendrils.some((d) => d.state === 'holding');

@@ -261,6 +261,20 @@ describe('GameUi: JOYSTICK + minimap wiring (real GameUi, fake DOM)', () => {
     h.ui.destroy();
   });
 
+  it('round 21: the Keeper start card says how to hurt it, then the in-flight coaching follows', async () => {
+    const { BOSS_HINT_FIRST_AT, BOSS_HINTS } = await import('../src/ui/hud/hudState');
+    const { ui } = await make({ touchPref: 'off' });
+    ui.enter({ id: 'playing', levelId: 'keeper' } as never);
+    ui.levelStarted(getLevel('keeper')! as never);
+    expect(ui.helpMission).toBe('MISSION: DEFEAT THE KEEPER\nHARPOON THE CRACKED ROCKS IN THE ROOF,\nREEL IN HARD TO DROP THEM ON THE KEEPER');
+    ui.noteFrame({ ...emptyFrame(), thrust: true });
+    expect(ui.holdSimulation).toBe(false);
+    ui.onEvent({ type: 'bossPhase', phase: 1, hp: 1 });
+    for (let t = 0; t < BOSS_HINT_FIRST_AT + 0.1; t += 1 / 60) ui.tick(null, 1 / 60);
+    expect(ui.hudState.bossHint).toBe(BOSS_HINTS[0]);
+    ui.destroy();
+  });
+
   it('round 10: a beaconPlanted event marks that site planted on the minimap', async () => {
     const { ui } = await make({ touchPref: 'off' });
     ui.enter({ id: 'playing', levelId: 'floatingIsles' } as never);
